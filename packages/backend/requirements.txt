@@ -1,0 +1,49 @@
+# Week-1 convenience requirements for pip/venv installs.
+#
+# Notes:
+# - This repo also supports Poetry via pyproject.toml.
+# - Some processors require system dependencies (poppler, tesseract, ffmpeg, etc.).
+# - Windows users may prefer: pip install -r requirements.txt -r requirements_windows.txt
+
+python-dotenv>=1.0.0
+flask>=2.2.3
+flask-socketio>=5.3.3
+flask-cors>=3.0.10
+flask-injector>=0.15.0
+injector>=0.21.0
+eventlet>=0.33.3
+requests>=2.31.0
+cachetools>=5.3.1
+colorlog>=6.7.0
+tabulate>=0.9.0
+setuptools>=68.2.2
+
+# File/document loaders
+langchain>=0.0.303
+unstructured>=0.6.3
+python-magic>=0.4.14
+pytesseract>=0.3.10
+pdf2image>=1.16.3
+pymupdf>=1.24.7
+pypdf==4.2.0
+markdownify>=1.1.0
+beautifulsoup4>=4.13.3
+
+# Media
+pydub>=0.25.1
+playwright==1.39
+youtube-transcript-api>=0.6.1
+pytube>=15.0.0
+
+# Integrations (used by some nodes; safe to keep installed even if you don't use them)
+boto3>=1.28.52
+pyjwt>=2.8.0
+jwcrypto>=1.5.0
+python-jose>=3.3.0
+openapi-spec-validator>=0.7.1
+
+# Cloud model SDKs (will only be used if you add those nodes)
+openai==1.76.0
+anthropic==0.49.0
+replicate==0.22.0
+tiktoken==0.7.0

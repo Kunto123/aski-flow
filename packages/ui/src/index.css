@@ -1,0 +1,82 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+html,
+body,
+#root {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: sans-serif;
+  line-height: 1.5em;
+  word-spacing: 0.16em;
+  /*letter-spacing: 0.12em;*/
+}
+
+#webpack-dev-server-client-overlay{
+  display: none;
+}
+
+html, body{
+  background: linear-gradient(0deg, hsl(180deg 9.33% 12.39%) 0%, hsl(0deg 0% 10.39%) 100%);
+}
+
+:root {
+  --scrollbar-track-color: #F1F1F1;
+  --scrollbar-thumb-color: #AAA;
+  --scrollbar-border-color: #F1F1F1;
+  --scrollbar-thumb-hover-color: #888;
+}
+
+body.dark-theme {
+  --scrollbar-track-color: #2A2A2A;
+  --scrollbar-thumb-color: rgba(85, 85, 85, 0.431);
+  --scrollbar-border-color: #2A2A2A;
+  --scrollbar-thumb-hover-color: #666;
+}
+
+
+/* Custom Slider Styles */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+
+::-webkit-scrollbar-track {
+  background-color: var(--scrollbar-track-color);
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb-color);
+  border-radius: 5px;
+  border: 2px solid var(--scrollbar-border-color);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover-color);
+}
+
+
+/* Custom React Flow Handle Style */
+.custom-handle.react-flow__handle {
+  top: initial;
+  left: initial;
+  transform: initial;
+}
+
+.markdown-body {
+  color: #f5f5f5 !important; 
+}
+
+.markdown-body pre {
+  background-color: transparent !important;
+}
+
+
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';

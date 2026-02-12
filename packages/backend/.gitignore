@@ -1,0 +1,21 @@
+# Fichiers générés par l'environnement de développement
+__pycache__/
+*.py[cod]
+
+# Fichiers générés par l'IDE
+.idea/
+.vscode/
+
+# Fichiers de logs
+*.log
+
+# Fichiers d'env
+*.env
+
+# Fichiers de build
+build
+dist
+server.spec
+
+# Local storage
+local_storage/
