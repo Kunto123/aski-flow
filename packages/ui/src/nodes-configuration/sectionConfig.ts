@@ -1,0 +1,184 @@
+import { AiOutlineRobot } from "react-icons/ai";
+import { BsInputCursorText } from "react-icons/bs";
+import { FaToolbox } from "react-icons/fa";
+import {
+  NodeConfig,
+  SectionType,
+  SubnodeData,
+  SubnodeShortcutStyle,
+} from "./types";
+import { nodeConfigs } from "./nodeConfig";
+import { getNodesHiddenList } from "../components/popups/config-popup/parameters";
+import {
+  getHighPriorityNodePrefixes,
+  getLowPriorityNodePrefixes,
+} from "../config/config";
+import { DraggableNodeAdditionnalData } from "../components/bars/dnd-sidebar/types";
+
+export type NodeSection = {
+  label: string;
+  type: SectionType;
+  icon?: any;
+  nodes?: DnDNode[];
+};
+
+export type DnDNode = {
+  label: string;
+  type: string;
+  keywords?: string[];
+  helpMessage?: string;
+  section: SectionType;
+  isBeta?: boolean;
+  isNew?: boolean;
+  color?: string;
+  subnodesShortcutConfig?: SubnodeData[];
+  subnodesShortcutStyle?: SubnodeShortcutStyle;
+  additionnalData?: DraggableNodeAdditionnalData;
+};
+export function transformNodeConfigsToDndNode(configs: {
+  [key: string]: NodeConfig | undefined;
+}): DnDNode[] {
+  return Object.entries(configs).map(([type, config]) => {
+    return {
+      label: config?.nodeName,
+      type: type,
+      helpMessage: config?.helpMessage || undefined,
+      section: config?.section,
+      isBeta: config?.isBeta,
+    } as DnDNode;
+  });
+}
+
+export function getNonGenericNodeConfig() {
+  const nonGenericNodeConfig: DnDNode[] = [
+    {
+      label: "File",
+      type: "file",
+      helpMessage: "fileUploadHelp",
+      section: "input",
+    },
+    {
+      label: "AiDataSplitter",
+      type: "ai-data-splitter",
+      helpMessage: "dataSplitterHelp",
+      section: "tools",
+      additionnalData: {
+        additionnalData: {
+          mode: "manual",
+          separator: ";",
+        },
+      },
+    },
+    {
+      label: "Transition",
+      type: "transition",
+      helpMessage: "transitionHelp",
+      section: "tools",
+    },
+    {
+      label: "Display",
+      type: "display",
+      helpMessage: "displayHelp",
+      section: "tools",
+    },
+  ];
+  return nonGenericNodeConfig;
+}
+
+function getAllDndNode(): DnDNode[] {
+  const nodesDisabled = getNodesHiddenList();
+  const nonGenericNodeConfig = getNonGenericNodeConfig();
+  return transformNodeConfigsToDndNode(nodeConfigs)
+    .concat(nonGenericNodeConfig)
+    .filter((node) => !nodesDisabled.includes(node.type));
+}
+
+export const populateNodeSections = () => {
+  const emptyNodeSections: NodeSection[] = [
+    {
+      label: "Input",
+      type: "input",
+      icon: BsInputCursorText,
+    },
+    {
+      label: "Models",
+      type: "models",
+      icon: AiOutlineRobot,
+    },
+    {
+      label: "Tools",
+      type: "tools",
+      icon: FaToolbox,
+    },
+  ];
+  const nodes = getAllDndNode();
+
+  nodes.forEach((node) => {
+    const section = emptyNodeSections.find((sec) => sec.type === node.section);
+
+    if (section) {
+      if (!section.nodes) {
+        section.nodes = [];
+      }
+      section.nodes.push(node);
+    }
+  });
+
+  const sectionFiltered = emptyNodeSections.filter(
+    (sec) => sec.nodes && sec.nodes.length > 0,
+  );
+
+  for (const sec of sectionFiltered) {
+    if (sec.type === "models") sortSection(sec);
+  }
+
+  return sectionFiltered;
+};
+
+export function sortSection(
+  section: NodeSection,
+  lowPriorityPrefixes?: string[],
+  highPriorityPrefixes?: string[],
+) {
+  const lowPriority = lowPriorityPrefixes ?? getLowPriorityNodePrefixes();
+  const highPriority = highPriorityPrefixes ?? getHighPriorityNodePrefixes();
+
+  if (section.nodes) {
+    section.nodes.sort((a, b) => {
+      const getHighPriorityRank = (type: string): number => {
+        for (let i = 0; i < highPriority.length; i++) {
+          if (type.startsWith(highPriority[i])) {
+            return i;
+          }
+        }
+        return -1;
+      };
+
+      const isLowPriority = (label: string): boolean =>
+        lowPriority.some((prefix: string) =>
+          label.toLowerCase().startsWith(prefix.toLowerCase()),
+        );
+
+      const aHighRank = getHighPriorityRank(a.type);
+      const bHighRank = getHighPriorityRank(b.type);
+      const aLow = isLowPriority(a.type);
+      const bLow = isLowPriority(b.type);
+
+      // Low priority always goes last
+      if (aLow && !bLow) return 1;
+      if (!aLow && bLow) return -1;
+
+      // High priority comes first, sorted by priority rank
+      if (aHighRank !== -1 && bHighRank !== -1) {
+        return aHighRank - bHighRank;
+      }
+      if (aHighRank !== -1) return -1;
+      if (bHighRank !== -1) return 1;
+
+      // All remaining items sorted alphabetically by label
+      return a.label.localeCompare(b.label);
+    });
+  }
+}
+
+export const getSections = () => populateNodeSections();
