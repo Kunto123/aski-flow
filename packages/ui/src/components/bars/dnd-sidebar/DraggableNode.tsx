@@ -76,20 +76,14 @@ const DraggableNode = (props: DraggableNodeProps) => {
           showDragAndDropHelper();
         }}
         bandColor={props.node.color}
-        className={`sidebar-dnd-node text-md text-af-text-element hover:ring-af-text-element/10 group group relative 
-                  flex
-                  h-auto
-                  w-full cursor-grab flex-row
-                  items-center justify-between gap-x-1 overflow-hidden
-                  rounded-md py-2 text-center
-                  font-medium
-                  shadow-md transition-all duration-200 
-                  ease-in-out hover:ring-2 
-                  ${isDragging ? "opacity-10" : ""}`}
+        className={`sidebar-dnd-node aski-pill-node group relative flex h-9 w-full cursor-grab flex-row items-center justify-between overflow-hidden rounded-full px-4 text-left font-semibold transition-all duration-150 ease-in-out ${isDragging ? "opacity-10" : ""}`}
       >
-        <div className="flex w-full flex-row items-center justify-between space-x-1 px-2 text-center">
-          <p className="flex-grow truncate ">{t(props.node.label)}</p>
-          <GripIcon className="text-af-text-description/60 group-hover:text-af-text-element/60 h-4 w-4 transition-colors duration-75 ease-in-out" />
+        <div className="flex w-full items-center">
+          <p className="flex-grow truncate">{t(props.node.label)}</p>
+          {/* Mock UI has clean pills without drag affordance; keep DnD behavior, hide icon */}
+          <span className="pointer-events-none hidden">
+            <GripIcon className="h-4 w-4" />
+          </span>
         </div>
 
         {props.node.isBeta && <NodeBadge>Beta</NodeBadge>}
@@ -100,16 +94,8 @@ const DraggableNode = (props: DraggableNodeProps) => {
 };
 
 export const Node = styled.div<{ bandColor?: string }>`
-  background:
-    linear-gradient(
-        120deg,
-        ${({ bandColor }) => (bandColor ? lighten(0.05, bandColor) : "#84fab0")}
-          0%,
-        ${({ bandColor }) => (bandColor ? darken(0.1, bandColor) : "#8fd3f4")}
-          100%
-      )
-      left / 2% no-repeat,
-    ${({ theme }) => theme.bg};
+  background: rgba(255, 255, 255, 0.95);
+  color: #0e5d6d;
   user-select: none;
   -webkit-user-select: none;
   -moz-user-select: none;
