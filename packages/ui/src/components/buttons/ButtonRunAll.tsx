@@ -18,11 +18,10 @@ const ButtonRunAll: React.FC<ButtonRunAllProps> = ({
     <TapScale>
       <button
         id="run-all-button"
-        className={`flex flex-row items-center justify-center gap-x-4 
+        className={`aski-runall flex flex-row items-center justify-center gap-x-4 
                 ${isRunning ? "bg-white/70 text-slate-700" : "bg-white text-slate-600"}
                 z-50 cursor-pointer
                 rounded-2xl
-                px-6 py-4
                 font-extrabold tracking-wide
                 shadow-lg ring-1 ring-black/5
                 transition-all hover:bg-white/95`}

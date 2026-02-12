@@ -189,6 +189,33 @@ const Flow = forwardRef((props: FlowProps, ref) => {
     }
   }, [nodes, edges]);
 
+  useEffect(() => {
+    if (!reactFlowInstance || !reactFlowWrapper.current) {
+      return;
+    }
+
+    const fitToViewport = () => {
+      reactFlowInstance.fitView({
+        padding: 0.2,
+        duration: 220,
+        maxZoom: 1.15,
+      });
+    };
+
+    const rafId = requestAnimationFrame(fitToViewport);
+    const resizeObserver = new ResizeObserver(() => {
+      fitToViewport();
+    });
+    resizeObserver.observe(reactFlowWrapper.current as Element);
+    window.addEventListener("resize", fitToViewport);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", fitToViewport);
+    };
+  }, [reactFlowInstance]);
+
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => setNodes((nds) => applyNodeChanges(changes, nds)),
     [setNodes],
@@ -321,7 +348,7 @@ const Flow = forwardRef((props: FlowProps, ref) => {
       onUpdateNodes={handleUpdateNodes}
     >
       <div className="h-full w-full" ref={dropRef}>
-        <div className="reactflow-wrapper h-full w-full" ref={reactFlowWrapper}>
+        <div className="reactflow-wrap reactflow-wrapper h-full w-full" ref={reactFlowWrapper}>
           <ReactFlowStyled
             nodes={nodes}
             nodeTypes={nodeTypes}
@@ -342,7 +369,14 @@ const Flow = forwardRef((props: FlowProps, ref) => {
             maxZoom={1.5}
             onLoad={props.onLoaded}
           >
-            {minimap.isVisible && <MiniMapStyled style={{ right: "4vw" }} />}
+            {minimap.isVisible && (
+              <MiniMapStyled
+                style={{
+                  right: "clamp(10px, 1.6vw, 24px)",
+                  bottom: "clamp(10px, 1.6vw, 24px)",
+                }}
+              />
+            )}
           </ReactFlowStyled>
         </div>
         <SideBar nodes={nodes} edges={edges} onChangeFlow={handleChangeFlow} />

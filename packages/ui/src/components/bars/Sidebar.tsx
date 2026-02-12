@@ -1,12 +1,10 @@
-import React, { useContext } from "react";
+import React from "react";
 import { Edge, Node } from "reactflow";
 import JSONView from "../side-views/JSONView";
 import styled, { css } from "styled-components";
 import { useTranslation } from "react-i18next";
 import { useVisibility } from "../../providers/VisibilityProvider";
 import CurrentNodeView from "../side-views/CurrentNodeView";
-import ButtonRunAll from "../buttons/ButtonRunAll";
-import { NodeContext } from "../../providers/NodeProvider";
 import { Tabs, rem } from "@mantine/core";
 import { FaFile } from "react-icons/fa";
 import { MdCenterFocusStrong } from "react-icons/md";
@@ -20,7 +18,6 @@ interface SidebarProps {
 
 const Sidebar: React.FC<SidebarProps> = ({ nodes, edges, onChangeFlow }) => {
   const { t } = useTranslation("flow");
-  const { runAllNodes, currentNodesRunning } = useContext(NodeContext);
   const { getElement, sidepaneActiveTab, setSidepaneActiveTab } =
     useVisibility();
 
@@ -37,21 +34,11 @@ const Sidebar: React.FC<SidebarProps> = ({ nodes, edges, onChangeFlow }) => {
           {show ? <FiChevronsRight /> : <FiChevronsLeft />}
         </ToggleIcon>
       </SidebarToggle>
-      <ButtonsContainer
-        show={show}
-        className={`absolute  flex flex-col space-y-3 bg-red-500 ${show ? "z-50 opacity-100" : "pointer-events-none -z-50 opacity-0"} transition-all duration-300 ease-out`}
-      >
-        <ButtonRunAll
-          small
-          onClick={show ? runAllNodes : () => {}}
-          isRunning={currentNodesRunning?.length > 0}
-        />
-      </ButtonsContainer>
 
       <SidebarContainer
         show={show}
         key={sidepaneActiveTab}
-        className="rounded-l-3xl"
+        className={`aski-rightpanel ${show ? "is-open" : ""}`}
       >
         <Tabs
           defaultValue={sidepaneActiveTab}
@@ -85,7 +72,10 @@ const Sidebar: React.FC<SidebarProps> = ({ nodes, edges, onChangeFlow }) => {
           </Tabs.Panel>
         </Tabs>
       </SidebarContainer>
-      {!show && <div className="sidebar-overlay" onClick={toggleShow} />}
+      <div
+        className={`aski-rightpanel-backdrop ${show ? "is-open" : ""}`}
+        onClick={toggleShow}
+      />
     </>
   );
 };
@@ -93,16 +83,19 @@ const Sidebar: React.FC<SidebarProps> = ({ nodes, edges, onChangeFlow }) => {
 const SidebarContainer = styled.div<{ show: boolean }>`
   position: fixed;
   right: 0;
-  top: 0;
+  top: var(--aski-topbar-h);
   bottom: 0;
-  width: 30%;
+  width: min(420px, 36vw);
   color: ${({ theme }) => theme.text};
   background-color: ${({ theme }) => theme.bg};
   box-shadow: -3px 0 3px rgba(0, 0, 0, 0.2);
   overflow-y: auto;
-  transform: translateX(100%);
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  transform: translateX(110%);
   transition: transform 0.2s ease-in-out;
-  z-index: 9999;
+  z-index: 60;
 
   ${({ show }) =>
     show &&
@@ -116,38 +109,13 @@ const SidebarToggle = styled.div<{ show: boolean }>`
   right: 0;
   top: 50%;
   transform: translateY(-50%);
-  width: 20px;
-  height: 80px;
+  width: 24px;
+  height: 96px;
   background-color: #110a0e;
   border-top-left-radius: 10px;
   border-bottom-left-radius: 10px;
-  transition: width 0.2s ease-in-out;
-  z-index: 1;
-
-  ${({ show }) =>
-    show &&
-    css`
-      width: 31.5%;
-    `}
-
-  @media screen and (max-width: 768px) {
-    display: none;
-  }
-`;
-
-const ButtonsContainer = styled.div<{ show: boolean }>`
-  position: fixed;
-  right: 0;
-  top: 3%;
-  transform: translateY(-50%);
-  transition: width 0.2s ease-in-out;
-  z-index: 1000000;
-
-  ${({ show }) =>
-    show &&
-    css`
-      right: 31%;
-    `}
+  transition: opacity 0.2s ease-in-out;
+  z-index: 61;
 
   @media screen and (max-width: 768px) {
     display: none;

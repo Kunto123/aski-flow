@@ -187,6 +187,12 @@ export const ReactFlowStyled = styled(ReactFlow)`
 
 export const MiniMapStyled = styled(MiniMap)`
   background-color: ${(props) => props.theme.minimapBg};
+  width: clamp(110px, 14vw, 190px);
+  height: clamp(80px, 11vw, 140px);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.25);
+  z-index: 35;
 
   .react-flow__minimap-mask {
     fill: ${(props) => props.theme.minimapMaskBg};
@@ -198,7 +204,8 @@ export const MiniMapStyled = styled(MiniMap)`
   }
 
   @media screen and (max-width: 768px) {
-    display: none;
+    width: 110px;
+    height: 78px;
   }
 `;
 
