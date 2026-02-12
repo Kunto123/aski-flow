@@ -6,21 +6,10 @@ import {
 } from "../../../nodes-configuration/sectionConfig";
 import { memo, useEffect, useState } from "react";
 import DraggableNode from "./DraggableNode";
-import {
-  FiChevronDown,
-  FiChevronLeft,
-  FiChevronRight,
-  FiSearch,
-} from "react-icons/fi";
-import { useVisibility } from "../../../providers/VisibilityProvider";
-import useIsTouchDevice from "../../../hooks/useIsTouchDevice";
 import Section from "./Section";
 import { DraggableNodeAdditionnalData } from "./types";
-import { TextInput, Chip, Group } from "@mantine/core";
 import { SubnodeData } from "../../../nodes-configuration/types";
 import DraggableNodeWithSubnodes from "./DraggableNodeWithSubnodes";
-
-const HIDE_SIDEBAR_ANIMATION_DURATION = 300;
 
 interface DnDSidebarProps {
   addNodeFromExt?: (
@@ -31,34 +20,12 @@ interface DnDSidebarProps {
 
 const DnDSidebar = ({ addNodeFromExt }: DnDSidebarProps) => {
   const { t } = useTranslation("flow");
-  const { getElement } = useVisibility();
-  const sidebar = getElement("dragAndDropSidebar");
-
-  const [contentVisible, setContentVisible] = useState(sidebar?.isVisible);
   const [sections, setSections] = useState(getSections());
   const [searchQuery, setSearchQuery] = useState("");
 
-  const isTouchDevice = useIsTouchDevice();
-
-  // Update sidebar content visibility
-  useEffect(() => {
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    if (sidebar.isVisible) {
-      setContentVisible(true);
-    } else {
-      timeoutId = setTimeout(
-        () => setContentVisible(false),
-        HIDE_SIDEBAR_ANIMATION_DURATION,
-      );
-    }
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId);
-    };
-  }, [sidebar]);
-
   // Update sections when hidden list changes
   useEffect(() => {
-    const handleHiddenListChanged = (e: any) => {
+    const handleHiddenListChanged = () => {
       setSections(getSections());
     };
 
@@ -158,61 +125,37 @@ const DnDSidebar = ({ addNodeFromExt }: DnDSidebarProps) => {
     );
 
   return (
-    <div
-      className={`relative flex transform text-xs transition-transform md:text-base duration-${HIDE_SIDEBAR_ANIMATION_DURATION} ease-in-out ${
-        !sidebar.isVisible ? "-translate-x-full" : "translate-x-0"
-      }`}
-      style={{ width: "var(--aski-sidebar-width)" }}
+    <DnDSidebarContainer
+      id="dnd-sidebar"
+      className="font-sm md:font-md flex h-full min-h-full flex-col"
     >
-      <div
-        className={`absolute left-full top-1/2 z-50 hidden translate-x-2 transform cursor-pointer rounded-2xl text-2xl font-bold text-slate-300 hover:font-extrabold hover:text-slate-100`}
-        onClick={sidebar.toggle}
-      >
-        {!sidebar.isVisible ? <FiChevronRight /> : <FiChevronLeft />}
-      </div>
-      {contentVisible && (
-        <DnDSidebarContainer
-          id="dnd-sidebar"
-          className={`aski-sidebar font-sm md:font-md flex h-full flex-col px-5 py-6 ${
-            isTouchDevice
-              ? "overflow-y-auto"
-              : "overflow-hidden hover:overflow-y-auto"
-          } ${!sidebar.isVisible ? "opacity-0" : ""} transition-opacity duration-${HIDE_SIDEBAR_ANIMATION_DURATION} ease-in-out`}
-        >
-          {/* Week-2 UI: keep search logic, but hide the field to match target mock. */}
-
-          {/* Render sections (filtered by search query and category) */}
-          {sectionsToRender.map((section, index) => {
-            if (!section || !section.nodes || section.nodes.length === 0) {
-              return null;
-            }
-            return (
-              <Section key={index} index={index} section={section}>
-                {section.nodes?.map((node, nodeIndex) => {
-                  if (!node) return null;
-                  if (
-                    node.subnodesShortcutConfig &&
-                    node.subnodesShortcutConfig?.length > 0
-                  ) {
-                    return renderNodeWithSubnode(nodeIndex, node);
-                  }
-                  return (
-                    <DraggableNode
-                      key={nodeIndex}
-                      node={node}
-                      additionnalConfig={
-                        node?.additionnalData?.additionnalConfig
-                      }
-                      additionnalData={node?.additionnalData?.additionnalData}
-                    />
-                  );
-                })}
-              </Section>
-            );
-          })}
-        </DnDSidebarContainer>
-      )}
-    </div>
+      {sectionsToRender.map((section, index) => {
+        if (!section || !section.nodes || section.nodes.length === 0) {
+          return null;
+        }
+        return (
+          <Section key={index} index={index} section={section}>
+            {section.nodes?.map((node, nodeIndex) => {
+              if (!node) return null;
+              if (
+                node.subnodesShortcutConfig &&
+                node.subnodesShortcutConfig?.length > 0
+              ) {
+                return renderNodeWithSubnode(nodeIndex, node);
+              }
+              return (
+                <DraggableNode
+                  key={nodeIndex}
+                  node={node}
+                  additionnalConfig={node?.additionnalData?.additionnalConfig}
+                  additionnalData={node?.additionnalData?.additionnalData}
+                />
+              );
+            })}
+          </Section>
+        );
+      })}
+    </DnDSidebarContainer>
   );
 };
 

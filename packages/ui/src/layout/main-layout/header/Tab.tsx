@@ -116,7 +116,7 @@ const Tab = ({
             }}
           />
         ) : (
-          <span className="text-3xl font-extrabold">{name}</span>
+          <span className="aski-title">{name}</span>
         )}
         {active && (
           <Portal>

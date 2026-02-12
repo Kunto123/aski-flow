@@ -2,6 +2,7 @@ import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import Flow from "../../components/Flow";
 import { Node, Edge } from "reactflow";
 import { useTranslation } from "react-i18next";
+import { FaPlus } from "react-icons/fa";
 import {
   convertFlowToJson,
   formatFlow,
@@ -28,6 +29,8 @@ import {
   saveTabsLocally,
 } from "../../services/tabStorage";
 import { useLoading } from "../../hooks/useLoading";
+import DnDSidebar from "../../components/bars/dnd-sidebar/DnDSidebar";
+import Tab from "./header/Tab";
 
 export interface FlowTab {
   nodes: Node[];
@@ -69,10 +72,12 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
   const [isRunning, setIsRunning] = useState(false);
   const [mode, setMode] = useState<ApplicationMode>("flow");
   const [selectedEdgeType, setSelectedEdgeType] = useState("default");
+  const [isTabletOrMobile, setIsTabletOrMobile] = useState(false);
   const useAuth = import.meta.env.VITE_APP_USE_AUTH === "true";
   const { getElement } = useVisibility();
   const [loading, startLoadingWith] = useLoading();
   const configPopup = getElement("configPopup");
+  const dndSidebar = getElement("dragAndDropSidebar");
 
   const currentTabRef = useRef(currentTab);
   const flowTabsRef = useRef(flowTabs);
@@ -96,6 +101,20 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
       setRefresh((prev) => !prev);
     };
     init();
+  }, []);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 1024px)");
+    const updateViewport = () => {
+      setIsTabletOrMobile(mediaQuery.matches);
+      if (!mediaQuery.matches) {
+        dndSidebar.show();
+      }
+    };
+
+    updateViewport();
+    mediaQuery.addEventListener("change", updateViewport);
+    return () => mediaQuery.removeEventListener("change", updateViewport);
   }, []);
 
   useEffect(() => {
@@ -249,53 +268,97 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
     });
   };
 
+  const isSidebarOpen = !isTabletOrMobile || dndSidebar.isVisible;
+
+  const handleToggleSidebar = () => {
+    if (isTabletOrMobile) {
+      dndSidebar.toggle();
+    }
+  };
+
+  const handleCloseSidebar = () => {
+    if (isTabletOrMobile && dndSidebar.isVisible) {
+      dndSidebar.hide();
+    }
+  };
+
   return (
-    <div className="relative flex h-screen flex-col">
+    <div className={`aski-app ${isSidebarOpen ? "" : "sidebar-collapsed"}`}>
       <TabHeader
-        currentTab={currentTab}
-        tabs={flowTabs.tabs}
-        onDeleteTab={handleDeleteFlow}
-        onAddFlowTab={addNewFlowTab}
-        onChangeTab={handleChangeTab}
-        onChangeTabName={handleChangeTabName}
-        tabPrefix={t("Flow")}
-      >
-        <div className="ml-auto flex flex-row items-center space-x-2  ">
-          <div className="mr-5">
-            <ButtonRunAll
-              onClick={handleRunAllCurrentFlow}
-              isRunning={isRunning}
-            />
+        onToggleSidebar={handleToggleSidebar}
+      />
+
+      <aside className={`aski-sidebar ${isSidebarOpen ? "is-open" : ""}`}>
+        <DnDSidebar />
+      </aside>
+
+      <div
+        className={`aski-backdrop ${isSidebarOpen ? "is-open" : ""}`}
+        onClick={handleCloseSidebar}
+      />
+
+      <main className="aski-main">
+        <div className="aski-canvas-header">
+          <div className="aski-tabs-strip flex max-w-[72%] items-center">
+            {flowTabs.tabs.map((tab: any, index: number) => (
+              <Tab
+                key={index}
+                index={index}
+                active={index === currentTab}
+                onChangeTab={handleChangeTab}
+                onDeleteTab={handleDeleteFlow}
+                onChangeTabName={handleChangeTabName}
+                name={
+                  !!tab.metadata?.name
+                    ? tab.metadata.name
+                    : !!tab.name
+                      ? tab.name
+                      : t("Flow") + " " + (index + 1)
+                }
+              />
+            ))}
+            <button
+              onClick={addNewFlowTab}
+              className="aski-add-tab ml-1"
+              aria-label="Add flow tab"
+            >
+              <FaPlus />
+            </button>
+          </div>
+          <div className="ml-3 flex items-center">
+            <ButtonRunAll onClick={handleRunAllCurrentFlow} isRunning={isRunning} />
           </div>
         </div>
-      </TabHeader>
 
-      <FlowDataProvider
-        flowTab={flowTabs.tabs[currentTab]}
-        onFlowChange={handleFlowChange}
-      >
-        <FlowWrapper
-          key={`flow-${currentTab}`}
-          mode={mode}
-          onChangeMode={handleChangeMode}
-          onAddNewFlow={handleAddNewFlow}
-        >
-          {mode === "flow" && (
-            <Flow
-              key={`flow-${currentTab}-${refresh}`}
-              nodes={flowTabs.tabs[currentTab]?.nodes ?? []}
-              edges={flowTabs.tabs[currentTab]?.edges ?? []}
-              metadata={flowTabs.tabs[currentTab]?.metadata ?? {}}
-              onFlowChange={handleFlowChange}
-              onUpdateMetadata={handleMetadataChange}
-              showOnlyOutput={showOnlyOutput}
-              isRunning={isRunning}
-              onRunChange={handleChangeRun}
-              onLoaded={() => {}}
-            />
-          )}
-        </FlowWrapper>
-      </FlowDataProvider>
+        <div className="aski-canvas-body">
+          <FlowDataProvider
+            flowTab={flowTabs.tabs[currentTab]}
+            onFlowChange={handleFlowChange}
+          >
+            <FlowWrapper
+              key={`flow-${currentTab}`}
+              mode={mode}
+              onChangeMode={handleChangeMode}
+              onAddNewFlow={handleAddNewFlow}
+            >
+              {mode === "flow" && (
+                <Flow
+                  key={`flow-${currentTab}-${refresh}`}
+                  nodes={flowTabs.tabs[currentTab]?.nodes ?? []}
+                  edges={flowTabs.tabs[currentTab]?.edges ?? []}
+                  metadata={flowTabs.tabs[currentTab]?.metadata ?? {}}
+                  onFlowChange={handleFlowChange}
+                  onUpdateMetadata={handleMetadataChange}
+                  showOnlyOutput={showOnlyOutput}
+                  isRunning={isRunning}
+                  onRunChange={handleChangeRun}
+                  onLoaded={() => {}}
+                />
+              )}
+            </FlowWrapper>
+          </FlowDataProvider>
+        </div>
+      </main>
     </div>
   );
 };

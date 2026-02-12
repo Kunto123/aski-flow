@@ -1,7 +1,6 @@
 import { ReactNode, memo, useCallback, useState } from "react";
 import { FiHelpCircle } from "react-icons/fi";
 import ConfigPopup from "../../../components/popups/config-popup/ConfigPopup";
-import DnDSidebar from "../../../components/bars/dnd-sidebar/DnDSidebar";
 import RightIconButton from "../../../components/buttons/ConfigurationButton";
 import { ApplicationMenu, ApplicationMode } from "../AppLayout";
 import HelpPopup from "../../../components/popups/HelpPopup";
@@ -40,17 +39,6 @@ function FlowWrapper({
   return (
     <>
       <FlowErrorBoundary>
-        <div
-          className="fixed left-0 
-                          z-10
-                          flex
-                          h-full
-                          flex-row
-                          "
-          style={{ paddingTop: "var(--aski-topbar-height)" }}
-        >
-          {mode === "flow" && <DnDSidebar />}
-        </div>
         <RightIconButton onClick={() => configPopup.show()} />
         <RightIconButton
           onClick={() => handleMenuChange("help")}
