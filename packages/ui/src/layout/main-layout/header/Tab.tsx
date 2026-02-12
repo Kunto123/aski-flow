@@ -87,12 +87,9 @@ const Tab = ({
       <TabButton
         active={active}
         ref={buttonRef}
-        className={`text-md group
-                        relative
-                        mr-5 inline-block cursor-pointer px-2 py-2 
-                        font-medium
-                        ${active ? "text-slate-50" : "text-slate-500"} 
-                        hover:text-slate-50`}
+        className={`aski-canvas-tab group relative mr-4 inline-block cursor-pointer px-2 py-1 font-semibold ${
+          active ? "active" : ""
+        }`}
         onClick={() => {
           if (active) {
             setShowActions(true);
@@ -119,7 +116,7 @@ const Tab = ({
             }}
           />
         ) : (
-          <span className="text-md">{name}</span>
+          <span className="text-3xl font-extrabold">{name}</span>
         )}
         {active && (
           <Portal>
@@ -167,21 +164,7 @@ export const TabButton = styled.button<{ active: boolean }>`
   transition:
     background-color 0.3s ease-in-out,
     color 0.3s ease-in-out;
-  transform: ${(props) => (props.active ? "scale(1.15)" : "scale(1)")};
-
-  &::after {
-    content: "";
-    position: absolute;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    bottom: 0;
-    left: 15%;
-    right: 15%;
-    height: 3px;
-    background: ${(props) => props.theme.accent};
-    transform: ${(props) => (props.active ? "scaleX(1)" : "scaleX(0)")};
-    transition: transform 0.3s ease-in-out;
-    z-index: 11;
-  }
+  transform: none;
+  background: transparent;
+  border: none;
 `;

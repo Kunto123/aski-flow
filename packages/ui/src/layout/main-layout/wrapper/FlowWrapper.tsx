@@ -46,7 +46,8 @@ function FlowWrapper({
                           flex
                           h-full
                           flex-row
-                          pt-16"
+                          "
+          style={{ paddingTop: "var(--aski-topbar-height)" }}
         >
           {mode === "flow" && <DnDSidebar />}
         </div>

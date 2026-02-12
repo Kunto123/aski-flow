@@ -159,12 +159,13 @@ const DnDSidebar = ({ addNodeFromExt }: DnDSidebarProps) => {
 
   return (
     <div
-      className={`relative flex w-fit max-w-[35vw] transform text-xs transition-transform md:text-base duration-${HIDE_SIDEBAR_ANIMATION_DURATION} ease-in-out ${
+      className={`relative flex transform text-xs transition-transform md:text-base duration-${HIDE_SIDEBAR_ANIMATION_DURATION} ease-in-out ${
         !sidebar.isVisible ? "-translate-x-full" : "translate-x-0"
       }`}
+      style={{ width: "var(--aski-sidebar-width)" }}
     >
       <div
-        className={`absolute left-full top-1/2 z-50 flex translate-x-2 transform cursor-pointer rounded-2xl text-2xl font-bold text-slate-300 hover:font-extrabold hover:text-slate-100`}
+        className={`absolute left-full top-1/2 z-50 hidden translate-x-2 transform cursor-pointer rounded-2xl text-2xl font-bold text-slate-300 hover:font-extrabold hover:text-slate-100`}
         onClick={sidebar.toggle}
       >
         {!sidebar.isVisible ? <FiChevronRight /> : <FiChevronLeft />}
@@ -172,22 +173,13 @@ const DnDSidebar = ({ addNodeFromExt }: DnDSidebarProps) => {
       {contentVisible && (
         <DnDSidebarContainer
           id="dnd-sidebar"
-          className={`font-sm md:font-md flex flex-col rounded-r-xl bg-zinc-950/10 px-3 py-2 shadow-md backdrop-blur-md ${
+          className={`aski-sidebar font-sm md:font-md flex h-full flex-col px-5 py-6 ${
             isTouchDevice
               ? "overflow-y-auto"
               : "overflow-hidden hover:overflow-y-auto"
           } ${!sidebar.isVisible ? "opacity-0" : ""} transition-opacity duration-${HIDE_SIDEBAR_ANIMATION_DURATION} ease-in-out`}
         >
-          {/* Search bar */}
-          <div className="mb-3">
-            <TextInput
-              placeholder={t("Search nodes") ?? "Search nodes"}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.currentTarget.value)}
-              leftSection={<FiSearch />}
-              size="xs"
-            />
-          </div>
+          {/* Week-2 UI: keep search logic, but hide the field to match target mock. */}
 
           {/* Render sections (filtered by search query and category) */}
           {sectionsToRender.map((section, index) => {
