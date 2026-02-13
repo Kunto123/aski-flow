@@ -1,5 +1,6 @@
 packages/backend/.env
 node_modules/
+**/node_modules/
 packages/ui/node_modules/
 packages/backend/.venv/
 *.zip
