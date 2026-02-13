@@ -8,6 +8,8 @@ import { BiMask } from "react-icons/bi";
 import { BsFiletypeJson, BsListTask, BsRegex } from "react-icons/bs";
 import { GiPerspectiveDiceSix } from "react-icons/gi";
 import {
+  FaCamera,
+  FaRecordVinyl,
   FaUserCircle,
   FaRobot,
   FaPlay,
@@ -78,6 +80,8 @@ const ICON_MAP: { [key: string]: FC } = {
   ),
   FaRandom,
   GiPerspectiveDiceSix,
+  FaCamera,
+  FaRecordVinyl,
 };
 
 export const getIconComponent = (type: string) => ICON_MAP[type];

@@ -1,4 +1,5 @@
 export type SectionType = "models" | "image-generation" | "tools" | "input";
+export type CategoryType = "input" | "processing" | "output";
 export type FieldType =
   | "input"
   | "inputInt"
@@ -108,6 +109,7 @@ export interface NodeConfig {
   defaultHideOutput?: boolean;
   hasInputHandle?: boolean;
   section: SectionType;
+  category?: CategoryType;
   helpMessage?: string;
   showHandlesNames?: boolean;
   isDynamicallyGenerated?: boolean;

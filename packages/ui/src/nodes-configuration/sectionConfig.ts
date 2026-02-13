@@ -2,8 +2,8 @@ import { AiOutlineRobot } from "react-icons/ai";
 import { BsInputCursorText } from "react-icons/bs";
 import { FaToolbox } from "react-icons/fa";
 import {
+  CategoryType,
   NodeConfig,
-  SectionType,
   SubnodeData,
   SubnodeShortcutStyle,
 } from "./types";
@@ -17,7 +17,7 @@ import { DraggableNodeAdditionnalData } from "../components/bars/dnd-sidebar/typ
 
 export type NodeSection = {
   label: string;
-  type: SectionType;
+  type: CategoryType;
   icon?: any;
   nodes?: DnDNode[];
 };
@@ -27,7 +27,8 @@ export type DnDNode = {
   type: string;
   keywords?: string[];
   helpMessage?: string;
-  section: SectionType;
+  section: string;
+  category: CategoryType;
   isBeta?: boolean;
   isNew?: boolean;
   color?: string;
@@ -39,14 +40,25 @@ export function transformNodeConfigsToDndNode(configs: {
   [key: string]: NodeConfig | undefined;
 }): DnDNode[] {
   return Object.entries(configs).map(([type, config]) => {
+    const fallbackCategory = mapSectionToCategory(config?.section);
     return {
       label: config?.nodeName,
       type: type,
       helpMessage: config?.helpMessage || undefined,
       section: config?.section,
+      category: config?.category ?? fallbackCategory,
       isBeta: config?.isBeta,
     } as DnDNode;
   });
+}
+
+function mapSectionToCategory(section?: string): CategoryType {
+  if (!section) return "processing";
+  if (section === "input") return "input";
+  if (section === "tools") return "processing";
+  if (section === "models") return "processing";
+  if (section === "image-generation") return "processing";
+  return "processing";
 }
 
 export function getNonGenericNodeConfig() {
@@ -56,12 +68,14 @@ export function getNonGenericNodeConfig() {
       type: "file",
       helpMessage: "fileUploadHelp",
       section: "input",
+      category: "input",
     },
     {
       label: "AiDataSplitter",
       type: "ai-data-splitter",
       helpMessage: "dataSplitterHelp",
       section: "tools",
+      category: "processing",
       additionnalData: {
         additionnalData: {
           mode: "manual",
@@ -74,12 +88,14 @@ export function getNonGenericNodeConfig() {
       type: "transition",
       helpMessage: "transitionHelp",
       section: "tools",
+      category: "processing",
     },
     {
       label: "Display",
       type: "display",
       helpMessage: "displayHelp",
       section: "tools",
+      category: "output",
     },
   ];
   return nonGenericNodeConfig;
@@ -101,20 +117,20 @@ export const populateNodeSections = () => {
       icon: BsInputCursorText,
     },
     {
-      label: "Models",
-      type: "models",
+      label: "Processing",
+      type: "processing",
       icon: AiOutlineRobot,
     },
     {
-      label: "Tools",
-      type: "tools",
+      label: "Output",
+      type: "output",
       icon: FaToolbox,
     },
   ];
   const nodes = getAllDndNode();
 
   nodes.forEach((node) => {
-    const section = emptyNodeSections.find((sec) => sec.type === node.section);
+    const section = emptyNodeSections.find((sec) => sec.type === node.category);
 
     if (section) {
       if (!section.nodes) {
@@ -129,7 +145,7 @@ export const populateNodeSections = () => {
   );
 
   for (const sec of sectionFiltered) {
-    if (sec.type === "models") sortSection(sec);
+    if (sec.type === "processing") sortSection(sec);
   }
 
   return sectionFiltered;

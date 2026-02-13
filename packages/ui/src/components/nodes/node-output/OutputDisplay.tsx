@@ -33,6 +33,12 @@ export default function OutputDisplay({
       ? data.outputData.length
       : 1;
 
+  const getCurrentOutput = (): string => {
+    if (!data.outputData) return "";
+    if (typeof data.outputData === "string") return data.outputData;
+    return data.outputData[indexDisplayed] ?? "";
+  };
+
   const getOutputComponent = () => {
     if (getOutputComponentOverride) {
       const override = getOutputComponentOverride(data, getOutputType());
@@ -43,11 +49,7 @@ export default function OutputDisplay({
 
     if (!data.outputData) return <></>;
 
-    let output = data.outputData;
-
-    if (typeof output !== "string") {
-      output = output[indexDisplayed];
-    }
+    const output = getCurrentOutput();
 
     switch (getOutputType()) {
       case "imageUrl":
@@ -89,26 +91,22 @@ export default function OutputDisplay({
   };
 
   function getOutputType(): OutputType {
-    if (data.config?.outputType) {
-      return data.config.outputType;
-    }
-
-    if (!data.outputData) {
+    const output = getCurrentOutput();
+    if (!output) {
       return "markdown";
     }
 
-    let outputData = data.outputData;
-    let output = "";
-
-    if (typeof outputData !== "string") {
-      output = outputData[indexDisplayed];
-    } else {
-      output = outputData;
+    // For multi-output nodes, infer type from the currently selected output item
+    // to support mixed output content (e.g. JSON + stream URL in one node).
+    if (typeof data.outputData !== "string") {
+      return getOutputExtension(output);
     }
 
-    const outputType = getOutputExtension(output);
+    if (data.config?.outputType && data.config.outputType !== "markdown") {
+      return data.config.outputType;
+    }
 
-    return outputType;
+    return getOutputExtension(output);
   }
 
   return (
