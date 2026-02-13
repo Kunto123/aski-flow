@@ -29,19 +29,23 @@ const Sidebar: React.FC<SidebarProps> = ({ nodes, edges, onChangeFlow }) => {
 
   return (
     <>
-      <SidebarToggle show={show} onClick={toggleShow}>
+      <SidebarToggle onClick={toggleShow}>
         <ToggleIcon>
           {show ? <FiChevronsRight /> : <FiChevronsLeft />}
         </ToggleIcon>
       </SidebarToggle>
 
       <SidebarContainer
-        show={show}
-        key={sidepaneActiveTab}
+        $show={show}
         className={`aski-rightpanel ${show ? "is-open" : ""}`}
       >
         <Tabs
-          defaultValue={sidepaneActiveTab}
+          value={sidepaneActiveTab}
+          onChange={(tab) => {
+            if (tab === "json" || tab === "current_node") {
+              setSidepaneActiveTab(tab);
+            }
+          }}
           color="cyan"
           variant="pills"
           keepMounted={false}
@@ -50,14 +54,12 @@ const Sidebar: React.FC<SidebarProps> = ({ nodes, edges, onChangeFlow }) => {
             <Tabs.Tab
               value="json"
               leftSection={<FaFile style={iconStyle} />}
-              onClick={() => setSidepaneActiveTab("json")}
             >
               {t("JsonView")}
             </Tabs.Tab>
             <Tabs.Tab
               value="current_node"
               leftSection={<MdCenterFocusStrong style={iconStyle} />}
-              onClick={() => setSidepaneActiveTab("current_node")}
             >
               {t("currentNodeView")}
             </Tabs.Tab>
@@ -80,7 +82,7 @@ const Sidebar: React.FC<SidebarProps> = ({ nodes, edges, onChangeFlow }) => {
   );
 };
 
-const SidebarContainer = styled.div<{ show: boolean }>`
+const SidebarContainer = styled.div<{ $show: boolean }>`
   position: fixed;
   right: 0;
   top: var(--aski-topbar-h);
@@ -97,14 +99,14 @@ const SidebarContainer = styled.div<{ show: boolean }>`
   transition: transform 0.2s ease-in-out;
   z-index: 60;
 
-  ${({ show }) =>
-    show &&
+  ${({ $show }) =>
+    $show &&
     css`
       transform: translateX(0);
     `}
 `;
 
-const SidebarToggle = styled.div<{ show: boolean }>`
+const SidebarToggle = styled.div`
   position: fixed;
   right: 0;
   top: 50%;

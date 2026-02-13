@@ -6,7 +6,7 @@ export type VisibilityElement =
   | "dragAndDropSidebar"
   | "configPopup";
 
-export type SidepaneTab = "json" | "topological" | "current_node";
+export type SidepaneTab = "json" | "current_node";
 export type ConfigTab = "user" | "display" | "app";
 
 export interface VisibilityContextState {
