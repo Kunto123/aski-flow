@@ -46,7 +46,9 @@ if is_server_static_files_enabled():
 if is_local_environment():
     from .app_routes.asset_routes import asset_blueprint
     from .app_routes.image_routes import image_blueprint
+    from .app_routes.stream_routes import stream_blueprint
 
     logging.info("Environment set to LOCAL")
     flask_app.register_blueprint(asset_blueprint)
     flask_app.register_blueprint(image_blueprint)
+    flask_app.register_blueprint(stream_blueprint)
