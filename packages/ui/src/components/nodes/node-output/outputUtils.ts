@@ -10,6 +10,18 @@ export const getGeneratedFileName = (url: string, nodeName: string) => {
   return `${nodeName}-output.${extension}`;
 };
 
+export const isStreamUrl = (url: string) => {
+  if (!url || typeof url !== "string") return false;
+  const normalized = url.toLowerCase();
+  return (
+    normalized.includes("/stream/") ||
+    normalized.endsWith(".mjpg") ||
+    normalized.includes(".mjpg?") ||
+    normalized.endsWith(".mjpeg") ||
+    normalized.includes(".mjpeg?")
+  );
+};
+
 const extensionToTypeMap: { [key: string]: OutputType } = {
   // Image extensions
   ".png": "imageUrl",
@@ -17,6 +29,8 @@ const extensionToTypeMap: { [key: string]: OutputType } = {
   ".gif": "imageUrl",
   ".jpeg": "imageUrl",
   ".webp": "imageUrl",
+  ".mjpg": "imageUrl",
+  ".mjpeg": "imageUrl",
   // Video extensions
   ".mp4": "videoUrl",
   ".mov": "videoUrl",
@@ -34,6 +48,7 @@ const extensionToTypeMap: { [key: string]: OutputType } = {
 export function getOutputExtension(output: string): OutputType {
   if (!output) return "markdown";
   if (typeof output !== "string") return "markdown";
+  if (isStreamUrl(output)) return "imageUrl";
 
   let extension = Object.keys(extensionToTypeMap).find((ext) =>
     output.endsWith(ext),

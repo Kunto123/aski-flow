@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { FaDownload } from "react-icons/fa";
 import styled from "styled-components";
-import { getGeneratedFileName } from "./outputUtils";
+import { getGeneratedFileName, isStreamUrl } from "./outputUtils";
 import { toastErrorMessage } from "../../../utils/toastUtils";
 import { useTranslation } from "react-i18next";
 
@@ -13,6 +13,7 @@ interface ImageUrlOutputProps {
 const ImageUrlOutput: React.FC<ImageUrlOutputProps> = ({ url, name }) => {
   const { t } = useTranslation("flow");
   const [hasError, setHasError] = useState(false);
+  const downloadAllowed = !isStreamUrl(url);
 
   useEffect(() => {
     setHasError(false);
@@ -51,12 +52,14 @@ const ImageUrlOutput: React.FC<ImageUrlOutputProps> = ({ url, name }) => {
             onError={handleError}
             onLoad={handleLoad}
           />
-          <div
-            className="absolute right-3 top-2 rounded-md bg-slate-600/75 px-1 py-1 text-2xl text-slate-100 hover:bg-sky-600/90"
-            onClick={handleDownloadClick}
-          >
-            <FaDownload />
-          </div>
+          {downloadAllowed && (
+            <div
+              className="absolute right-3 top-2 rounded-md bg-slate-600/75 px-1 py-1 text-2xl text-slate-100 hover:bg-sky-600/90"
+              onClick={handleDownloadClick}
+            >
+              <FaDownload />
+            </div>
+          )}
         </>
       )}
     </OutputImageContainer>

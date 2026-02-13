@@ -9,6 +9,10 @@ import { mergerPromptNode } from "./mergerPromptNode";
 import { FieldType, NodeConfig } from "./types";
 import { getNodeExtensions } from "../api/nodes";
 import withCache from "../api/cache/withCache";
+import { cameraInputNodeConfig } from "./cameraInputNode";
+import { recorderNodeConfig } from "./recorderNode";
+import { mainVisionModelNodeConfig } from "./mainVisionModelNode";
+import { arOverlayNodeConfig } from "./arOverlayNode";
 
 export const nodeConfigs: { [key: string]: NodeConfig | undefined } = {
   "input-text": inputTextNodeConfig,
@@ -19,6 +23,10 @@ export const nodeConfigs: { [key: string]: NodeConfig | undefined } = {
   "local-asr": localAsrNodeConfig,
   "local-tts": localTtsNodeConfig,
   "merger-prompt": mergerPromptNode,
+  "camera-input": cameraInputNodeConfig,
+  recorder: recorderNodeConfig,
+  "main-vision-model": mainVisionModelNodeConfig,
+  "ar-overlay": arOverlayNodeConfig,
   // add other configs here...
 };
 

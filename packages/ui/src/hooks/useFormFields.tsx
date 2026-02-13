@@ -409,7 +409,7 @@ export function useFormFields(
         <NodeField
           key={`${id}-${field.name}`}
           field={field}
-          label={t(field.name)}
+          label={t(field.label ?? field.name)}
           renderField={renderField}
           handleId={generateIdForHandle(index)}
           displayParams={displayParams}

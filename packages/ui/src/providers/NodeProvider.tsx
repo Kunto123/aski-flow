@@ -13,6 +13,34 @@ import { NodeAppearance, NodeData } from "../components/nodes/types/node";
 import { NodeConfig } from "../nodes-configuration/types";
 import { getDefaultOptions } from "../utils/nodeConfigurationUtils";
 import { FlowMetadata } from "../layout/main-layout/AppLayout";
+import { stopStream, stopStreamsByOwner } from "../api/stream";
+
+function extractStreamIdsFromValue(value: any): string[] {
+  const streamIds = new Set<string>();
+
+  const parseString = (raw: string) => {
+    if (!raw) return;
+    if (raw.startsWith("stream://")) {
+      streamIds.add(raw.replace("stream://", ""));
+      return;
+    }
+
+    const streamMatch = raw.match(/\/stream\/([^/.?]+)\.(mjpg|mjpeg)/i);
+    if (streamMatch?.[1]) {
+      streamIds.add(streamMatch[1]);
+    }
+  };
+
+  if (typeof value === "string") {
+    parseString(value);
+  } else if (Array.isArray(value)) {
+    value.forEach((item) => {
+      if (typeof item === "string") parseString(item);
+    });
+  }
+
+  return Array.from(streamIds);
+}
 
 export type NodeDimensions = {
   width?: number | null;
@@ -317,6 +345,21 @@ export const NodeProvider = ({
   }
 
   const removeNode = (nodeId: string) => {
+    const nodeToRemove = nodes.find((node) => node.id === nodeId);
+    if (nodeToRemove?.data?.processorType === "camera-input") {
+      const outputStreamIds = extractStreamIdsFromValue(nodeToRemove.data.outputData);
+      const configStreamIds = extractStreamIdsFromValue(nodeToRemove.data.stream_ref);
+      const streamIds = [...new Set([...outputStreamIds, ...configStreamIds])];
+
+      // Fire-and-forget cleanup so UI deletion stays responsive.
+      // 1) Stop by owner node name (covers orphaned/previous streams)
+      stopStreamsByOwner(nodeToRemove.data.name);
+      // 2) Stop explicit stream ids found in outputs
+      streamIds.forEach((streamId) => {
+        stopStream(streamId);
+      });
+    }
+
     const nodesUpdated = nodes.filter((node) => node.id !== nodeId);
     const edgesUpdated = edges.filter(
       (edge) => edge.source !== nodeId && edge.target !== nodeId,
@@ -325,6 +368,14 @@ export const NodeProvider = ({
   };
 
   const removeAll = () => {
+    nodes.forEach((node) => {
+      if (node.data?.processorType === "camera-input") {
+        stopStreamsByOwner(node.data.name);
+        extractStreamIdsFromValue(node.data.outputData).forEach((streamId) => {
+          stopStream(streamId);
+        });
+      }
+    });
     onUpdateNodes([], []);
   };
 

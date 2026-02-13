@@ -179,7 +179,8 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
       hasParent,
       {
         showHandles: data.config.showHandlesNames,
-        showLabels: data.config.showHandlesNames,
+        // Keep field labels visible even when handle names are hidden.
+        showLabels: true,
         showOnlyConnectedFields: collapsed,
       },
       handleNodeDataChange,
