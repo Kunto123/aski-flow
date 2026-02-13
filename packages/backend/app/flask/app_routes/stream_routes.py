@@ -66,3 +66,10 @@ def create_camera_stream():
         "mjpeg_url": manager.build_mjpeg_url(stream_id),
         "predictions_url": manager.build_predictions_url(stream_id),
     }
+
+
+@stream_blueprint.route("/stream/camera/stop", methods=["POST"])
+def stop_all_camera_streams():
+    manager = get_stream_manager()
+    stopped_count = manager.stop_camera_streams()
+    return {"stopped": stopped_count > 0, "stopped_count": stopped_count}

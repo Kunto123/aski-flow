@@ -243,6 +243,20 @@ class StreamManager:
                 stopped += 1
         return stopped
 
+    def stop_camera_streams(self) -> int:
+        with self._registry_lock:
+            camera_stream_ids = [
+                stream_id
+                for stream_id, state in self._streams.items()
+                if state.source_type == "camera"
+            ]
+
+        stopped = 0
+        for stream_id in camera_stream_ids:
+            if self.stop_stream(stream_id):
+                stopped += 1
+        return stopped
+
     def mjpeg_generator(self, stream_id: str) -> Generator[bytes, None, None]:
         boundary = b"--frame\r\n"
         while True:
