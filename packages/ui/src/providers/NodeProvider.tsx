@@ -13,7 +13,11 @@ import { NodeAppearance, NodeData } from "../components/nodes/types/node";
 import { NodeConfig } from "../nodes-configuration/types";
 import { getDefaultOptions } from "../utils/nodeConfigurationUtils";
 import { FlowMetadata } from "../layout/main-layout/AppLayout";
-import { stopStream, stopStreamsByOwner } from "../api/stream";
+import {
+  stopAllCameraStreams,
+  stopStream,
+  stopStreamsByOwner,
+} from "../api/stream";
 
 function extractStreamIdsFromValue(value: any): string[] {
   const streamIds = new Set<string>();
@@ -352,12 +356,17 @@ export const NodeProvider = ({
       const streamIds = [...new Set([...outputStreamIds, ...configStreamIds])];
 
       // Fire-and-forget cleanup so UI deletion stays responsive.
-      // 1) Stop by owner node name (covers orphaned/previous streams)
-      stopStreamsByOwner(nodeToRemove.data.name);
-      // 2) Stop explicit stream ids found in outputs
-      streamIds.forEach((streamId) => {
-        stopStream(streamId);
-      });
+      // Fallback to stop-all-camera to handle orphaned streams.
+      void (async () => {
+        const byOwnerStopped = await stopStreamsByOwner(nodeToRemove.data.name);
+        const streamStopResults = await Promise.all(
+          streamIds.map((streamId) => stopStream(streamId)),
+        );
+        const anyByIdStopped = streamStopResults.some(Boolean);
+        if (!byOwnerStopped && !anyByIdStopped) {
+          await stopAllCameraStreams();
+        }
+      })();
     }
 
     const nodesUpdated = nodes.filter((node) => node.id !== nodeId);
@@ -368,14 +377,21 @@ export const NodeProvider = ({
   };
 
   const removeAll = () => {
-    nodes.forEach((node) => {
-      if (node.data?.processorType === "camera-input") {
-        stopStreamsByOwner(node.data.name);
-        extractStreamIdsFromValue(node.data.outputData).forEach((streamId) => {
-          stopStream(streamId);
-        });
+    void (async () => {
+      const cameraNodes = nodes.filter(
+        (node) => node.data?.processorType === "camera-input",
+      );
+      await Promise.all(
+        cameraNodes.map(async (node) => {
+          await stopStreamsByOwner(node.data.name);
+          const streamIds = extractStreamIdsFromValue(node.data.outputData);
+          await Promise.all(streamIds.map((streamId) => stopStream(streamId)));
+        }),
+      );
+      if (cameraNodes.length > 0) {
+        await stopAllCameraStreams();
       }
-    });
+    })();
     onUpdateNodes([], []);
   };
 

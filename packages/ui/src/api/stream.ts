@@ -22,3 +22,13 @@ export async function stopStreamsByOwner(nodeName: string): Promise<boolean> {
     return false;
   }
 }
+
+export async function stopAllCameraStreams(): Promise<boolean> {
+  try {
+    const response = await client.post("/stream/camera/stop");
+    return !!response?.data?.stopped;
+  } catch (error) {
+    console.error("Failed to stop all camera streams:", error);
+    return false;
+  }
+}
