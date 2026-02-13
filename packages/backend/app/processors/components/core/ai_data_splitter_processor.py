@@ -1,6 +1,7 @@
 import logging
 from ...context.processor_context import ProcessorContext
 from ..processor import ContextAwareProcessor
+from ....env_config import is_cloud_features_enabled
 
 
 from .processor_type_name_utils import ProcessorType
@@ -47,6 +48,14 @@ class AIDataSplitterProcessor(ContextAwareProcessor):
         mode = self.get_input_by_name("mode", self.AI_MODE)
 
         if mode == self.AI_MODE:
+            if not is_cloud_features_enabled():
+                raise ValueError(
+                    "AI mode is disabled. Set ASKI_ENABLE_CLOUD=true to enable cloud features."
+                )
+            if not self.api_key:
+                raise ValueError(
+                    "Missing openai_api_key. Provide it in runtime parameters when cloud mode is enabled."
+                )
             self.init_context(input_data)
 
             answer = self.get_llm_response(self.messages)
