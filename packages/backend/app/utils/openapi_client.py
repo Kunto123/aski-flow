@@ -113,28 +113,3 @@ class Client:
             pooling_response = self.get(path=path, accept=accept)
         return pooling_response
 
-
-# if __name__ == "__main__":
-#     api_reader = OpenAPIReader("../../resources/openapi/stabilityai.json")
-#     print("API Key Name:", api_reader.get_api_key_name())
-#     specific_path = "/v2beta/stable-image/generate/core"  # Remplacez par un chemin valide de votre fichier OpenAPI
-#     params = api_reader.get_request_schema_for_path(specific_path, "POST")
-#     print(params)
-
-#     requestBody = {
-#         "prompt": "A cute baby sea otter",
-#         "aspect_ratio": "16:9",
-#     }
-
-#     serverUrl = api_reader.get_servers()[0]
-
-#     print(serverUrl)
-
-#     client = Client(
-#         api_token="sk-rQKpzMtDplCq8NFjnPxKOKkFzjmdEsticRFMUWUk11uPrflL",
-#         base_url=serverUrl,
-#     )
-
-#     response = client.post(specific_path, requestBody, accept="image/*")
-
-#     print(response)

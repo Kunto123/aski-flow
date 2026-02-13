@@ -34,6 +34,10 @@ def _resolve_local_storage_dir() -> str:
 LOCAL_STORAGE_DIR = _resolve_local_storage_dir()
 
 
+def _env_flag(name: str, default: str = "false") -> bool:
+    return os.getenv(name, default).strip().lower() == "true"
+
+
 def get_static_folder() -> str:
     if getattr(sys, "frozen", False):
         base_path = sys._MEIPASS
@@ -53,11 +57,11 @@ def is_local_environment() -> bool:
 
 
 def is_mock_env() -> bool:
-    return os.getenv("USE_MOCK") == "true"
+    return _env_flag("USE_MOCK")
 
 
 def is_server_static_files_enabled() -> bool:
-    return os.getenv("SERVE_STATIC_FILES") == "true"
+    return _env_flag("SERVE_STATIC_FILES")
 
 
 def get_local_storage_folder_path() -> str:
@@ -77,7 +81,7 @@ def get_background_task_max_workers() -> int:
 
 
 def use_async_browser() -> bool:
-    return os.getenv("USE_ASYNC_BROWSER") == "true"
+    return _env_flag("USE_ASYNC_BROWSER")
 
 
 def get_browser_tab_max_usage() -> int:
@@ -89,7 +93,12 @@ def get_browser_tab_pool_size() -> int:
 
 
 def is_set_app_config_on_ui_enabled() -> bool:
-    return os.getenv("ENABLE_SET_APP_CONFIG_ON_UI", "true") == "true"
+    return _env_flag("ENABLE_SET_APP_CONFIG_ON_UI", "true")
+
+
+def is_cloud_features_enabled() -> bool:
+    # Security baseline: cloud integrations are disabled by default.
+    return _env_flag("ASKI_ENABLE_CLOUD", "false")
 
 
 def is_s3_enabled() -> bool:

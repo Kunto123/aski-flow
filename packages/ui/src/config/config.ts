@@ -6,6 +6,7 @@ const USE_CACHE = import.meta.env.VITE_APP_USE_CACHE?.toLowerCase() || "true";
 const CURRENT_APP_VERSION = import.meta.env.VITE_APP_VERSION;
 const DEFAULT_NODES_HIDDEN_LIST =
   import.meta.env.VITE_APP_DEFAULT_NODES_HIDDEN_LIST || "";
+const ENABLE_CLOUD = import.meta.env.VITE_APP_ENABLE_CLOUD?.toLowerCase() || "false";
 
 const LOW_PRIORITY_NODE_PREFIXES_RAW =
   import.meta.env.VITE_APP_LOW_PRIORITY_PREFIXES || "";
@@ -21,6 +22,7 @@ export const isCacheEnabled = () => USE_CACHE === "true";
 export const getCurrentAppVersion = () => CURRENT_APP_VERSION;
 export const getDefaultNodesHiddenList = () =>
   DEFAULT_NODES_HIDDEN_LIST.split(",") as string[];
+export const isCloudEnabled = () => ENABLE_CLOUD === "true";
 
 export const isDev = () => IS_DEV;
 

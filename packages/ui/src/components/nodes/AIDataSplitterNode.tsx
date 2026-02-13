@@ -13,6 +13,7 @@ import SelectAutocomplete, {
 import NodeTextField from "./node-input/NodeTextField";
 import { Switch, Tooltip } from "@mantine/core";
 import { useTranslation } from "react-i18next";
+import { isCloudEnabled } from "../../config/config";
 
 interface AIDataSplitterNodeData extends GenericNodeData {
   id: string;
@@ -60,21 +61,29 @@ const AIDataSplitterNode: React.FC<AIDataSplitterNodeProps> = React.memo(
   ({ data, id, selected }) => {
     const { t } = useTranslation("flow");
     const updateNodeInternals = useUpdateNodeInternals();
+    const cloudEnabled = isCloudEnabled();
 
     const [isPlaying, setIsPlaying] = useIsPlaying();
 
     const { onUpdateNodeData } = useContext(NodeContext);
 
-    const modeOptions: SelectItem<string>[] = [
-      {
-        value: "ai",
-        name: t("AI"),
-      },
-      {
-        value: "manual",
-        name: t("Separator"),
-      },
-    ];
+    const modeOptions: SelectItem<string>[] = cloudEnabled
+      ? [
+          {
+            value: "ai",
+            name: t("AI"),
+          },
+          {
+            value: "manual",
+            name: t("Separator"),
+          },
+        ]
+      : [
+          {
+            value: "manual",
+            name: t("Separator"),
+          },
+        ];
 
     useEffect(() => {
       const newNbOutput = data.outputData ? data.outputData.length : 0;
@@ -90,6 +99,15 @@ const AIDataSplitterNode: React.FC<AIDataSplitterNodeProps> = React.memo(
     useEffect(() => {
       updateNodeInternals(id);
     }, [data.nbOutput]);
+
+    useEffect(() => {
+      if (!cloudEnabled && (data?.mode ?? "manual") !== "manual") {
+        onUpdateNodeData(id, {
+          ...data,
+          mode: "manual",
+        });
+      }
+    }, [cloudEnabled, data, id, onUpdateNodeData]);
 
     const handlePlayClick = () => {
       setIsPlaying(true);
@@ -144,7 +162,7 @@ const AIDataSplitterNode: React.FC<AIDataSplitterNodeProps> = React.memo(
               <div className="flex w-5/6 flex-col  space-y-2">
                 <SelectAutocomplete
                   values={modeOptions}
-                  selectedValue={data?.mode ?? "ai"}
+                  selectedValue={data?.mode ?? "manual"}
                   onChange={(value) => handleChangeField("mode", value)}
                 />
                 {data["mode"] === "manual" && (

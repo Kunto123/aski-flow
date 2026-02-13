@@ -1,5 +1,5 @@
 import eventlet
-from ..env_config import is_set_app_config_on_ui_enabled
+from ..env_config import is_cloud_features_enabled, is_set_app_config_on_ui_enabled
 
 eventlet.monkey_patch(all=False, socket=True)
 
@@ -31,8 +31,10 @@ def populate_request_global_object(data):
     keys are available throughout the request for different processes.
 
     Parameters:
-        data (dict): A dictionary containing potentially necessary keys: "openai_api_key" and "stabilityai_api_key".
+        data (dict): A dictionary containing optional runtime parameters.
     """
+    cloud_parameter_keys = {"openai_api_key", "stabilityai_api_key", "replicate_api_key"}
+    cloud_enabled = is_cloud_features_enabled()
     use_env = os.getenv("USE_ENV_API_KEYS", "false").lower()
     logging.debug("use_env: %s", use_env)
 
@@ -49,6 +51,9 @@ def populate_request_global_object(data):
             return
 
         for key, value in data[PARAMETERS_FIELD_NAME].items():
+            if key in cloud_parameter_keys and not cloud_enabled:
+                logging.info("Ignoring cloud parameter '%s' because ASKI_ENABLE_CLOUD=false", key)
+                continue
             if value:
                 setattr(g, f"session_{key}", value)
 

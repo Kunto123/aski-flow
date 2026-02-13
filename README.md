@@ -147,6 +147,20 @@ This will start a local server and open AI-Flow in a standalone window, giving y
      ```
    - Open your browser and navigate to [http://localhost:3000](http://localhost:3000).
 
+## ASKI Baseline (Week 3 Gate)
+
+- Cloud paths are disabled by default via `ASKI_ENABLE_CLOUD=false` (backend) and `VITE_APP_ENABLE_CLOUD=false` (UI).
+- To keep checkpoints reproducible, use:
+  ```bash
+  cd packages/ui
+  npm ci
+  npm run build
+  ```
+- To create a UI-only checkpoint zip (without `node_modules`, `build`, `dist`):
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File .\scripts\package-ui-checkpoint.ps1 -OutputZip ui-checkpoint.zip
+  ```
+
 ## Contributing
 
 We welcome contributions! If you encounter issues or have feature ideas, please [open an issue](https://github.com/DahnM20/ai-flow/issues) or submit a pull request.
