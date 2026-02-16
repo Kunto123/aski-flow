@@ -46,7 +46,21 @@ class ProcessorFactoryIterModules(ProcessorFactory):
             if is_pkg:
                 self._load_recursive(module_name)
             else:
-                module = __import__(module_name, fromlist="dummy")
+                # Some extension processors may have optional third-party deps.
+                # We should not crash the whole backend if an optional dependency is missing.
+                try:
+                    module = __import__(module_name, fromlist="dummy")
+                except ModuleNotFoundError as e:
+                    # If our own internal modules are missing, that's a real error.
+                    missing = getattr(e, "name", "") or ""
+                    if missing.startswith("app.") or missing.startswith("packages."):
+                        raise
+                    logging.warning(
+                        "[ProcessorFactory] Skipping module '%s' due to missing dependency '%s'",
+                        module_name,
+                        missing,
+                    )
+                    continue
                 for attribute_name in dir(module):
                     attribute = getattr(module, attribute_name)
                     if isinstance(attribute, type) and issubclass(attribute, Processor):

@@ -16,14 +16,10 @@ from ....utils.processor_utils import (
 from ....tasks.task_utils import wait_for_result
 from ..model import NodeConfig
 from .extension_processor import BasicExtensionProcessor
-from langchain.document_loaders import (
-    UnstructuredPDFLoader,
-    UnstructuredHTMLLoader,
-    CSVLoader,
-    JSONLoader,
-    TextLoader,
-    PyMuPDFLoader,
-)
+
+# NOTE: This processor has optional dependencies (LangChain + loaders). To keep the
+# backend runnable even when those deps are not installed (local-first, minimal base
+# install), we import them lazily inside __init__.
 
 
 class DocumentToText(BasicExtensionProcessor):
@@ -32,6 +28,31 @@ class DocumentToText(BasicExtensionProcessor):
 
     def __init__(self, config):
         super().__init__(config)
+
+        # Prefer the new split packages (langchain-community) but keep backward compatibility.
+        try:
+            from langchain_community.document_loaders import (
+                UnstructuredHTMLLoader,
+                CSVLoader,
+                JSONLoader,
+                TextLoader,
+                PyMuPDFLoader,
+            )
+        except Exception:
+            try:
+                from langchain.document_loaders import (
+                    UnstructuredHTMLLoader,
+                    CSVLoader,
+                    JSONLoader,
+                    TextLoader,
+                    PyMuPDFLoader,
+                )
+            except Exception as e:
+                raise RuntimeError(
+                    "DocumentToText requires optional dependencies that are not installed. "
+                    "Install 'langchain-community' (recommended) or 'langchain' to enable this node."
+                ) from e
+
         self.loaders = {
             "application/pdf": PyMuPDFLoader,
             "text/plain": TextLoader,
