@@ -16,7 +16,7 @@ export const lampControlNodeConfig: NodeConfig = {
     },
   ],
   outputType: "markdown",
-  section: "output",
+  section: "tools",
   category: "output",
   helpMessage: "(Dummy) local device control placeholder (Week 5)",
 };

@@ -19,6 +19,7 @@ class StreamState:
     stream_id: str
     source_type: str
     owner_name: Optional[str] = None
+    source_stream_id: Optional[str] = None
     active: bool = True
     created_at: float = field(default_factory=time.time)
     last_access_at: float = field(default_factory=time.time)
@@ -122,6 +123,7 @@ class StreamManager:
         state = StreamState(
             stream_id=stream_id,
             source_type="transform",
+            source_stream_id=source_stream_id,
             # Transform streams should also be reaped if nothing consumes them.
             idle_timeout_sec=float(os.getenv("ASKI_STREAM_IDLE_TIMEOUT_SEC", "8")),
         )
@@ -145,22 +147,27 @@ class StreamManager:
             state.active = False
             return
 
-        while state.active:
-            ok, frame = capture.read()
-            if not ok or frame is None:
-                time.sleep(0.05)
-                continue
+        try:
+            while state.active:
+                ok, frame = capture.read()
+                if not ok or frame is None:
+                    time.sleep(0.05)
+                    continue
 
-            encoded_ok, encoded = cv2.imencode(".jpg", frame)
-            if not encoded_ok:
-                time.sleep(0.01)
-                continue
+                encoded_ok, encoded = cv2.imencode(".jpg", frame)
+                if not encoded_ok:
+                    time.sleep(0.01)
+                    continue
 
-            with state.lock:
-                state.latest_frame = frame
-                state.latest_jpeg = encoded.tobytes()
-
-        capture.release()
+                with state.lock:
+                    state.latest_frame = frame
+                    state.latest_jpeg = encoded.tobytes()
+        finally:
+            try:
+                capture.release()
+            except Exception:
+                pass
+            self.stop_stream(state.stream_id)
 
     def _transform_loop(
         self,
@@ -170,36 +177,46 @@ class StreamManager:
         fps: float,
     ) -> None:
         delay = 1.0 / max(float(fps), 1.0)
-        while state.active:
-            source = self.get_stream(source_stream_id)
-            if source is None or not source.active:
-                state.active = False
-                break
+        try:
+            while state.active:
+                source = self.get_stream(source_stream_id)
+                if source is None or not source.active:
+                    state.active = False
+                    break
 
-            source_frame = self.get_latest_frame(source_stream_id)
-            if source_frame is None:
+                source_frame = self.get_latest_frame(source_stream_id)
+                if source_frame is None:
+                    time.sleep(delay)
+                    continue
+
+                try:
+                    transformed = transform_fn(source_frame.copy())
+                    predictions: Dict[str, Any] = {}
+                    frame = transformed
+
+                    if isinstance(transformed, tuple) and len(transformed) == 2:
+                        frame, predictions = transformed
+
+                    encoded_ok, encoded = cv2.imencode(".jpg", frame)
+                    if not encoded_ok:
+                        time.sleep(delay)
+                        continue
+
+                    with state.lock:
+                        state.latest_frame = frame
+                        state.latest_jpeg = encoded.tobytes()
+                        if predictions:
+                            state.latest_predictions = predictions
+                except Exception as e:
+                    # Prevent silent dead streams when a transform fails (e.g. model load/encode error).
+                    with state.lock:
+                        state.latest_predictions = {"error": str(e)}
+                    state.active = False
+                    break
+
                 time.sleep(delay)
-                continue
-
-            transformed = transform_fn(source_frame.copy())
-            predictions: Dict[str, Any] = {}
-            frame = transformed
-
-            if isinstance(transformed, tuple) and len(transformed) == 2:
-                frame, predictions = transformed
-
-            encoded_ok, encoded = cv2.imencode(".jpg", frame)
-            if not encoded_ok:
-                time.sleep(delay)
-                continue
-
-            with state.lock:
-                state.latest_frame = frame
-                state.latest_jpeg = encoded.tobytes()
-                if predictions:
-                    state.latest_predictions = predictions
-
-            time.sleep(delay)
+        finally:
+            self.stop_stream(state.stream_id)
 
     def get_stream(self, stream_id: str) -> Optional[StreamState]:
         with self._registry_lock:
@@ -238,10 +255,16 @@ class StreamManager:
 
     def stop_stream(self, stream_id: str) -> bool:
         state: Optional[StreamState] = None
+        dependent_stream_ids = []
         with self._registry_lock:
             state = self._streams.get(stream_id)
             if state is None:
                 return False
+            dependent_stream_ids = [
+                child_id
+                for child_id, child_state in self._streams.items()
+                if child_state.source_stream_id == stream_id
+            ]
             # Mark inactive first so loops can terminate.
             state.active = False
             capture = state.capture
@@ -253,10 +276,19 @@ class StreamManager:
             # Remove from registry so future lookups stop quickly.
             self._streams.pop(stream_id, None)
 
+        # Stop downstream transform streams that depend on this source.
+        for child_stream_id in dependent_stream_ids:
+            if child_stream_id != stream_id:
+                self.stop_stream(child_stream_id)
+
         # Best-effort join to avoid dangling threads (especially for camera streams).
         try:
             thread = state.thread if state else None
-            if thread is not None and thread.is_alive():
+            if (
+                thread is not None
+                and thread.is_alive()
+                and thread is not threading.current_thread()
+            ):
                 thread.join(timeout=2.0)
         except Exception:
             pass
