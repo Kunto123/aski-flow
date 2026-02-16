@@ -71,10 +71,14 @@ class MainVisionModelProcessor(BasicProcessor):
     def _process_stream(self, source_stream_id: str):
         manager = get_stream_manager()
         runtime = get_ultralytics_runtime()
+        if manager.get_stream(source_stream_id) is None:
+            raise RuntimeError(f"Source stream not found: {source_stream_id}")
 
         # Fail fast in local-first mode if the model weights are missing.
-        # Without this, the transform thread can silently loop without frames.
+        # Also force model load upfront so model incompatibility errors are reported
+        # to the node immediately instead of failing silently inside transform thread.
         _ = runtime._normalize_key(self.model_path)
+        _ = runtime.get_model(self.model_path)
 
         def _transform(frame):
             predictions = runtime.predict(
