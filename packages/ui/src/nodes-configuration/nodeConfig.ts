@@ -13,6 +13,10 @@ import { cameraInputNodeConfig } from "./cameraInputNode";
 import { recorderNodeConfig } from "./recorderNode";
 import { mainVisionModelNodeConfig } from "./mainVisionModelNode";
 import { arOverlayNodeConfig } from "./arOverlayNode";
+import { roiNodeConfig } from "./roiNode";
+import { imageProcessingNodeConfig } from "./imageProcessingNode";
+import { conditionalStateNodeConfig } from "./conditionalStateNode";
+import { pythonCodeNodeConfig } from "./pythonCodeNode";
 
 export const nodeConfigs: { [key: string]: NodeConfig | undefined } = {
   "input-text": inputTextNodeConfig,
@@ -27,6 +31,10 @@ export const nodeConfigs: { [key: string]: NodeConfig | undefined } = {
   recorder: recorderNodeConfig,
   "main-vision-model": mainVisionModelNodeConfig,
   "ar-overlay": arOverlayNodeConfig,
+  roi: roiNodeConfig,
+  "image-processing": imageProcessingNodeConfig,
+  "conditional-state": conditionalStateNodeConfig,
+  "python-code": pythonCodeNodeConfig,
   // add other configs here...
 };
 

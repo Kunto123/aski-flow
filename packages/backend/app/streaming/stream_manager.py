@@ -215,15 +215,29 @@ class StreamManager:
             return dict(state.latest_predictions)
 
     def stop_stream(self, stream_id: str) -> bool:
+        state: Optional[StreamState] = None
         with self._registry_lock:
             state = self._streams.get(stream_id)
             if state is None:
                 return False
+            # Mark inactive first so loops can terminate.
             state.active = False
             capture = state.capture
             if capture is not None:
-                capture.release()
+                try:
+                    capture.release()
+                except Exception:
+                    pass
+            # Remove from registry so future lookups stop quickly.
             self._streams.pop(stream_id, None)
+
+        # Best-effort join to avoid dangling threads (especially for camera streams).
+        try:
+            thread = state.thread if state else None
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=1.0)
+        except Exception:
+            pass
         return True
 
     def stop_streams_by_owner(self, owner_name: str) -> int:
