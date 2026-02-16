@@ -40,6 +40,38 @@ import {
 } from "../sockets/flowEventTypes";
 import { useVisibility } from "../providers/VisibilityProvider";
 import { FlowMetadata } from "../layout/main-layout/AppLayout";
+import {
+  stopAllCameraStreams,
+  stopStream,
+  stopStreamsByOwner,
+} from "../api/stream";
+
+function extractStreamIdsFromValue(value: any): string[] {
+  const streamIds = new Set<string>();
+
+  const parseString = (raw: string) => {
+    if (!raw) return;
+    if (raw.startsWith("stream://")) {
+      streamIds.add(raw.replace("stream://", ""));
+      return;
+    }
+
+    const streamMatch = raw.match(/\/stream\/([^/.?]+)\.(mjpg|mjpeg)/i);
+    if (streamMatch?.[1]) {
+      streamIds.add(streamMatch[1]);
+    }
+  };
+
+  if (typeof value === "string") {
+    parseString(value);
+  } else if (Array.isArray(value)) {
+    value.forEach((item) => {
+      if (typeof item === "string") parseString(item);
+    });
+  }
+
+  return Array.from(streamIds);
+}
 
 export interface FlowProps {
   nodes: Node[];
@@ -217,8 +249,42 @@ const Flow = forwardRef((props: FlowProps, ref) => {
   }, [reactFlowInstance]);
 
   const onNodesChange: OnNodesChange = useCallback(
-    (changes) => setNodes((nds) => applyNodeChanges(changes, nds)),
-    [setNodes],
+    (changes) => {
+      // ReactFlow can remove nodes via keyboard/delete without calling our NodeProvider.removeNode().
+      // Ensure we still teardown camera streams when a Camera Input node is removed from the canvas.
+      const removedIds = changes
+        .filter((c: any) => c.type === "remove")
+        .map((c: any) => c.id);
+
+      if (removedIds.length) {
+        const removedNodes = nodes.filter((n) => removedIds.includes(n.id));
+        const cameraNodes = removedNodes.filter(
+          (n) => n?.data?.processorType === "camera-input",
+        );
+        if (cameraNodes.length) {
+          void (async () => {
+            await Promise.all(
+              cameraNodes.map(async (node) => {
+                const outputStreamIds = extractStreamIdsFromValue(node.data?.outputData);
+                const configStreamIds = extractStreamIdsFromValue(node.data?.stream_ref);
+                const streamIds = [...new Set([...outputStreamIds, ...configStreamIds])];
+                const byOwnerStopped = await stopStreamsByOwner(node.data?.name);
+                const byIdResults = await Promise.all(
+                  streamIds.map((streamId) => stopStream(streamId)),
+                );
+                const anyByIdStopped = byIdResults.some(Boolean);
+                if (!byOwnerStopped && !anyByIdStopped) {
+                  await stopAllCameraStreams();
+                }
+              }),
+            );
+          })();
+        }
+      }
+
+      setNodes((nds) => applyNodeChanges(changes, nds));
+    },
+    [setNodes, nodes],
   );
   const onEdgesChange: OnEdgesChange = useCallback(
     (changes) => setEdges((eds) => applyEdgeChanges(changes, eds)),
