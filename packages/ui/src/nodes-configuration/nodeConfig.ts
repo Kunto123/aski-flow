@@ -1,11 +1,3 @@
-import inputTextNodeConfig from "./inputTextNode";
-import { localLlmNodeConfig } from "./localLlmNode";
-import { localVisionNodeConfig } from "./localVisionNode";
-import localImageGenerationNodeConfig from "./localImageGenerationNode";
-import { localEmbeddingNodeConfig } from "./localEmbeddingNode";
-import { localAsrNodeConfig } from "./localAsrNode";
-import { localTtsNodeConfig } from "./localTtsNode";
-import { mergerPromptNode } from "./mergerPromptNode";
 import { FieldType, NodeConfig } from "./types";
 import { getNodeExtensions } from "../api/nodes";
 import withCache from "../api/cache/withCache";
@@ -17,16 +9,16 @@ import { roiNodeConfig } from "./roiNode";
 import { imageProcessingNodeConfig } from "./imageProcessingNode";
 import { conditionalStateNodeConfig } from "./conditionalStateNode";
 import { pythonCodeNodeConfig } from "./pythonCodeNode";
+import { triggerNodeConfig } from "./triggerNode";
+import { faceRecognitionNodeConfig } from "./faceRecognitionNode";
+import { qrCodeReaderNodeConfig } from "./qrCodeReaderNode";
+import { ocrReaderNodeConfig } from "./ocrReaderNode";
+import { ergonomicCheckNodeConfig } from "./ergonomicCheckNode";
+import { lampControlNodeConfig } from "./lampControlNode";
 
 export const nodeConfigs: { [key: string]: NodeConfig | undefined } = {
-  "input-text": inputTextNodeConfig,
-  "local-llm": localLlmNodeConfig,
-  "local-vision": localVisionNodeConfig,
-  "local-image-generation": localImageGenerationNodeConfig,
-  "local-embedding": localEmbeddingNodeConfig,
-  "local-asr": localAsrNodeConfig,
-  "local-tts": localTtsNodeConfig,
-  "merger-prompt": mergerPromptNode,
+  // Week 5 roadmap nodes
+  trigger: triggerNodeConfig,
   "camera-input": cameraInputNodeConfig,
   recorder: recorderNodeConfig,
   "main-vision-model": mainVisionModelNodeConfig,
@@ -35,6 +27,11 @@ export const nodeConfigs: { [key: string]: NodeConfig | undefined } = {
   "image-processing": imageProcessingNodeConfig,
   "conditional-state": conditionalStateNodeConfig,
   "python-code": pythonCodeNodeConfig,
+  "face-recognition": faceRecognitionNodeConfig,
+  "qr-code-reader": qrCodeReaderNodeConfig,
+  "ocr-reader": ocrReaderNodeConfig,
+  "ergonomic-check": ergonomicCheckNodeConfig,
+  "lamp-control": lampControlNodeConfig,
   // add other configs here...
 };
 
@@ -59,6 +56,12 @@ export const loadExtensions = async () => {
     const key = extension.processorType;
     if (!key) return;
     if (key in nodeConfigs) return;
+
+    // Local-first roadmap UX: hide non-roadmap extension nodes by default.
+    // Users can still add their own nodes by using a prefix like "custom-" / "ext-".
+    const allowedPrefixes = ["custom-", "ext-"];
+    const isAllowed = allowedPrefixes.some((p) => key.startsWith(p));
+    if (!isAllowed) return;
 
     nodeConfigs[key] = extension;
   });

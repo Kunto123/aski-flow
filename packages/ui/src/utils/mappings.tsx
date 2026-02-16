@@ -1,9 +1,7 @@
 import { NodeProps } from "reactflow";
 import FileUploadNode from "../components/nodes/FileUploadNode";
 import GenericNode from "../components/nodes/GenericNode";
-import AIDataSplitterNode from "../components/nodes/AIDataSplitterNode";
 import NodeWrapper from "../components/nodes/NodeWrapper";
-import TransitionNode from "../components/nodes/TransitionNode";
 import { nodeConfigs } from "../nodes-configuration/nodeConfig";
 import DisplayNode from "../components/nodes/DisplayNode";
 
@@ -13,11 +11,11 @@ let allNodeTypes: string[] = [];
  * Nodes types that uses specific components, instead of the generic one.
  */
 export const specificNodeTypes: Partial<Record<string, React.FC<NodeProps>>> = {
-  "file-drop": FileUploadNode,
-  "ai-data-splitter": AIDataSplitterNode,
   file: FileUploadNode,
-  transition: TransitionNode,
+  video: FileUploadNode,
+  audio: FileUploadNode,
   display: DisplayNode,
+  "text-display": DisplayNode,
 };
 
 export const loadAllNodesTypes = () => {

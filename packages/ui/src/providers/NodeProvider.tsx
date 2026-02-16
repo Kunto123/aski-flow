@@ -363,7 +363,14 @@ export const NodeProvider = ({
           streamIds.map((streamId) => stopStream(streamId)),
         );
         const anyByIdStopped = streamStopResults.some(Boolean);
+        // Always attempt a global camera stop as a safety-net to avoid leaving
+        // the webcam running when a node is removed.
+        // This is acceptable for Week 5 (single camera use-case) and prevents
+        // orphaned captures when owner/stream-id tracking fails.
         if (!byOwnerStopped && !anyByIdStopped) {
+          await stopAllCameraStreams();
+        } else {
+          // Still do a best-effort cleanup for any orphaned camera stream.
           await stopAllCameraStreams();
         }
       })();

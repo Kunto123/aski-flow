@@ -273,7 +273,10 @@ const Flow = forwardRef((props: FlowProps, ref) => {
                   streamIds.map((streamId) => stopStream(streamId)),
                 );
                 const anyByIdStopped = byIdResults.some(Boolean);
+                // Always run a global stop as a safety-net (Week 5 single-camera target).
                 if (!byOwnerStopped && !anyByIdStopped) {
+                  await stopAllCameraStreams();
+                } else {
                   await stopAllCameraStreams();
                 }
               }),

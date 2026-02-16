@@ -72,6 +72,10 @@ class MainVisionModelProcessor(BasicProcessor):
         manager = get_stream_manager()
         runtime = get_ultralytics_runtime()
 
+        # Fail fast in local-first mode if the model weights are missing.
+        # Without this, the transform thread can silently loop without frames.
+        _ = runtime._normalize_key(self.model_path)
+
         def _transform(frame):
             predictions = runtime.predict(
                 frame,
