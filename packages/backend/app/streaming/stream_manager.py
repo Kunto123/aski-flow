@@ -21,6 +21,8 @@ class StreamState:
     owner_name: Optional[str] = None
     active: bool = True
     created_at: float = field(default_factory=time.time)
+    last_access_at: float = field(default_factory=time.time)
+    idle_timeout_sec: Optional[float] = None
     capture: Optional[Any] = None
     latest_frame: Optional[Any] = None
     latest_jpeg: Optional[bytes] = None
@@ -35,6 +37,16 @@ class StreamManager:
     def __init__(self) -> None:
         self._streams: Dict[str, StreamState] = {}
         self._registry_lock = threading.Lock()
+
+        # Safety net: auto-reap idle camera streams so we don't leave webcams
+        # running if the UI forgets to call stop (e.g., node removed via keyboard,
+        # browser crash, hot reload, etc.).
+        self._reaper_thread = threading.Thread(
+            target=self._reap_idle_streams_loop,
+            daemon=True,
+            name="stream-idle-reaper",
+        )
+        self._reaper_thread.start()
 
     def _new_stream_id(self, prefix: str) -> str:
         return f"{prefix}-{uuid.uuid4().hex[:12]}"
@@ -78,6 +90,8 @@ class StreamManager:
             source_type="camera",
             capture=capture,
             owner_name=owner_name,
+            # Stop camera quickly if nobody is consuming frames anymore.
+            idle_timeout_sec=float(os.getenv("ASKI_CAMERA_IDLE_TIMEOUT_SEC", "4")),
         )
 
         thread = threading.Thread(
@@ -105,7 +119,12 @@ class StreamManager:
             raise RuntimeError(f"Source stream not found: {source_stream_id}")
 
         stream_id = self._new_stream_id("xform")
-        state = StreamState(stream_id=stream_id, source_type="transform")
+        state = StreamState(
+            stream_id=stream_id,
+            source_type="transform",
+            # Transform streams should also be reaped if nothing consumes them.
+            idle_timeout_sec=float(os.getenv("ASKI_STREAM_IDLE_TIMEOUT_SEC", "8")),
+        )
         thread = threading.Thread(
             target=self._transform_loop,
             args=(state, source_stream_id, transform_fn, fps),
@@ -191,6 +210,7 @@ class StreamManager:
         if state is None:
             return None
         with state.lock:
+            state.last_access_at = time.time()
             return None if state.latest_frame is None else state.latest_frame.copy()
 
     def get_latest_jpeg(self, stream_id: str) -> Optional[bytes]:
@@ -198,6 +218,7 @@ class StreamManager:
         if state is None:
             return None
         with state.lock:
+            state.last_access_at = time.time()
             return state.latest_jpeg
 
     def set_predictions(self, stream_id: str, predictions: Dict[str, Any]) -> None:
@@ -212,6 +233,7 @@ class StreamManager:
         if state is None:
             return {}
         with state.lock:
+            state.last_access_at = time.time()
             return dict(state.latest_predictions)
 
     def stop_stream(self, stream_id: str) -> bool:
@@ -235,10 +257,31 @@ class StreamManager:
         try:
             thread = state.thread if state else None
             if thread is not None and thread.is_alive():
-                thread.join(timeout=1.0)
+                thread.join(timeout=2.0)
         except Exception:
             pass
         return True
+
+    def _reap_idle_streams_loop(self) -> None:
+        while True:
+            try:
+                now = time.time()
+                with self._registry_lock:
+                    stale_ids = [
+                        stream_id
+                        for stream_id, state in self._streams.items()
+                        if state.active
+                        and state.idle_timeout_sec is not None
+                        and (now - state.last_access_at) > float(state.idle_timeout_sec)
+                    ]
+
+                for stream_id in stale_ids:
+                    self.stop_stream(stream_id)
+            except Exception:
+                # Never crash the backend because of a reaper failure.
+                pass
+
+            time.sleep(1.0)
 
     def stop_streams_by_owner(self, owner_name: str) -> int:
         if not owner_name:
@@ -282,6 +325,13 @@ class StreamManager:
             if frame is None:
                 time.sleep(0.03)
                 continue
+
+            # Mark as accessed to prevent idle reaper stopping an active viewer.
+            try:
+                with state.lock:
+                    state.last_access_at = time.time()
+            except Exception:
+                pass
 
             yield (
                 boundary

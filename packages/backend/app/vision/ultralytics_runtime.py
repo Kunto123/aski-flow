@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 
 class UltralyticsRuntime:
@@ -10,10 +10,59 @@ class UltralyticsRuntime:
 
     def _normalize_key(self, model_path: str) -> str:
         if not model_path:
-            return "yolov8n.pt"
-        if os.path.exists(model_path):
-            return os.path.abspath(model_path)
+            model_path = "yolov8n.pt"
+
+        resolved = self._resolve_model_path(model_path)
+        if resolved is not None:
+            return os.path.abspath(resolved)
+
+        # Local-first safety: do NOT allow implicit downloads.
+        # Ultralytics will attempt to download weights when given a known name
+        # (e.g. "yolov8n.pt") if it does not exist on disk.
+        allow_download = os.getenv("ASKI_ALLOW_ULTRALYTICS_DOWNLOAD", "0") == "1"
+        if not allow_download:
+            raise FileNotFoundError(
+                "YOLO weights not found locally: "
+                f"'{model_path}'.\n"
+                "Local-first mode blocks implicit downloads. "
+                "Place the weights file locally (e.g. './models/yolov8n.pt' or './data/models/yolo/yolov8n.pt') "
+                "and set 'model_path' accordingly.\n"
+                "(To override for dev only, set ASKI_ALLOW_ULTRALYTICS_DOWNLOAD=1)"
+            )
+
+        # If explicitly allowed, fallback to passing the raw name (Ultralytics may download).
         return model_path
+
+    def _resolve_model_path(self, model_path: str) -> Optional[str]:
+        """Resolve a model path in a local-first way.
+
+        - If an absolute/relative path exists, use it.
+        - If a bare filename is provided, try common local directories.
+        """
+
+        if os.path.exists(model_path):
+            return model_path
+
+        basename = os.path.basename(model_path)
+        if not basename:
+            return None
+
+        # Only attempt common search paths when user passed a bare filename.
+        if basename != model_path:
+            return None
+
+        candidates = [
+            os.path.join("models", basename),
+            os.path.join("data", "models", basename),
+            os.path.join("data", "models", "yolo", basename),
+            os.path.join("data", "models", "vision", basename),
+        ]
+
+        for cand in candidates:
+            if os.path.exists(cand):
+                return cand
+
+        return None
 
     def _load_yolo_class(self):
         try:

@@ -18,8 +18,8 @@ export const mainVisionModelNodeConfig: NodeConfig = {
       name: "model_path",
       label: "Model Path",
       type: "textfield",
-      defaultValue: "yolov8n.pt",
-      placeholder: "e.g. yolov8n.pt",
+      defaultValue: "models/yolov8n.pt",
+      placeholder: "e.g. models/yolov8n.pt",
     },
     {
       name: "conf_threshold",
@@ -35,5 +35,6 @@ export const mainVisionModelNodeConfig: NodeConfig = {
   outputType: "markdown",
   section: "models",
   category: "processing",
-  helpMessage: "Run vision detection for file or stream",
+  helpMessage:
+    "Run YOLO on file or stream. Local-first: model_path must exist locally (no auto-download).",
 };

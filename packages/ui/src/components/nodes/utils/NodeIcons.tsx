@@ -51,6 +51,7 @@ const ICON_MAP: { [key: string]: FC } = {
   FaAws: FaAws,
   TbHttpGet: TbHttpGet,
   MdHttp: MdHttp,
+  MdOutlineBolt: MdOutlineBolt,
   MdOutlineCrop: MdOutlineCrop,
   BiMask: BiMask,
   FaProjectDiagram: FaProjectDiagram,
