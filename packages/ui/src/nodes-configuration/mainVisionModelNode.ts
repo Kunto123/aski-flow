@@ -4,6 +4,7 @@ export const mainVisionModelNodeConfig: NodeConfig = {
   nodeName: "Main Vision Model",
   processorType: "main-vision-model",
   icon: "FaEye",
+  showHandlesNames: true,
   inputNames: ["input_url"],
   fields: [
     {
@@ -30,6 +31,13 @@ export const mainVisionModelNodeConfig: NodeConfig = {
       max: 1,
       step: 0.01,
       allowDecimal: true,
+    },
+    {
+      name: "classes",
+      label: "Classes Filter (optional)",
+      type: "list",
+      defaultValue: [],
+      placeholder: "e.g. person,car or 0,2",
     },
   ],
   outputType: "markdown",

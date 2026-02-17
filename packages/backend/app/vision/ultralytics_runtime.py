@@ -1,6 +1,5 @@
 import os
-import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 
 class UltralyticsRuntime:
@@ -17,18 +16,6 @@ class UltralyticsRuntime:
         if resolved is not None:
             return os.path.abspath(resolved)
 
-        # If the requested model path is missing, fallback to any local model
-        # before failing. This keeps the node usable on fresh setups where
-        # users have custom local weights but not the default one.
-        fallback = self._find_any_local_model()
-        if fallback is not None:
-            logging.warning(
-                "Requested model '%s' not found. Falling back to local model '%s'.",
-                model_path,
-                fallback,
-            )
-            return os.path.abspath(fallback)
-
         # Local-first safety: do NOT allow implicit downloads.
         # Ultralytics will attempt to download weights when given a known name
         # (e.g. "yolov8n.pt") if it does not exist on disk.
@@ -38,7 +25,7 @@ class UltralyticsRuntime:
                 "YOLO weights not found locally: "
                 f"'{model_path}'.\n"
                 "Local-first mode blocks implicit downloads. "
-                "Place the weights file locally (e.g. './models/yolov8n.pt' or './data/models/yolo/yolov8n.pt' or './packages/backend/models/yolov5m.pt') "
+                "Place the weights file locally (e.g. './models/yolov8n.pt' or './data/models/yolo/yolov8n.pt') "
                 "and set 'model_path' accordingly.\n"
                 "(To override for dev only, set ASKI_ALLOW_ULTRALYTICS_DOWNLOAD=1)"
             )
@@ -52,99 +39,30 @@ class UltralyticsRuntime:
         - If an absolute/relative path exists, use it.
         - If a bare filename is provided, try common local directories.
         """
-        if not model_path:
-            return None
 
-        # Important runtime anchors:
-        # - backend_root: <repo>/packages/backend
-        # - repo_root: <repo>
-        backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-        repo_root = os.path.abspath(os.path.join(backend_root, "..", ".."))
-        cwd = os.getcwd()
+        if os.path.exists(model_path):
+            return model_path
 
-        # 1) Try as-is and relative to common roots for explicit paths
-        explicit_candidates = [
-            model_path,
-            os.path.join(cwd, model_path),
-            os.path.join(repo_root, model_path),
-            os.path.join(backend_root, model_path),
-        ]
-        for cand in explicit_candidates:
-            if os.path.exists(cand):
-                return cand
-
-        # 2) Fallback by basename in common model directories
         basename = os.path.basename(model_path)
         if not basename:
             return None
 
-        search_dirs = [
-            os.path.join(cwd, "models"),
-            os.path.join(cwd, "data", "models"),
-            os.path.join(cwd, "data", "models", "yolo"),
-            os.path.join(cwd, "data", "models", "vision"),
-            os.path.join(repo_root, "models"),
-            os.path.join(repo_root, "data", "models"),
-            os.path.join(repo_root, "data", "models", "yolo"),
-            os.path.join(repo_root, "data", "models", "vision"),
-            os.path.join(backend_root, "models"),
-            os.path.join(backend_root, "data", "models"),
-            os.path.join(backend_root, "data", "models", "yolo"),
-            os.path.join(backend_root, "data", "models", "vision"),
-        ]
-
-        names_to_try = [basename]
-        if "." not in basename:
-            names_to_try.extend(
-                [
-                    f"{basename}.pt",
-                    f"{basename}.onnx",
-                    f"{basename}.engine",
-                ]
-            )
-
-        for directory in search_dirs:
-            for model_name in names_to_try:
-                cand = os.path.join(directory, model_name)
-                if os.path.exists(cand):
-                    return cand
-
-        return None
-
-    def _find_any_local_model(self) -> Optional[str]:
-        backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-        repo_root = os.path.abspath(os.path.join(backend_root, "..", ".."))
-        cwd = os.getcwd()
-
-        search_dirs = [
-            os.path.join(cwd, "models"),
-            os.path.join(cwd, "data", "models"),
-            os.path.join(cwd, "data", "models", "yolo"),
-            os.path.join(cwd, "data", "models", "vision"),
-            os.path.join(repo_root, "models"),
-            os.path.join(repo_root, "data", "models"),
-            os.path.join(repo_root, "data", "models", "yolo"),
-            os.path.join(repo_root, "data", "models", "vision"),
-            os.path.join(backend_root, "models"),
-            os.path.join(backend_root, "data", "models"),
-            os.path.join(backend_root, "data", "models", "yolo"),
-            os.path.join(backend_root, "data", "models", "vision"),
-        ]
-
-        found = []
-        for directory in search_dirs:
-            if not os.path.isdir(directory):
-                continue
-            for name in os.listdir(directory):
-                lower = name.lower()
-                if lower.endswith(".pt") or lower.endswith(".onnx") or lower.endswith(".engine"):
-                    found.append(os.path.join(directory, name))
-
-        if not found:
+        # Only attempt common search paths when user passed a bare filename.
+        if basename != model_path:
             return None
 
-        found = sorted(set(found))
-        return found[0]
+        candidates = [
+            os.path.join("models", basename),
+            os.path.join("data", "models", basename),
+            os.path.join("data", "models", "yolo", basename),
+            os.path.join("data", "models", "vision", basename),
+        ]
+
+        for cand in candidates:
+            if os.path.exists(cand):
+                return cand
+
+        return None
 
     def _load_yolo_class(self):
         try:
@@ -164,16 +82,29 @@ class UltralyticsRuntime:
             self._models[key] = model
         return model
 
-    def predict(self, image, model_path: str, conf: float = 0.25) -> Dict[str, Any]:
+    def predict(
+        self,
+        image: Any,
+        model_path: str,
+        conf: float = 0.25,
+        classes: Optional[Sequence[int]] = None,
+    ) -> Dict[str, Any]:
         model = self.get_model(model_path)
-        result = model.predict(image, verbose=False, conf=conf)[0]
+        kwargs: Dict[str, Any] = {"verbose": False, "conf": conf}
+        if classes is not None:
+            kwargs["classes"] = list(classes)
+
+        result = model.predict(image, **kwargs)[0]
         names = result.names or {}
         boxes = []
 
         if result.boxes is not None:
+            allowed = set(classes) if classes is not None else None
             for box in result.boxes:
                 xyxy = box.xyxy[0].tolist()
                 cls = int(box.cls[0].item())
+                if allowed is not None and cls not in allowed:
+                    continue
                 conf_score = float(box.conf[0].item())
                 label = names.get(cls, str(cls))
                 boxes.append(

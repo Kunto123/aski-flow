@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import uuid
+from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
 try:
@@ -50,9 +51,84 @@ class MainVisionModelProcessor(BasicProcessor):
 
     def __init__(self, config):
         super().__init__(config)
-        self.model_path = config.get("model_path", "yolov8n.pt")
+        self.model_path = config.get("model_path", "models/yolov8n.pt")
         self.conf_threshold = float(config.get("conf_threshold", 0.25))
         self.input_url = config.get("input_url")
+        self.classes = config.get("classes")
+
+    def _resolve_class_indices(self, runtime) -> Optional[List[int]]:
+        """Resolve the optional `classes` filter into a list of class indices.
+
+        Accepts:
+          - list[int]
+          - list[str] (label or numeric)
+          - comma-separated string ("0,2,person")
+        """
+
+        raw = self.get_input_by_name("classes", self.classes)
+        if raw is None:
+            return None
+
+        items: List[Union[str, int]]
+        if isinstance(raw, str):
+            s = raw.strip()
+            if not s:
+                return None
+            items = [x.strip() for x in s.replace(";", ",").split(",") if x.strip()]
+        elif isinstance(raw, list):
+            items = [x for x in raw if x is not None and str(x).strip()]
+        else:
+            items = [raw]
+
+        if not items:
+            return None
+
+        model = runtime.get_model(self.model_path)
+        names_obj = getattr(model, "names", None)
+        idx_to_name: Dict[int, str] = {}
+        if isinstance(names_obj, dict):
+            idx_to_name = {int(k): str(v) for k, v in names_obj.items()}
+        elif isinstance(names_obj, list):
+            idx_to_name = {i: str(v) for i, v in enumerate(names_obj)}
+
+        name_to_idx = {v.lower(): k for k, v in idx_to_name.items()}
+
+        resolved: List[int] = []
+        unknown: List[str] = []
+        for it in items:
+            if isinstance(it, (int, float)):
+                resolved.append(int(it))
+                continue
+
+            part = str(it).strip()
+            if not part:
+                continue
+            if part.isdigit():
+                resolved.append(int(part))
+                continue
+
+            key = part.lower()
+            if key in name_to_idx:
+                resolved.append(int(name_to_idx[key]))
+            else:
+                unknown.append(part)
+
+        if unknown:
+            raise ValueError(
+                "Unknown class label(s): "
+                + ", ".join(unknown)
+                + ". Provide valid class names for the selected model, or numeric class IDs."
+            )
+
+        # Deduplicate while preserving order
+        uniq: List[int] = []
+        seen = set()
+        for x in resolved:
+            if x in seen:
+                continue
+            uniq.append(x)
+            seen.add(x)
+        return uniq if uniq else None
 
     def process(self):
         if cv2 is None or np is None:
@@ -71,20 +147,18 @@ class MainVisionModelProcessor(BasicProcessor):
     def _process_stream(self, source_stream_id: str):
         manager = get_stream_manager()
         runtime = get_ultralytics_runtime()
-        if manager.get_stream(source_stream_id) is None:
-            raise RuntimeError(f"Source stream not found: {source_stream_id}")
 
         # Fail fast in local-first mode if the model weights are missing.
-        # Also force model load upfront so model incompatibility errors are reported
-        # to the node immediately instead of failing silently inside transform thread.
+        # Without this, the transform thread can silently loop without frames.
         _ = runtime._normalize_key(self.model_path)
-        _ = runtime.get_model(self.model_path)
+        class_indices = self._resolve_class_indices(runtime)
 
         def _transform(frame):
             predictions = runtime.predict(
                 frame,
                 model_path=self.model_path,
                 conf=self.conf_threshold,
+                classes=class_indices,
             )
             overlay = draw_boxes_overlay(frame, predictions)
             return overlay, predictions
@@ -123,10 +197,12 @@ class MainVisionModelProcessor(BasicProcessor):
         if image is None:
             raise RuntimeError("Could not decode input image")
 
+        class_indices = self._resolve_class_indices(runtime)
         predictions = runtime.predict(
             image,
             model_path=self.model_path,
             conf=self.conf_threshold,
+            classes=class_indices,
         )
         overlay = draw_boxes_overlay(image, predictions)
         ok, encoded = cv2.imencode(".jpg", overlay)
@@ -164,6 +240,7 @@ class MainVisionModelProcessor(BasicProcessor):
 
         last_predictions = {}
         frame_count = 0
+        class_indices = self._resolve_class_indices(runtime)
         while True:
             ok, frame = cap.read()
             if not ok or frame is None:
@@ -172,6 +249,7 @@ class MainVisionModelProcessor(BasicProcessor):
                 frame,
                 model_path=self.model_path,
                 conf=self.conf_threshold,
+                classes=class_indices,
             )
             frame_overlay = draw_boxes_overlay(frame, preds)
             writer.write(frame_overlay)

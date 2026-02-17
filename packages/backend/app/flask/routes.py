@@ -9,6 +9,10 @@ from app.env_config import (
 from app.flask.socketio_init import flask_app
 from .utils.constants import HTTP_OK
 
+from app.storage.db import init_db
+
+init_db()
+
 
 @flask_app.route("/healthcheck", methods=["GET"])
 def healthcheck():
@@ -45,10 +49,18 @@ if is_server_static_files_enabled():
 
 if is_local_environment():
     from .app_routes.asset_routes import asset_blueprint
+    from .app_routes.annotation_routes import annotation_blueprint
+    from .app_routes.dataset_routes import datasets_blueprint
     from .app_routes.image_routes import image_blueprint
+    from .app_routes.model_routes import models_blueprint
     from .app_routes.stream_routes import stream_blueprint
+    from .app_routes.training_routes import training_blueprint
 
     logging.info("Environment set to LOCAL")
     flask_app.register_blueprint(asset_blueprint)
     flask_app.register_blueprint(image_blueprint)
     flask_app.register_blueprint(stream_blueprint)
+    flask_app.register_blueprint(models_blueprint)
+    flask_app.register_blueprint(datasets_blueprint)
+    flask_app.register_blueprint(annotation_blueprint)
+    flask_app.register_blueprint(training_blueprint)

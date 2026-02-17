@@ -4,6 +4,7 @@ export const pythonCodeNodeConfig: NodeConfig = {
   nodeName: "Python Code",
   processorType: "python-code",
   icon: "BsRegex",
+  showHandlesNames: true,
   inputNames: ["payload"],
   fields: [
     {

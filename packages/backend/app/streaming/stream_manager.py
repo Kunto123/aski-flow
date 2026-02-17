@@ -18,8 +18,8 @@ TransformFn = Callable[[Any], Any]
 class StreamState:
     stream_id: str
     source_type: str
-    owner_name: Optional[str] = None
     source_stream_id: Optional[str] = None
+    owner_name: Optional[str] = None
     active: bool = True
     created_at: float = field(default_factory=time.time)
     last_access_at: float = field(default_factory=time.time)
@@ -30,6 +30,7 @@ class StreamState:
     latest_predictions: Dict[str, Any] = field(default_factory=dict)
     thread: Optional[threading.Thread] = None
     lock: threading.Lock = field(default_factory=threading.Lock)
+    stop_event: threading.Event = field(default_factory=threading.Event)
 
 
 class StreamManager:
@@ -74,10 +75,34 @@ class StreamManager:
                 "opencv-python is required for camera streaming. Install backend dependencies first."
             )
         stream_id = self._new_stream_id("cam")
-        capture = cv2.VideoCapture(camera_index)
+
+        # Camera backend selection (helps on Windows where some backends can hang on release).
+        # Supported values: dshow | msmf | v4l2 | avfoundation | gstreamer | any
+        backend_name = (os.getenv("ASKI_CAMERA_BACKEND") or "").strip().lower()
+        if not backend_name and os.name == "nt":
+            backend_name = "dshow"
+        backend_map = {
+            "dshow": getattr(cv2, "CAP_DSHOW", 0),
+            "msmf": getattr(cv2, "CAP_MSMF", 0),
+            "v4l2": getattr(cv2, "CAP_V4L2", 0),
+            "avfoundation": getattr(cv2, "CAP_AVFOUNDATION", 0),
+            "gstreamer": getattr(cv2, "CAP_GSTREAMER", 0),
+        }
+        api_preference = backend_map.get(backend_name)
+
+        if api_preference and backend_name != "any":
+            capture = cv2.VideoCapture(camera_index, api_preference)
+        else:
+            capture = cv2.VideoCapture(camera_index)
         if not capture.isOpened():
             capture.release()
             raise RuntimeError(f"Cannot open camera index {camera_index}")
+
+        # Reduce internal buffering so stopping streams doesn't keep the device busy.
+        try:
+            capture.set(getattr(cv2, "CAP_PROP_BUFFERSIZE", 38), 1)
+        except Exception:
+            pass
 
         if width:
             capture.set(cv2.CAP_PROP_FRAME_WIDTH, float(width))
@@ -148,8 +173,17 @@ class StreamManager:
             return
 
         try:
-            while state.active:
-                ok, frame = capture.read()
+            while state.active and not state.stop_event.is_set():
+                # grab/retrieve tends to be more cooperative on some backends than read()
+                try:
+                    ok = capture.grab()
+                except Exception:
+                    ok = False
+                if not ok:
+                    time.sleep(0.03)
+                    continue
+
+                ok, frame = capture.retrieve()
                 if not ok or frame is None:
                     time.sleep(0.05)
                     continue
@@ -163,11 +197,14 @@ class StreamManager:
                     state.latest_frame = frame
                     state.latest_jpeg = encoded.tobytes()
         finally:
+            # IMPORTANT (Windows): release inside the capture thread to avoid driver locks.
             try:
                 capture.release()
             except Exception:
                 pass
-            self.stop_stream(state.stream_id)
+            with state.lock:
+                state.capture = None
+
 
     def _transform_loop(
         self,
@@ -177,46 +214,36 @@ class StreamManager:
         fps: float,
     ) -> None:
         delay = 1.0 / max(float(fps), 1.0)
-        try:
-            while state.active:
-                source = self.get_stream(source_stream_id)
-                if source is None or not source.active:
-                    state.active = False
-                    break
+        while state.active:
+            source = self.get_stream(source_stream_id)
+            if source is None or not source.active:
+                state.active = False
+                break
 
-                source_frame = self.get_latest_frame(source_stream_id)
-                if source_frame is None:
-                    time.sleep(delay)
-                    continue
-
-                try:
-                    transformed = transform_fn(source_frame.copy())
-                    predictions: Dict[str, Any] = {}
-                    frame = transformed
-
-                    if isinstance(transformed, tuple) and len(transformed) == 2:
-                        frame, predictions = transformed
-
-                    encoded_ok, encoded = cv2.imencode(".jpg", frame)
-                    if not encoded_ok:
-                        time.sleep(delay)
-                        continue
-
-                    with state.lock:
-                        state.latest_frame = frame
-                        state.latest_jpeg = encoded.tobytes()
-                        if predictions:
-                            state.latest_predictions = predictions
-                except Exception as e:
-                    # Prevent silent dead streams when a transform fails (e.g. model load/encode error).
-                    with state.lock:
-                        state.latest_predictions = {"error": str(e)}
-                    state.active = False
-                    break
-
+            source_frame = self.get_latest_frame(source_stream_id)
+            if source_frame is None:
                 time.sleep(delay)
-        finally:
-            self.stop_stream(state.stream_id)
+                continue
+
+            transformed = transform_fn(source_frame.copy())
+            predictions: Dict[str, Any] = {}
+            frame = transformed
+
+            if isinstance(transformed, tuple) and len(transformed) == 2:
+                frame, predictions = transformed
+
+            encoded_ok, encoded = cv2.imencode(".jpg", frame)
+            if not encoded_ok:
+                time.sleep(delay)
+                continue
+
+            with state.lock:
+                state.latest_frame = frame
+                state.latest_jpeg = encoded.tobytes()
+                if predictions:
+                    state.latest_predictions = predictions
+
+            time.sleep(delay)
 
     def get_stream(self, stream_id: str) -> Optional[StreamState]:
         with self._registry_lock:
@@ -254,45 +281,70 @@ class StreamManager:
             return dict(state.latest_predictions)
 
     def stop_stream(self, stream_id: str) -> bool:
-        state: Optional[StreamState] = None
-        dependent_stream_ids = []
+        """Stop a stream deterministically.
+
+        On Windows (especially with USB cameras), OpenCV backends can keep the device
+        locked if VideoCapture.release() is called from a different thread than the
+        capture loop. To avoid that, we only signal the capture thread to stop, then
+        join it, and let the capture thread release the device in its own finally.
+        """
+        # 1) Snapshot state + dependents under lock
         with self._registry_lock:
             state = self._streams.get(stream_id)
             if state is None:
                 return False
-            dependent_stream_ids = [
-                child_id
-                for child_id, child_state in self._streams.items()
-                if child_state.source_stream_id == stream_id
+
+            dependent_ids = [
+                sid for sid, st in self._streams.items() if st.source_stream_id == stream_id
             ]
-            # Mark inactive first so loops can terminate.
+
+            # Mark inactive first so loops can terminate quickly.
             state.active = False
-            capture = state.capture
-            if capture is not None:
-                try:
-                    capture.release()
-                except Exception:
-                    pass
-            # Remove from registry so future lookups stop quickly.
-            self._streams.pop(stream_id, None)
+            state.stop_event.set()
 
-        # Stop downstream transform streams that depend on this source.
-        for child_stream_id in dependent_stream_ids:
-            if child_stream_id != stream_id:
-                self.stop_stream(child_stream_id)
+        # 2) Stop dependents first (outside lock) so they don't keep touching the source
+        for dep_id in dependent_ids:
+            try:
+                self.stop_stream(dep_id)
+            except Exception:
+                pass
 
-        # Best-effort join to avoid dangling threads (especially for camera streams).
+        # 3) Join this stream thread (best-effort). For camera streams, this should
+        # release the OS device handle in the capture thread finally block.
         try:
-            thread = state.thread if state else None
-            if (
-                thread is not None
-                and thread.is_alive()
-                and thread is not threading.current_thread()
-            ):
-                thread.join(timeout=2.0)
+            thread = state.thread
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=5.0)
         except Exception:
             pass
+
+        # 4) If the thread is still alive, attempt a last-resort release to unblock.
+        # This is not ideal but is better than leaving the device locked forever.
+        try:
+            thread = state.thread
+            if thread is not None and thread.is_alive():
+                cap = state.capture
+                if cap is not None:
+                    try:
+                        cap.release()
+                    except Exception:
+                        pass
+                    with state.lock:
+                        state.capture = None
+                # Give it a moment to unwind.
+                try:
+                    thread.join(timeout=1.0)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # 5) Remove from registry after stop/join to ensure generators and lookups stop.
+        with self._registry_lock:
+            self._streams.pop(stream_id, None)
+
         return True
+
 
     def _reap_idle_streams_loop(self) -> None:
         while True:

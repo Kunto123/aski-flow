@@ -4,6 +4,7 @@ export const qrCodeReaderNodeConfig: NodeConfig = {
   nodeName: "QR Code Reader",
   processorType: "qr-code-reader",
   icon: "BsJson",
+  showHandlesNames: true,
   inputNames: ["input_url"],
   fields: [
     {

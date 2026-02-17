@@ -1,7 +1,6 @@
 from ...context.processor_context import ProcessorContext
 from ..processor import ContextAwareProcessor
 from ..core.processor_type_name_utils import ProcessorType
-from .media_ref_utils import resolve_stream_image_to_asset_url
 from ....utils.local_inference_utils import (
     coerce_float,
     coerce_int,
@@ -33,12 +32,6 @@ class LocalVisionProcessor(ContextAwareProcessor):
             raise Exception("No prompt provided")
         if not image_url:
             raise Exception("No image provided")
-
-        image_url = resolve_stream_image_to_asset_url(
-            image_url,
-            self.get_storage(),
-            self.name,
-        )
 
         payload = sanitize_payload(
             {

@@ -4,6 +4,7 @@ export const ergonomicCheckNodeConfig: NodeConfig = {
   nodeName: "Ergonomic Check",
   processorType: "ergonomic-check",
   icon: "BsListTask",
+  showHandlesNames: true,
   inputNames: ["input_json"],
   fields: [
     {

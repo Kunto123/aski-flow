@@ -64,14 +64,6 @@ export function getNbInputs(data: NodeData, fields?: Field[]) {
 }
 
 export function getNbOutputs(data: NodeData) {
-  // Camera node has a fixed dual-output contract:
-  // 0 => stream ref, 1 => mjpeg URL.
-  // Keep both handles visible even before first run so users can wire
-  // the intended media output via edges.
-  if (data.processorType === "camera-input") {
-    return 2;
-  }
-
   return data.outputData != null && typeof data.outputData !== "string"
     ? data.outputData.length
     : 1;

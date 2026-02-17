@@ -4,6 +4,7 @@ export const roiNodeConfig: NodeConfig = {
   nodeName: "ROI",
   processorType: "roi",
   icon: "MdOutlineCrop",
+  showHandlesNames: true,
   inputNames: ["input_url"],
   fields: [
     {

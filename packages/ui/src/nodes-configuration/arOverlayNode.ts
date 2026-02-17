@@ -4,6 +4,7 @@ export const arOverlayNodeConfig: NodeConfig = {
   nodeName: "AR Overlay",
   processorType: "ar-overlay",
   icon: "MdOutlineCrop",
+  showHandlesNames: true,
   inputNames: ["image_url", "predictions_json"],
   fields: [
     {

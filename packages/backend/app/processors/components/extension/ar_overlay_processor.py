@@ -1,5 +1,6 @@
 import json
 import uuid
+from urllib.parse import urlparse
 
 try:
     import cv2
@@ -7,11 +8,21 @@ try:
 except Exception:
     cv2 = None
     np = None
+from werkzeug.utils import secure_filename
 
 from ..core.processor_type_name_utils import ProcessorType
 from ..processor import BasicProcessor
-from .media_ref_utils import extract_asset_filename, resolve_stream_image_to_asset_url
 from ....vision import draw_boxes_overlay
+
+
+def _extract_asset_filename(url: str):
+    parsed = urlparse(url)
+    path = parsed.path
+    marker = "/asset/"
+    if marker not in path:
+        return None
+    raw = path.split(marker, 1)[1]
+    return secure_filename(raw)
 
 
 class AROverlayProcessor(BasicProcessor):
@@ -36,12 +47,7 @@ class AROverlayProcessor(BasicProcessor):
         if not image_url:
             raise ValueError("ar-overlay requires image_url")
 
-        image_url = resolve_stream_image_to_asset_url(
-            image_url,
-            self.get_storage(),
-            self.name,
-        )
-        filename = extract_asset_filename(image_url)
+        filename = _extract_asset_filename(image_url)
         if not filename:
             raise ValueError("ar-overlay expects /asset/<file> image URL")
 

@@ -4,6 +4,7 @@ export const imageProcessingNodeConfig: NodeConfig = {
   nodeName: "Image Processing",
   processorType: "image-processing",
   icon: "FiFilter",
+  showHandlesNames: true,
   inputNames: ["input_url"],
   fields: [
     {

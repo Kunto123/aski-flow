@@ -1,170 +1,298 @@
-<p align="center">
-  <img src="assets/header.png" alt="AI-Flow Logo" />
-</p>
+# ASKI Flow (Local‑First)
 
-<p align="center">
-  <em>Open-source tool to seamlessly connect multiple AI model APIs into repeatable workflows.</em>
-</p>
-
-<p align="center">
-  <a href="https://docs.ai-flow.net/?ref=github"><img src="https://img.shields.io/badge/lang-English-blue.svg" alt="English"></a>
-  <a href="https://docs.ai-flow.net/?ref=github"><img src="https://img.shields.io/badge/lang-French-blue.svg" alt="French"></a>
-  <img src="https://img.shields.io/badge/License-MIT-yellow.svg">
-  <img src="https://img.shields.io/github/v/release/DahnM20/ai-flow">
-  <a href="https://twitter.com/DahnM20"><img src="https://img.shields.io/twitter/follow/AI-Flow?style=social" alt="Follow on Twitter"></a>
-</p>
-
-<p align="center">
-  <a href="https://ai-flow.net/?ref=github">🔗 Website</a> • 
-  <a href="https://docs.ai-flow.net/?ref=github">📚 Documentation</a>
-</p>
+ASKI Flow adalah sistem workflow **node‑based** yang berjalan **100% lokal** (offline / LAN). Fokus checkpoint Week 5: **stream execution + main vision model (YOLO) + filter nodes (dummy)**, dengan UI yang sudah bisa menyambungkan node input→processing→output.
 
 ---
 
-<div align="center">
-  🎉🚀 Latest Release: v0.11.3 🚀🎉
+## Quickstart (Local Dev)
 
-  <br>
-  Nodes Updated : Web search can be enabled on GPT node, Claude 4 available
-  <br>
-  UI : Node Search Bar, Shortcut for Popular Replicate Models
-  
-  <br>
-  New Models available : Flux Kontext, Veo 3, Lyria 2, Imagen 4 available through the Replicate Node
-</div>
+### 1) Backend
+
+```bash
+cd packages/backend
+poetry install
+poetry run python server.py
+```
+
+Backend default berjalan di `http://localhost:5000`.
+
+### 2) UI
+
+```bash
+cd packages/ui
+npm install
+npm start
+```
+
+UI default berjalan di `http://localhost:3000`.
 
 ---
 
-![AI-Flow Intro](assets/flow-example-3.png)
+## Catatan Penting (Local‑First)
 
-## Overview
+### YOLO weights **tidak auto-download**
 
-**AI-Flow** is an open-source, user-friendly UI that lets you visually design, manage, and monitor AI-driven workflows by seamlessly connecting multiple AI model APIs (e.g., OpenAI, StabilityAI, Replicate, Claude, Deepseek).
+Node **Main Vision Model** butuh file weights lokal.
 
-## Features
+**Rekomendasi**: simpan di folder `packages/backend/models/` atau root `models/` (sesuai `model_path` yang kamu set di node).
 
-- **Visual Workflow Builder:** Drag-and-drop interface for crafting AI workflows.
-- **Real-Time Monitoring:** Watch your workflow execute and track results.
-- **Parallel Processing:** Nodes run in parallel whenever possible.
-- **Model Management:** Easily organize and manage diverse AI models.
-- **Import/Export:** Share or back up your workflows effortlessly.
+Contoh:
 
-## Supported Models
+```text
+models/yolov8n.pt
+```
 
-- **Replicate:** All models available through the Replicate API (FLUX.1, FLUX.1 Kontext, Imagen 4, Veo 3, Lyria 2, and many more)
-- **OpenAI:** GPT-4o, GPT-4.1, TTS, o1, o3, o4.
-- **StabilityAI:** Stable Diffusion 3.5, SDXL, Stable Video Diffusion, plus additional tools.
-- **Others:** Claude, Deepseek, OpenRouter.
+Jika file tidak ada, node akan error (dan UI akan berhenti spinning + menampilkan error).
 
-![Scenario Example](assets/flow-example-2.png)
+### Kamera tidak berhenti setelah node dihapus?
 
-## Open Source vs. Cloud
+Di Week 5, stream manager sudah di‑patch agar:
 
-**AI-Flow** is fully open source and available under the MIT License, empowering you to build and run your AI workflows on your personal machine.
+1) **Stop dependents** (overlay/transform stream) ketika stream sumber dihentikan.
+2) Menggunakan backend kamera yang lebih “kooperatif” untuk release device.
 
-For those seeking enhanced functionality and a polished experience, **AI-Flow Pro** on our cloud platform ([app.ai-flow.net](https://ai-flow.net/?ref=github)) offers advanced features, including:
+Jika masih bermasalah di Windows, set env berikut sebelum menjalankan backend:
 
-- **Subflows & Loops:** Create complex, nested workflows and iterate tasks effortlessly.
-- **API-Triggered Flows:** Initiate workflows via API calls for seamless automation.
-- **Integrated Services:** Connect with external services such as Google Search, Airtable, Zapier, and Make.
-- **Simplified Interface:** Transform workflows into streamlined tools with an intuitive UI.
+```bash
+set ASKI_CAMERA_BACKEND=dshow
+```
 
-![Pro VS Open Source](assets/comparison-pro-vs-opensource-v2.png)
+Opsi lain: `msmf`, `any`.
 
-The cloud version builds upon the foundation of the open-source project, giving you more power and flexibility while still letting you use your own API keys.
+---
 
-## Installation
+## Guide Node (Week 5)
 
-> **Note:** To unlock full functionality, AI-Flow requires S3-compatible storage (with proper CORS settings) to host resources. Without it, features like File Upload or nodes that rely on external providers (e.g., StabilityAI) may not work as expected. Also, set `REPLICATE_API_KEY` in the App Parameters or in your environment to use the Replicate node.
+Di UI, node‑node dibagi menjadi:
 
-### Method 1: Using the Executable (Windows Only)
+- **Input**: File / Video / Audio, Trigger, Live Cam
+- **Processing**: Main Vision Model + filter nodes (ROI, AR Overlay, dll)
+- **Output**: Display, Text Display, Recorder, Lamp Control (dummy)
 
-> **Note:** This method is only available for Windows users.
+> **Catatan:** beberapa node filter masih **dummy** (sesuai roadmap) tapi sudah tersedia di UI dan bisa disambungkan.
 
-1. Download the latest Windows version of AI-Flow from the official releases page: [AI-Flow Releases](https://ai-flow.net/release/)
-2. Once downloaded, run the `.exe` file.
+### 1) File / Video / Audio Input
 
-This will start a local server and open AI-Flow in a standalone window, giving you direct access to its user interface without needing to install anything else.
+**Tipe:** `file`, `video`, `audio`
 
-### Method 2 : Docker Installation
+**Tujuan:** upload file lokal ke storage backend.
 
-1. **Prepare Docker Compose:**
+**Output (index):**
 
-   - Navigate to the `docker` directory:
-     ```bash
-     cd docker
-     ```
+- `0`: URL asset, contoh: `/asset/<filename>`
 
-2. **Launch with Docker Compose:**
-   ```bash
-   docker-compose up -d
-   ```
-3. **Access the Application:**
-   - Open [http://localhost:80](http://localhost:80) in your browser.
-   - To stop, run:
-     ```bash
-     docker-compose stop
-     ```
+---
 
-### Method 3 : Local Installation
+### 2) Trigger
 
-1. **Clone the Repository:**
+**Processor:** `trigger`
 
-   ```bash
-   git clone https://github.com/DahnM20/ai-flow.git
-   cd ai-flow
-   ```
+**Tujuan:** memicu node downstream secara manual dan mengirim payload.
 
-2. **UI Setup:**
+**Fields:**
 
-   ```bash
-   cd packages/ui
-   npm install
-   ```
+- `payload` (JSON/string)
 
-3. **Backend Setup:**
+**Output:**
 
-   ```bash
-   cd ../backend
-   poetry install
-   ```
+- `0`: payload (string)
 
-   - **Windows Users:**
-     ```bash
-     poetry shell
-     pip install -r requirements_windows.txt
-     ```
+---
 
-4. **Run the Application:**
-   - Start the backend:
-     ```bash
-     poetry run python server.py
-     ```
-   - In a new terminal, start the UI:
-     ```bash
-     cd packages/ui
-     npm start
-     ```
-   - Open your browser and navigate to [http://localhost:3000](http://localhost:3000).
+### 3) Camera Input (Live Cam)
 
-## ASKI Baseline (Week 3 Gate)
+**Processor:** `camera-input`
 
-- Cloud paths are disabled by default via `ASKI_ENABLE_CLOUD=false` (backend) and `VITE_APP_ENABLE_CLOUD=false` (UI).
-- To keep checkpoints reproducible, use:
-  ```bash
-  cd packages/ui
-  npm ci
-  npm run build
-  ```
-- To create a UI-only checkpoint zip (without `node_modules`, `build`, `dist`):
-  ```powershell
-  powershell -ExecutionPolicy Bypass -File .\scripts\package-ui-checkpoint.ps1 -OutputZip ui-checkpoint.zip
-  ```
+**Fields:**
 
-## Contributing
+- `camera_index` (default `0`)
+- `fps` (default `20`)
 
-We welcome contributions! If you encounter issues or have feature ideas, please [open an issue](https://github.com/DahnM20/ai-flow/issues) or submit a pull request.
+**Output (index):**
 
-## License
+- `0`: `stream://<stream_id>`
+- `1`: MJPEG URL, contoh: `/stream/<stream_id>.mjpg`
 
-This project is released under the [MIT License](LICENSE).
+**Stop behavior:**
+
+- Saat node dihapus dari canvas, UI memanggil stop stream, dan backend akan release camera handle.
+
+---
+
+### 4) Main Vision Model (YOLO)
+
+**Processor:** `main-vision-model`
+
+**Input:**
+
+- `input_url` (asset URL atau `stream://...`)
+
+**Fields:**
+
+- `model_path` (contoh: `models/yolov8n.pt`)
+- `conf_threshold` (0..1)
+- `classes` (opsional): filter class yang mau dideteksi.
+  - Bisa isi `person,car` atau `0,2` (angka = class id)
+
+**Output (index):**
+
+- `0`: JSON string (predictions/payload)
+- `1`: `stream://<overlay_stream_id>` (untuk mode stream)
+- `2`: MJPEG URL overlay (untuk mode stream)
+- `3`: predictions URL (untuk mode stream)
+
+---
+
+### 5) ROI
+
+**Processor:** `roi`
+
+**Input:**
+
+- `input_url`
+
+**Fields:**
+
+- `x,y,w,h` (0..1)
+
+**Output:**
+
+- URL image hasil crop (atau stream ref jika stream)
+
+---
+
+### 6) Image Processing
+
+**Processor:** `image-processing`
+
+**Input:** `input_url`
+
+**Fields (opsional):** resize, grayscale, blur, threshold.
+
+**Output:** image URL
+
+---
+
+### 7) AR Overlay
+
+**Processor:** `ar-overlay`
+
+**Input:**
+
+- `image_url`
+- `predictions_json`
+
+**Output:** image URL overlay
+
+---
+
+### 8) Conditional State
+
+**Processor:** `conditional-state`
+
+**Input:**
+
+- `input_json`
+
+**Output (2 port):**
+
+- `0`: pass‑through jika kondisi TRUE
+- `1`: pass‑through jika kondisi FALSE
+
+---
+
+### 9) Python Code
+
+**Processor:** `python-code`
+
+**Input:** `payload`
+
+**Fields:**
+
+- `code` (python snippet)
+- `timeout_sec`
+
+**Output:** JSON string dari variable `result`
+
+---
+
+### 10) Display
+
+**Tipe:** `display`
+
+**Input:** URL image/video atau stream ref.
+
+**Output:** none (viewer)
+
+---
+
+### 11) Text Display
+
+**Tipe:** `text-display`
+
+**Input:** text/JSON.
+
+---
+
+### 12) Recorder
+
+**Processor:** `recorder`
+
+**Input:** `stream_ref`
+
+**Output:** video URL (`.mp4`)
+
+---
+
+### 13) Face Recognition / QR Reader / OCR Reader / Lamp Control / Ergonomic Check
+
+**Status:** Dummy (Week 5)
+
+Node‑node ini sudah ada untuk menyamakan UI dengan roadmap, tetapi implementasi model/logic detail masuk Week berikutnya.
+
+---
+
+## Troubleshooting
+
+### UI “spinning” lama
+
+Jika node error (misal `model_path` tidak ditemukan), sekarang UI akan:
+
+- menghentikan spinner pada node
+- menampilkan popup error
+
+### Kamera tidak release
+
+Set `ASKI_CAMERA_BACKEND=dshow` (Windows) atau coba `msmf`.
+
+---
+
+## Roadmap
+
+Checkpoint ini sesuai target **Week 5** pada `ROADMAP.txt`.
+
+
+## Model Registry (Week 7 skeleton)
+
+- `GET /models` list registered models
+- `POST /models/upload` multipart `file` (ZIP package with `manifest.json`)
+- `POST /models/<id>/validate`
+
+Model packages are stored under `data/models/<model_id>/`.
+
+## Dataset Manager (Week 8 skeleton)
+
+- `GET /datasets`
+- `POST /datasets` JSON `{name, classes[]}`
+
+Datasets are stored under `data/datasets/<dataset_id>/` with subfolders `images/labels/videos/splits/exports`.
+
+## Camera Stop on Windows (USB)
+
+If your USB webcam remains locked after stopping, set the backend explicitly:
+
+- PowerShell:
+  - `setx ASKI_CAMERA_BACKEND dshow`
+
+Then restart backend.
+

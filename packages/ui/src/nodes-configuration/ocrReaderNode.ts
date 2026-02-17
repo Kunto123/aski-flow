@@ -4,6 +4,7 @@ export const ocrReaderNodeConfig: NodeConfig = {
   nodeName: "OCR Reader",
   processorType: "ocr-reader",
   icon: "AiOutlineSearch",
+  showHandlesNames: true,
   inputNames: ["input_url"],
   fields: [
     {
