@@ -73,28 +73,6 @@ function extractStreamIdsFromValue(value: any): string[] {
   return Array.from(streamIds);
 }
 
-async function cleanupCameraNodes(removedCameraNodes: Node[]): Promise<void> {
-  await Promise.all(
-    removedCameraNodes.map(async (node) => {
-      const outputStreamIds = extractStreamIdsFromValue(node.data?.outputData);
-      const configStreamIds = extractStreamIdsFromValue(node.data?.stream_ref);
-      const streamIds = [...new Set([...outputStreamIds, ...configStreamIds])];
-      const byOwnerStopped = await stopStreamsByOwner(node.data?.name);
-      const byIdResults = await Promise.all(
-        streamIds.map((streamId) => stopStream(streamId)),
-      );
-      const anyByIdStopped = byIdResults.some(Boolean);
-      // Always run global camera stop as safety net.
-      // This keeps behavior correct when owner/stream-id tracking is stale.
-      if (!byOwnerStopped && !anyByIdStopped) {
-        await stopAllCameraStreams();
-        return;
-      }
-      await stopAllCameraStreams();
-    }),
-  );
-}
-
 export interface FlowProps {
   nodes: Node[];
   edges: Edge[];
@@ -121,7 +99,6 @@ const Flow = forwardRef((props: FlowProps, ref) => {
   >(undefined);
   const [nodes, setNodes] = useState<Node[]>(props.nodes);
   const [edges, setEdges] = useState<Edge[]>(props.edges);
-  const previousNodesRef = useRef<Node[]>(props.nodes);
 
   const [isPopupOpen, setIsPopupOpen] = useState<boolean>(false);
   const [currentUserMessage, setCurrentUserMessage] = useState<UserMessage>({
@@ -188,8 +165,16 @@ const Flow = forwardRef((props: FlowProps, ref) => {
   useSocketListeners<
     FlowOnProgressEventData,
     FlowOnErrorEventData,
-    FlowOnCurrentNodeRunningEventData
-  >(onProgress, onError, onRunEnd, onCurrentNodeRunning, onDisconnect);
+    FlowOnProgressEventData
+  >(onProgress, onError, () => {}, onCurrentNodeRunning);
+
+  // Best-effort cleanup: if the Flow component unmounts (route change / reload),
+  // ensure camera streams are stopped.
+  useEffect(() => {
+    return () => {
+      stopAllCameraStreams().catch(() => {});
+    };
+  }, []);
 
   function onProgress(data: FlowOnProgressEventData) {
     const nodeToUpdate = data.instanceName;
@@ -220,10 +205,29 @@ const Flow = forwardRef((props: FlowProps, ref) => {
   }
 
   function onError(data: FlowOnErrorEventData) {
-    const runningNodeName = data.instanceName || data.nodeName;
     setCurrentNodesRunning((previous) => {
-      return previous.filter((node) => node != runningNodeName);
+      return previous.filter((node) => node != data.instanceName);
     });
+
+    // Mark node as done so the UI doesn't keep spinning forever on errors.
+    if (data.instanceName) {
+      setNodes((prevNodes) => {
+        return [
+          ...prevNodes.map((node: Node) => {
+            if (node.data.name == data.instanceName) {
+              node.data = {
+                ...node.data,
+                outputData: `ERROR: ${data.error}`,
+                lastRun: new Date(),
+                isDone: true,
+              };
+            }
+            return node;
+          }),
+        ];
+      });
+    }
+
     setCurrentUserMessage({
       content: data.error,
       nodeId: data.instanceName ?? data.nodeName,
@@ -235,21 +239,8 @@ const Flow = forwardRef((props: FlowProps, ref) => {
 
   function onCurrentNodeRunning(data: FlowOnCurrentNodeRunningEventData) {
     setCurrentNodesRunning((previous) => {
-      if (previous.includes(data.instanceName)) {
-        return previous;
-      }
       return [...previous, data.instanceName];
     });
-  }
-
-  function onRunEnd() {
-    // Safety net: ensure UI does not stay in running state when backend
-    // finished but a node did not emit a final progress/error event.
-    setCurrentNodesRunning([]);
-  }
-
-  function onDisconnect() {
-    setCurrentNodesRunning([]);
   }
 
   useEffect(() => {
@@ -257,21 +248,6 @@ const Flow = forwardRef((props: FlowProps, ref) => {
       props.onFlowChange(nodes, edges, props.metadata);
     }
   }, [nodes, edges]);
-
-  useEffect(() => {
-    const previousNodes = previousNodesRef.current;
-    const removedCameraNodes = previousNodes.filter(
-      (previousNode) =>
-        previousNode?.data?.processorType === "camera-input" &&
-        !nodes.some((currentNode) => currentNode.id === previousNode.id),
-    );
-
-    if (removedCameraNodes.length) {
-      void cleanupCameraNodes(removedCameraNodes);
-    }
-
-    previousNodesRef.current = nodes;
-  }, [nodes]);
 
   useEffect(() => {
     if (!reactFlowInstance || !reactFlowWrapper.current) {
@@ -302,9 +278,44 @@ const Flow = forwardRef((props: FlowProps, ref) => {
 
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => {
+      // ReactFlow can remove nodes via keyboard/delete without calling our NodeProvider.removeNode().
+      // Ensure we still teardown camera streams when a Camera Input node is removed from the canvas.
+      const removedIds = changes
+        .filter((c: any) => c.type === "remove")
+        .map((c: any) => c.id);
+
+      if (removedIds.length) {
+        const removedNodes = nodes.filter((n) => removedIds.includes(n.id));
+        const cameraNodes = removedNodes.filter(
+          (n) => n?.data?.processorType === "camera-input",
+        );
+        if (cameraNodes.length) {
+          void (async () => {
+            await Promise.all(
+              cameraNodes.map(async (node) => {
+                const outputStreamIds = extractStreamIdsFromValue(node.data?.outputData);
+                const configStreamIds = extractStreamIdsFromValue(node.data?.stream_ref);
+                const streamIds = [...new Set([...outputStreamIds, ...configStreamIds])];
+                const byOwnerStopped = await stopStreamsByOwner(node.data?.name);
+                const byIdResults = await Promise.all(
+                  streamIds.map((streamId) => stopStream(streamId)),
+                );
+                const anyByIdStopped = byIdResults.some(Boolean);
+                // Always run a global stop as a safety-net (Week 5 single-camera target).
+                if (!byOwnerStopped && !anyByIdStopped) {
+                  await stopAllCameraStreams();
+                } else {
+                  await stopAllCameraStreams();
+                }
+              }),
+            );
+          })();
+        }
+      }
+
       setNodes((nds) => applyNodeChanges(changes, nds));
     },
-    [setNodes],
+    [setNodes, nodes],
   );
   const onEdgesChange: OnEdgesChange = useCallback(
     (changes) => setEdges((eds) => applyEdgeChanges(changes, eds)),

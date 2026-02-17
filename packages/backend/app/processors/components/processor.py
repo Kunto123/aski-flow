@@ -196,12 +196,6 @@ class Processor(ABC):
             ):
                 if input_name == name:
                     input_processor_output = processor.get_output(key)
-                    input_processor_output = self._resolve_media_input_from_linked_output(
-                        field_name=name,
-                        selected_output_key=key,
-                        selected_output=input_processor_output,
-                        source_processor=processor,
-                    )
                     if (
                         isinstance(input_processor_output, dict)
                         or isinstance(input_processor_output, list)
@@ -211,57 +205,6 @@ class Processor(ABC):
                     return input_processor_output
 
         return input
-
-    def _resolve_media_input_from_linked_output(
-        self,
-        field_name: Optional[str],
-        selected_output_key: Optional[int],
-        selected_output: Any,
-        source_processor: "Processor",
-    ) -> Any:
-        """Auto-map camera stream ref to URL output for image/video ref fields.
-
-        Camera-like nodes often output:
-          - index 0: stream://<id>
-          - index 1: /stream/<id>.mjpg (or full URL)
-        For media reference fields, users typically want a URL. If a link targets
-        key 0 and we detect a stream ref, fallback to key 1 when available.
-        """
-        if not isinstance(selected_output, str):
-            return selected_output
-
-        normalized_name = (field_name or "").replace("-", "_").lower()
-        is_media_ref_field = (
-            normalized_name == "image_url"
-            or normalized_name == "video_url"
-            or normalized_name == "imageurl"
-            or normalized_name == "videourl"
-            or "image_url" in normalized_name
-            or "video_url" in normalized_name
-            or "imageurl" in normalized_name
-            or "videourl" in normalized_name
-        )
-        if not is_media_ref_field:
-            return selected_output
-
-        if selected_output_key not in (None, 0):
-            return selected_output
-
-        if not selected_output.startswith("stream://"):
-            return selected_output
-
-        fallback_output = source_processor.get_output(1)
-        if not isinstance(fallback_output, str):
-            return selected_output
-
-        if (
-            fallback_output.startswith("http://")
-            or fallback_output.startswith("https://")
-            or fallback_output.startswith("/stream/")
-        ):
-            return fallback_output
-
-        return selected_output
 
     def add_input_processor(self, input_processor: "Processor") -> None:
         self.input_processors.append(input_processor)

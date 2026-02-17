@@ -4,6 +4,7 @@ export const recorderNodeConfig: NodeConfig = {
   nodeName: "Recorder",
   processorType: "recorder",
   icon: "FaRecordVinyl",
+  showHandlesNames: true,
   inputNames: ["stream_ref"],
   fields: [
     {

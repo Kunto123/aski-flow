@@ -4,6 +4,7 @@ export const faceRecognitionNodeConfig: NodeConfig = {
   nodeName: "Face Recognition",
   processorType: "face-recognition",
   icon: "FaUserCircle",
+  showHandlesNames: true,
   inputNames: ["input_url"],
   fields: [
     {
