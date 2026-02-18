@@ -7,6 +7,7 @@ import { NodeContext } from "../../providers/NodeProvider";
 import { useIsPlaying } from "../../hooks/useIsPlaying";
 import NodePlayButton from "./node-button/NodePlayButton";
 import { useTranslation } from "react-i18next";
+import { useFormFields } from "../../hooks/useFormFields";
 import {
   NodeBand,
   NodeContainer,
@@ -19,7 +20,12 @@ import {
   NodeTitle,
 } from "./Node.styles";
 import { GenericNodeData } from "./types/node";
-import { getOutputExtension, isStreamUrl } from "./node-output/outputUtils";
+import {
+  getOutputExtension,
+  isStreamUrl,
+  normalizeStreamOutputUrl,
+} from "./node-output/outputUtils";
+import { roiNodeConfig } from "../../nodes-configuration/roiNode";
 
 interface RoiNodeProps extends NodeProps {
   data: GenericNodeData;
@@ -46,16 +52,12 @@ const toPositiveNumber = (value: any, fallback: number): number => {
 
 const getPreviewUrlFromOutput = (outputData: any): string => {
   if (!outputData) return "";
-  if (typeof outputData === "string") return outputData;
+  if (typeof outputData === "string") return normalizeStreamOutputUrl(outputData);
   if (!Array.isArray(outputData)) return "";
   if (outputData.length === 0) return "";
 
   const first = outputData[0];
-  if (typeof first === "string" && first.startsWith("stream://")) {
-    return typeof outputData[1] === "string" ? outputData[1] : "";
-  }
-
-  return typeof first === "string" ? first : "";
+  return typeof first === "string" ? normalizeStreamOutputUrl(first) : "";
 };
 
 const isVideoPreviewUrl = (url: string): boolean => {
@@ -71,7 +73,6 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
   const [isPlaying, setIsPlaying] = useIsPlaying();
   const [showPreview, setShowPreview] = useState<boolean>(false);
 
-  const [urlValue, setUrlValue] = useState<string>(data.input_url ?? "");
   const previewRef = useRef<HTMLDivElement | null>(null);
   const dataRef = useRef<GenericNodeData>(data);
   const isDraggingRef = useRef<boolean>(false);
@@ -85,8 +86,34 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
 
   useEffect(() => {
     dataRef.current = data;
-    setUrlValue(data.input_url ?? "");
   }, [data]);
+
+  useEffect(() => {
+    const currentFields = data?.config?.fields ?? [];
+    const hasWidthField = currentFields.some((field: any) => field.name === "width");
+    const hasHeightField = currentFields.some(
+      (field: any) => field.name === "height",
+    );
+
+    if (hasWidthField && hasHeightField) {
+      return;
+    }
+
+    onUpdateNodeData(id, {
+      ...data,
+      width: toPositiveNumber(data.width, DEFAULT_WIDTH),
+      height: toPositiveNumber(data.height, DEFAULT_HEIGHT),
+      x: data.x ?? 0,
+      y: data.y ?? 0,
+      w: data.w ?? 1,
+      h: data.h ?? 1,
+      config: {
+        ...data.config,
+        fields: roiNodeConfig.fields,
+        inputNames: roiNodeConfig.inputNames,
+      },
+    });
+  }, [data, id, onUpdateNodeData]);
 
   useEffect(() => {
     if (data.isDone) setIsPlaying(false);
@@ -94,6 +121,7 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
   }, [data.lastRun, data.outputData, data.isDone, id, updateNodeInternals, setIsPlaying]);
 
   useEffect(() => {
+    if (!showPreview) return;
     const element = previewRef.current;
     if (!element) return;
 
@@ -105,12 +133,13 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
       });
     };
 
-    updateSize();
+    // Ensure initial measurement runs after DOM paint.
+    requestAnimationFrame(updateSize);
     const observer = new ResizeObserver(updateSize);
     observer.observe(element);
 
     return () => observer.disconnect();
-  }, []);
+  }, [showPreview, data.outputData, data.input_url, data.lastRun]);
 
   const incomingEdge = useMemo(() => {
     const incoming = getIncomingEdges(id) ?? [];
@@ -173,23 +202,31 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
     setBoxPosition({ x: nextX, y: nextY });
   }, [data.x, data.y, previewSize.width, previewSize.height, maxLeft, maxTop]);
 
-  const handleUrlCommit = () => {
+  const handleNodeFieldChange = (fieldName: string, value: any) => {
+    if (fieldName === "width" || fieldName === "height") {
+      const nextWidth = fieldName === "width" ? toPositiveNumber(value, 1) : boxWidth;
+      const nextHeight =
+        fieldName === "height" ? toPositiveNumber(value, 1) : boxHeight;
+      const nextX = clamp(
+        boxPosition.x,
+        0,
+        Math.max(0, previewSize.width - nextWidth),
+      );
+      const nextY = clamp(
+        boxPosition.y,
+        0,
+        Math.max(0, previewSize.height - nextHeight),
+      );
+
+      setBoxPosition({ x: nextX, y: nextY });
+      persistRoiData(nextX, nextY, nextWidth, nextHeight);
+      return;
+    }
+
     onUpdateNodeData(id, {
       ...dataRef.current,
-      input_url: urlValue,
+      [fieldName]: value,
     });
-  };
-
-  const handleDimensionChange = (key: "width" | "height", rawValue: string) => {
-    const parsed = Number(rawValue);
-    const nextValue = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
-    const nextWidth = key === "width" ? nextValue : boxWidth;
-    const nextHeight = key === "height" ? nextValue : boxHeight;
-    const nextX = clamp(boxPosition.x, 0, Math.max(0, previewSize.width - nextWidth));
-    const nextY = clamp(boxPosition.y, 0, Math.max(0, previewSize.height - nextHeight));
-
-    setBoxPosition({ x: nextX, y: nextY });
-    persistRoiData(nextX, nextY, nextWidth, nextHeight);
   };
 
   const handleDragStart = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -241,18 +278,25 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
     updateNodeInternals(id);
   };
 
-  const previewUrl = resolvedInputUrl;
+  const previewUrl = getPreviewUrlFromOutput(data.outputData) || resolvedInputUrl;
   const canRenderPreview = !!previewUrl && !previewUrl.startsWith("stream://");
   const showVideoPreview = isVideoPreviewUrl(previewUrl);
+  const formFields = useFormFields(
+    data,
+    id,
+    handleNodeFieldChange,
+    undefined,
+    undefined,
+    {
+      showHandles: true,
+      showLabels: true,
+      specificFields: ["input_url", "width", "height"],
+    },
+  );
 
   return (
     <NodeContainer>
       <NodeHeader>
-        <HandleWrapper
-          id={generateIdForHandle(0)}
-          position={!!data?.handles?.[generateIdForHandle(0)] ? data.handles[generateIdForHandle(0)] : Position.Left}
-          onChangeHandlePosition={handleChangeHandlePosition}
-        />
         <NodeIcon>
           <MdOutlineCrop />
         </NodeIcon>
@@ -277,47 +321,15 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
       <NodeBand selected={selected} color={data.appearance?.color} />
 
       <NodeContent>
-        <NodeForm>
-          <div>
-            <label className="mb-1 block text-sm">url video / ref video</label>
-            <input
-              className="nodrag nowheel w-full rounded bg-slate-200 px-2 py-2 text-slate-900"
-              value={urlValue}
-              placeholder="/asset/<image|video> or stream://<id>"
-              onChange={(event) => setUrlValue(event.target.value)}
-              onBlur={handleUrlCommit}
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-sm">width</label>
-            <input
-              type="number"
-              min={1}
-              className="nodrag nowheel w-full rounded bg-slate-200 px-2 py-2 text-slate-900"
-              value={boxWidth}
-              onChange={(event) => handleDimensionChange("width", event.target.value)}
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-sm">height</label>
-            <input
-              type="number"
-              min={1}
-              className="nodrag nowheel w-full rounded bg-slate-200 px-2 py-2 text-slate-900"
-              value={boxHeight}
-              onChange={(event) => handleDimensionChange("height", event.target.value)}
-            />
-          </div>
-        </NodeForm>
+        <NodeForm>{formFields}</NodeForm>
       </NodeContent>
 
       <NodeLogs
         showLogs={showPreview}
+        noPadding={showPreview}
         onDoubleClick={() => setShowPreview(!showPreview)}
         onClick={!showPreview ? () => setShowPreview(true) : undefined}
-        className={`relative flex h-auto w-full flex-grow justify-center p-4 ${
+        className={`relative flex h-auto w-full flex-grow justify-center ${
           showPreview ? "nodrag nowheel" : ""
         }`}
       >

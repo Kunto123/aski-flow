@@ -1,4 +1,5 @@
 import { OutputType } from "../../../nodes-configuration/types";
+import { getRestApiUrl } from "../../../config/config";
 
 export const getFileExtension = (url: string) => {
   const extensionMatch = url.match(/\.([0-9a-z]+)(?:[\?#]|$)/i);
@@ -20,6 +21,15 @@ export const isStreamUrl = (url: string) => {
     normalized.endsWith(".mjpeg") ||
     normalized.includes(".mjpeg?")
   );
+};
+
+export const normalizeStreamOutputUrl = (url: string) => {
+  if (!url || typeof url !== "string") return url;
+  if (url.startsWith("stream://")) {
+    const streamId = url.replace("stream://", "");
+    return `${getRestApiUrl()}/stream/${streamId}.mjpg`;
+  }
+  return url;
 };
 
 const extensionToTypeMap: { [key: string]: OutputType } = {
@@ -48,14 +58,15 @@ const extensionToTypeMap: { [key: string]: OutputType } = {
 export function getOutputExtension(output: string): OutputType {
   if (!output) return "markdown";
   if (typeof output !== "string") return "markdown";
-  if (isStreamUrl(output)) return "imageUrl";
+  const normalizedOutput = normalizeStreamOutputUrl(output);
+  if (isStreamUrl(normalizedOutput)) return "imageUrl";
 
   let extension = Object.keys(extensionToTypeMap).find((ext) =>
-    output.endsWith(ext),
+    normalizedOutput.endsWith(ext),
   );
 
   if (!extension) {
-    extension = "." + getFileTypeFromUrl(output);
+    extension = "." + getFileTypeFromUrl(normalizedOutput);
   }
 
   return extension ? extensionToTypeMap[extension] : "markdown";
