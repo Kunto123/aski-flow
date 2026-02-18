@@ -106,8 +106,9 @@ const ThreeDimensionalUrlOutput: React.FC<ThreeDimensionalUrlOutputProps> = ({
 
     const controls = new OrbitControls(camera, renderer.domElement);
 
+    let rafId: number | null = null;
     const animate = () => {
-      requestAnimationFrame(animate);
+      rafId = requestAnimationFrame(animate);
       controls.update();
       renderer.clear();
       renderer.render(scene, camera);
@@ -117,8 +118,24 @@ const ThreeDimensionalUrlOutput: React.FC<ThreeDimensionalUrlOutputProps> = ({
     animate();
 
     return () => {
+      if (rafId != null) {
+        cancelAnimationFrame(rafId);
+      }
       controls.dispose();
       renderer.dispose();
+      try {
+        renderer.forceContextLoss?.();
+      } catch {
+        // ignore
+      }
+      // Remove the canvas to avoid accumulating DOM nodes across re-renders.
+      try {
+        if (renderer.domElement?.parentElement) {
+          renderer.domElement.parentElement.removeChild(renderer.domElement);
+        }
+      } catch {
+        // ignore
+      }
       scene.children.forEach((child) => {
         scene.remove(child);
       });

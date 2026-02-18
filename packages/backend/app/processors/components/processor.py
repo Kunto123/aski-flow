@@ -86,7 +86,8 @@ class Processor(ABC):
             self.inputs = config.get("inputs")
 
     def cleanup(self) -> None:
-        self.input_processors = None
+        # Keep consistent types to avoid NoneType surprises in callers.
+        self.input_processors = []
         self._processor_context = None
         self._output = None
         self.storage_strategy = None
@@ -109,13 +110,18 @@ class Processor(ABC):
         self.observers.append(observer)
 
     def remove_observer(self, observer):
-        self.observers.remove(observer)
-        if len(self.observers) == 0:
-            self.observers = None
+        # Keep observers as a list (never None) to avoid NoneType errors in notify().
+        try:
+            self.observers.remove(observer)
+        except ValueError:
+            return self.observers
         return self.observers
 
     def notify(self, event: EventType, data: ProcessorEvent):
-        for observer in self.observers:
+        if not self.observers:
+            return
+        # Iterate over a copy so observers can mutate the list safely.
+        for observer in list(self.observers):
             observer.notify(event, data)
 
     def get_output(self, input_key=None) -> Optional[str]:

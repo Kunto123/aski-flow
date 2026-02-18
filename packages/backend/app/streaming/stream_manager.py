@@ -27,6 +27,14 @@ class StreamState:
     last_access_at: float = field(default_factory=time.time)
     idle_timeout_sec: Optional[float] = None
     capture: Optional[Any] = None
+    # Camera configuration. For reliability on Windows, the VideoCapture is opened
+    # inside the capture thread (see _camera_loop), so we keep the desired settings
+    # here rather than opening the device in create_camera_stream().
+    camera_index: Optional[int] = None
+    camera_width: Optional[int] = None
+    camera_height: Optional[int] = None
+    camera_fps: Optional[float] = None
+    camera_backend: Optional[str] = None
     latest_frame: Optional[Any] = None
     latest_jpeg: Optional[bytes] = None
     latest_predictions: Dict[str, Any] = field(default_factory=dict)
@@ -127,6 +135,53 @@ class StreamManager:
     def _new_stream_id(self, prefix: str) -> str:
         return f"{prefix}-{uuid.uuid4().hex[:12]}"
 
+
+    def _camera_config_matches(
+        self,
+        state: StreamState,
+        width: Optional[int],
+        height: Optional[int],
+        fps: Optional[float],
+        backend: str,
+    ) -> bool:
+        """Return True if we can safely reuse an existing camera stream for the requested config."""
+        if state.source_type != "camera" or state.camera_index is None:
+            return False
+
+        req_w = int(width) if width is not None else None
+        req_h = int(height) if height is not None else None
+        req_fps = float(fps) if fps is not None else None
+
+        # If a concrete value is requested, it must match the existing stream config.
+        if req_w is not None and state.camera_width not in (None, req_w):
+            return False
+        if req_h is not None and state.camera_height not in (None, req_h):
+            return False
+        if req_fps is not None and state.camera_fps not in (None, req_fps):
+            return False
+
+        st_backend = (state.camera_backend or "default").strip().lower()
+        req_backend = (backend or "default").strip().lower()
+        if st_backend and req_backend and st_backend not in ("default", "any") and req_backend not in ("default", "any"):
+            if st_backend != req_backend:
+                return False
+
+        return True
+
+    def _find_camera_streams_by_index(self, camera_index: int) -> List[StreamState]:
+        with self._registry_lock:
+            states = [
+                st
+                for st in self._streams.values()
+                if st.source_type == "camera" and st.camera_index == int(camera_index)
+            ]
+        states.sort(key=lambda s: s.created_at, reverse=True)
+        return states
+
+    def _has_dependents(self, stream_id: str) -> bool:
+        with self._registry_lock:
+            return any(st.source_stream_id == stream_id and st.active for st in self._streams.values())
+
     def _get_port(self) -> str:
         return os.getenv("BACKEND_PORT") or os.getenv("PORT") or "8000"
 
@@ -135,6 +190,7 @@ class StreamManager:
 
     def build_predictions_url(self, stream_id: str) -> str:
         return f"http://localhost:{self._get_port()}/stream/{stream_id}/predictions.json"
+
 
     def create_camera_stream(
         self,
@@ -148,54 +204,77 @@ class StreamManager:
             raise RuntimeError(
                 "opencv-python is required for camera streaming. Install backend dependencies first."
             )
-        stream_id = self._new_stream_id("cam")
 
         # Camera backend selection (helps on Windows where some backends can hang on release).
         # Supported values: dshow | msmf | v4l2 | avfoundation | gstreamer | any
         backend_name = (os.getenv("ASKI_CAMERA_BACKEND") or "").strip().lower()
         if not backend_name and os.name == "nt":
             backend_name = "dshow"
-        backend_map = {
-            "dshow": getattr(cv2, "CAP_DSHOW", 0),
-            "msmf": getattr(cv2, "CAP_MSMF", 0),
-            "v4l2": getattr(cv2, "CAP_V4L2", 0),
-            "avfoundation": getattr(cv2, "CAP_AVFOUNDATION", 0),
-            "gstreamer": getattr(cv2, "CAP_GSTREAMER", 0),
-        }
-        api_preference = backend_map.get(backend_name)
 
-        if api_preference and backend_name != "any":
-            capture = cv2.VideoCapture(camera_index, api_preference)
-        else:
-            capture = cv2.VideoCapture(camera_index)
-        if not capture.isOpened():
+        # IMPORTANT:
+        # UI refresh (or hot reload) can regenerate node IDs, which makes owner_name change.
+        # That previously caused old camera streams to stay alive (and keep the device locked)
+        # until idle timeouts kicked in. To avoid camera "mati/nyala" loops, we reuse the
+        # existing active camera stream for the same camera_index whenever possible.
+        candidates = self._find_camera_streams_by_index(int(camera_index))
+
+        reusable: Optional[StreamState] = None
+        for st in candidates:
+            if not st.active or st.stop_event.is_set():
+                continue
+            th = st.thread
+            if th is None or not th.is_alive():
+                continue
+            if self._camera_config_matches(st, width, height, fps, backend_name or "default"):
+                reusable = st
+                break
+
+        if reusable is not None:
+            # Stop other duplicates for this device (defensive cleanup).
+            for st in candidates:
+                if st.stream_id == reusable.stream_id:
+                    continue
+                try:
+                    self.stop_stream(st.stream_id, reason="dedupe_camera_index")
+                except Exception:
+                    pass
+
+            with reusable.lock:
+                reusable.owner_name = owner_name
+                reusable.last_access_at = time.time()
+
             self._debug_event(
-                "create_camera_stream_failed",
-                camera_index=camera_index,
+                "reuse_camera_stream",
+                stream_id=reusable.stream_id,
                 owner_name=owner_name,
+                camera_index=camera_index,
+                width=width,
+                height=height,
+                fps=fps,
                 backend=backend_name or "default",
             )
-            capture.release()
-            raise RuntimeError(f"Cannot open camera index {camera_index}")
+            return reusable.stream_id
 
-        # Reduce internal buffering so stopping streams doesn't keep the device busy.
-        try:
-            capture.set(getattr(cv2, "CAP_PROP_BUFFERSIZE", 38), 1)
-        except Exception:
-            pass
+        # No reusable stream found: ensure exclusive access to the device by stopping any
+        # existing camera streams bound to this camera_index (even if they belong to an
+        # older owner_name).
+        for st in candidates:
+            try:
+                self.stop_stream(st.stream_id, reason="replace_camera_index")
+            except Exception:
+                pass
 
-        if width:
-            capture.set(cv2.CAP_PROP_FRAME_WIDTH, float(width))
-        if height:
-            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(height))
-        if fps:
-            capture.set(cv2.CAP_PROP_FPS, float(fps))
+        stream_id = self._new_stream_id("cam")
 
         state = StreamState(
             stream_id=stream_id,
             source_type="camera",
-            capture=capture,
             owner_name=owner_name,
+            camera_index=int(camera_index),
+            camera_width=int(width) if width is not None else None,
+            camera_height=int(height) if height is not None else None,
+            camera_fps=float(fps) if fps is not None else None,
+            camera_backend=backend_name or "default",
             # Stop camera quickly if nobody is consuming frames anymore.
             idle_timeout_sec=float(os.getenv("ASKI_CAMERA_IDLE_TIMEOUT_SEC", "4")),
         )
@@ -266,10 +345,88 @@ class StreamManager:
         return stream_id
 
     def _camera_loop(self, state: StreamState) -> None:
-        capture = state.capture
-        if capture is None:
+        # IMPORTANT:
+        # On Windows (especially with USB cameras), some OpenCV backends can keep
+        # the device locked unless *open* and *release* happen on the same thread.
+        # To make stop() reliable, we open the VideoCapture inside this thread.
+        if state.camera_index is None:
+            state.active = False
+            state.stop_reason = state.stop_reason or "missing_camera_index"
+            return
+
+        if state.stop_event.is_set() or not state.active:
             state.active = False
             return
+
+        backend_name = (state.camera_backend or "").strip().lower()
+        backend_map = {
+            "dshow": getattr(cv2, "CAP_DSHOW", 0),
+            "msmf": getattr(cv2, "CAP_MSMF", 0),
+            "v4l2": getattr(cv2, "CAP_V4L2", 0),
+            "avfoundation": getattr(cv2, "CAP_AVFOUNDATION", 0),
+            "gstreamer": getattr(cv2, "CAP_GSTREAMER", 0),
+        }
+        api_preference = backend_map.get(backend_name)
+
+        try:
+            if api_preference and backend_name != "any":
+                capture = cv2.VideoCapture(int(state.camera_index), api_preference)
+            else:
+                capture = cv2.VideoCapture(int(state.camera_index))
+        except Exception as e:
+            state.last_error = str(e)
+            state.active = False
+            state.stop_event.set()
+            state.stop_reason = "camera_open_exception"
+            self._debug_event(
+                "create_camera_stream_failed",
+                camera_index=state.camera_index,
+                owner_name=state.owner_name,
+                backend=backend_name or "default",
+                error=state.last_error,
+            )
+            return
+
+        if not capture.isOpened():
+            try:
+                capture.release()
+            except Exception:
+                pass
+            state.active = False
+            state.stop_event.set()
+            state.stop_reason = "camera_open_failed"
+            self._debug_event(
+                "create_camera_stream_failed",
+                camera_index=state.camera_index,
+                owner_name=state.owner_name,
+                backend=backend_name or "default",
+            )
+            return
+
+        # Reduce internal buffering so stopping streams doesn't keep the device busy.
+        try:
+            capture.set(getattr(cv2, "CAP_PROP_BUFFERSIZE", 38), 1)
+        except Exception:
+            pass
+
+        if state.camera_width:
+            try:
+                capture.set(cv2.CAP_PROP_FRAME_WIDTH, float(state.camera_width))
+            except Exception:
+                pass
+        if state.camera_height:
+            try:
+                capture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(state.camera_height))
+            except Exception:
+                pass
+        if state.camera_fps:
+            try:
+                capture.set(cv2.CAP_PROP_FPS, float(state.camera_fps))
+            except Exception:
+                pass
+
+        with state.lock:
+            state.capture = capture
 
         self._debug_event(
             "camera_loop_started",
@@ -334,7 +491,23 @@ class StreamManager:
             source_stream_id=source_stream_id,
             fps=fps,
         )
+        consumer_grace_sec = float(os.getenv("ASKI_STREAM_CONSUMER_GRACE_SEC", "6"))
+        no_consumer_idle_sec = float(os.getenv("ASKI_STREAM_NO_CONSUMERS_IDLE_SEC", "1"))
         while state.active and not state.stop_event.is_set():
+            now = time.time()
+            if (now - state.created_at) >= consumer_grace_sec:
+                try:
+                    with state.lock:
+                        mjpeg_clients = state.mjpeg_clients
+                        last_access_at = state.last_access_at
+                    if mjpeg_clients <= 0 and (not self._has_dependents(state.stream_id)) and (now - last_access_at) >= no_consumer_idle_sec:
+                        state.stop_reason = "no_consumers"
+                        state.active = False
+                        state.stop_event.set()
+                        break
+                except Exception:
+                    pass
+
             try:
                 source = self.get_stream(source_stream_id)
                 if source is None or not source.active:
@@ -537,6 +710,24 @@ class StreamManager:
 
                 for stream_id in stale_ids:
                     self.stop_stream(stream_id, reason="idle_timeout")
+
+                # Also drop inactive streams whose worker thread has already exited.
+                # This prevents registry growth if a stream stops itself (e.g., no_consumers)
+                # or fails to start (e.g., camera_open_failed).
+                dead_ids: List[str] = []
+                with self._registry_lock:
+                    for sid, st in list(self._streams.items()):
+                        th = st.thread
+                        if (not st.active) and (th is not None) and (not th.is_alive()):
+                            dead_ids.append(sid)
+                            self._streams.pop(sid, None)
+
+                if dead_ids:
+                    self._debug_event(
+                        "reap_dead_streams",
+                        target_ids=dead_ids,
+                        stopped=len(dead_ids),
+                    )
             except Exception:
                 # Never crash the backend because of a reaper failure.
                 pass
