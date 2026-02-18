@@ -7,7 +7,12 @@ import React, {
   useState,
 } from "react";
 import { MdOutlineCrop } from "react-icons/md";
-import { NodeProps, Position, useUpdateNodeInternals } from "reactflow";
+import {
+  NodeProps,
+  Position,
+  useReactFlow,
+  useUpdateNodeInternals,
+} from "reactflow";
 import HandleWrapper from "../handles/HandleWrapper";
 import { generateIdForHandle } from "../../utils/flowUtils";
 import { NodeContext } from "../../providers/NodeProvider";
@@ -45,6 +50,13 @@ type BoxPosition = {
   y: number;
 };
 
+type MediaBox = {
+  width: number;
+  height: number;
+  offsetX: number;
+  offsetY: number;
+};
+
 const DEFAULT_WIDTH = 120;
 const DEFAULT_HEIGHT = 120;
 
@@ -63,6 +75,17 @@ const getPreviewUrlFromOutput = (outputData: any): string => {
   if (!Array.isArray(outputData)) return "";
   if (outputData.length === 0) return "";
 
+  // Prefer the first item that looks like a URL/stream ref.
+  for (const item of outputData) {
+    if (typeof item !== "string") continue;
+    const s = item.trim();
+    if (!s) continue;
+    if (s.startsWith("stream://")) return normalizeStreamOutputUrl(s);
+    if (s.includes("/stream/") || s.includes("/asset/") || s.startsWith("http")) {
+      return normalizeStreamOutputUrl(s);
+    }
+  }
+
   const first = outputData[0];
   return typeof first === "string" ? normalizeStreamOutputUrl(first) : "";
 };
@@ -76,29 +99,67 @@ const isVideoPreviewUrl = (url: string): boolean => {
 const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
   const { t } = useTranslation("flow");
   const { onUpdateNodeData, getIncomingEdges, findNode } = useContext(NodeContext);
+  const { getViewport } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
   const [isPlaying, setIsPlaying] = useIsPlaying();
   const [showPreview, setShowPreview] = useState<boolean>(false);
 
   const previewRef = useRef<HTMLDivElement | null>(null);
-  const dataRef = useRef<GenericNodeData>(data);
-  const isDraggingRef = useRef<boolean>(false);
-  const dragStartRef = useRef<{ mouseX: number; mouseY: number; startX: number; startY: number } | null>(null);
-
-  const [previewSize, setPreviewSize] = useState<{ width: number; height: number }>({
+  const mediaRef = useRef<HTMLImageElement | HTMLVideoElement | null>(null);
+  const mediaIntrinsicRef = useRef<{ width: number; height: number }>({
     width: 0,
     height: 0,
+  });
+  const dataRef = useRef<GenericNodeData>(data);
+  const dragStateRef = useRef<
+    | {
+        mode: "move" | "resize";
+        pointerOffsetX: number;
+        pointerOffsetY: number;
+        startWidth: number;
+        startHeight: number;
+      }
+    | null
+  >(null);
+
+  const [containerSize, setContainerSize] = useState<{ width: number; height: number }>({
+    width: 0,
+    height: 0,
+  });
+  const [mediaBox, setMediaBox] = useState<MediaBox>({
+    width: 0,
+    height: 0,
+    offsetX: 0,
+    offsetY: 0,
   });
   const [boxPosition, setBoxPosition] = useState<BoxPosition>({ x: 0, y: 0 });
 
   const updatePreviewSize = useCallback(() => {
     const element = previewRef.current;
     if (!element) return;
-    const rect = element.getBoundingClientRect();
-    setPreviewSize({
-      width: rect.width,
-      height: rect.height,
-    });
+
+    const width = element.clientWidth;
+    const height = element.clientHeight;
+    setContainerSize({ width, height });
+
+    const intrinsic = mediaIntrinsicRef.current;
+    const iw = intrinsic.width;
+    const ih = intrinsic.height;
+    if (iw > 0 && ih > 0 && width > 0 && height > 0) {
+      const scale = Math.min(width / iw, height / ih);
+      const displayedW = Math.max(1, Math.floor(iw * scale));
+      const displayedH = Math.max(1, Math.floor(ih * scale));
+      setMediaBox({
+        width: displayedW,
+        height: displayedH,
+        offsetX: (width - displayedW) / 2,
+        offsetY: (height - displayedH) / 2,
+      });
+      return;
+    }
+
+    // Fallback when intrinsic size is not available (e.g., some MJPEG streams).
+    setMediaBox({ width, height, offsetX: 0, offsetY: 0 });
   }, []);
 
   useEffect(() => {
@@ -167,12 +228,12 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
   const boxHeight = toPositiveNumber(data.height, DEFAULT_HEIGHT);
 
   const effectiveBoxWidth =
-    previewSize.width > 0 ? Math.min(boxWidth, previewSize.width) : boxWidth;
+    mediaBox.width > 0 ? Math.min(boxWidth, mediaBox.width) : boxWidth;
   const effectiveBoxHeight =
-    previewSize.height > 0 ? Math.min(boxHeight, previewSize.height) : boxHeight;
+    mediaBox.height > 0 ? Math.min(boxHeight, mediaBox.height) : boxHeight;
 
-  const maxLeft = Math.max(0, previewSize.width - effectiveBoxWidth);
-  const maxTop = Math.max(0, previewSize.height - effectiveBoxHeight);
+  const maxLeft = Math.max(0, mediaBox.width - effectiveBoxWidth);
+  const maxTop = Math.max(0, mediaBox.height - effectiveBoxHeight);
 
   const persistRoiData = (
     x: number,
@@ -185,16 +246,16 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
     const safeWidthForNorm = Math.max(1, widthForNormalization);
     const safeHeightForNorm = Math.max(1, heightForNormalization);
     const normalizedX =
-      previewSize.width > 0 ? clamp(x / previewSize.width, 0, 1) : 0;
+      mediaBox.width > 0 ? clamp(x / mediaBox.width, 0, 1) : 0;
     const normalizedY =
-      previewSize.height > 0 ? clamp(y / previewSize.height, 0, 1) : 0;
+      mediaBox.height > 0 ? clamp(y / mediaBox.height, 0, 1) : 0;
     const normalizedW =
-      previewSize.width > 0
-        ? clamp(safeWidthForNorm / previewSize.width, 0, 1)
+      mediaBox.width > 0
+        ? clamp(safeWidthForNorm / mediaBox.width, 0, 1)
         : 1;
     const normalizedH =
-      previewSize.height > 0
-        ? clamp(safeHeightForNorm / previewSize.height, 0, 1)
+      mediaBox.height > 0
+        ? clamp(safeHeightForNorm / mediaBox.height, 0, 1)
         : 1;
 
     onUpdateNodeData(id, {
@@ -211,25 +272,25 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
   };
 
   useEffect(() => {
-    if (isDraggingRef.current) return;
-    if (previewSize.width <= 0 || previewSize.height <= 0) return;
+    if (dragStateRef.current) return;
+    if (mediaBox.width <= 0 || mediaBox.height <= 0) return;
 
     const xNorm = Number(data.x ?? 0);
     const yNorm = Number(data.y ?? 0);
 
     const nextX = clamp(
-      Number.isFinite(xNorm) ? xNorm * previewSize.width : 0,
+      Number.isFinite(xNorm) ? xNorm * mediaBox.width : 0,
       0,
       maxLeft,
     );
     const nextY = clamp(
-      Number.isFinite(yNorm) ? yNorm * previewSize.height : 0,
+      Number.isFinite(yNorm) ? yNorm * mediaBox.height : 0,
       0,
       maxTop,
     );
 
     setBoxPosition({ x: nextX, y: nextY });
-  }, [data.x, data.y, previewSize.width, previewSize.height, maxLeft, maxTop]);
+  }, [data.x, data.y, mediaBox.width, mediaBox.height, maxLeft, maxTop]);
 
   const handleNodeFieldChange = (fieldName: string, value: any) => {
     if (fieldName === "width" || fieldName === "height") {
@@ -238,22 +299,22 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
       const requestedHeight =
         fieldName === "height" ? toPositiveNumber(value, 1) : boxHeight;
       const nextWidth =
-        previewSize.width > 0
-          ? Math.min(requestedWidth, previewSize.width)
+        mediaBox.width > 0
+          ? Math.min(requestedWidth, mediaBox.width)
           : requestedWidth;
       const nextHeight =
-        previewSize.height > 0
-          ? Math.min(requestedHeight, previewSize.height)
+        mediaBox.height > 0
+          ? Math.min(requestedHeight, mediaBox.height)
           : requestedHeight;
       const nextX = clamp(
         boxPosition.x,
         0,
-        Math.max(0, previewSize.width - nextWidth),
+        Math.max(0, mediaBox.width - nextWidth),
       );
       const nextY = clamp(
         boxPosition.y,
         0,
-        Math.max(0, previewSize.height - nextHeight),
+        Math.max(0, mediaBox.height - nextHeight),
       );
 
       setBoxPosition({ x: nextX, y: nextY });
@@ -274,33 +335,115 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
     });
   };
 
-  const handleDragStart = (event: React.PointerEvent<HTMLDivElement>) => {
+  const getZoom = () => {
+    try {
+      const vp = getViewport();
+      return Number.isFinite(vp?.zoom) && vp.zoom > 0 ? vp.zoom : 1;
+    } catch {
+      return 1;
+    }
+  };
+
+  const handleMovePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    event.currentTarget.setPointerCapture?.(event.pointerId);
 
-    isDraggingRef.current = true;
-    dragStartRef.current = {
-      mouseX: event.clientX,
-      mouseY: event.clientY,
-      startX: boxPosition.x,
-      startY: boxPosition.y,
+    const container = previewRef.current;
+    if (!container) return;
+
+    const zoom = getZoom();
+    const rect = container.getBoundingClientRect();
+    const pointerX = (event.clientX - rect.left) / zoom;
+    const pointerY = (event.clientY - rect.top) / zoom;
+    const localX = pointerX - mediaBox.offsetX;
+    const localY = pointerY - mediaBox.offsetY;
+
+    dragStateRef.current = {
+      mode: "move",
+      pointerOffsetX: localX - boxPosition.x,
+      pointerOffsetY: localY - boxPosition.y,
+      startWidth: effectiveBoxWidth,
+      startHeight: effectiveBoxHeight,
     };
 
     const onPointerMove = (moveEvent: PointerEvent) => {
-      if (!dragStartRef.current) return;
-      const dx = moveEvent.clientX - dragStartRef.current.mouseX;
-      const dy = moveEvent.clientY - dragStartRef.current.mouseY;
-      const nextX = clamp(dragStartRef.current.startX + dx, 0, maxLeft);
-      const nextY = clamp(dragStartRef.current.startY + dy, 0, maxTop);
+      const state = dragStateRef.current;
+      const containerEl = previewRef.current;
+      if (!state || state.mode !== "move" || !containerEl) return;
+
+      const z = getZoom();
+      const r = containerEl.getBoundingClientRect();
+      const px = (moveEvent.clientX - r.left) / z;
+      const py = (moveEvent.clientY - r.top) / z;
+      const lx = px - mediaBox.offsetX;
+      const ly = py - mediaBox.offsetY;
+
+      const nextX = clamp(lx - state.pointerOffsetX, 0, maxLeft);
+      const nextY = clamp(ly - state.pointerOffsetY, 0, maxTop);
 
       setBoxPosition({ x: nextX, y: nextY });
       persistRoiData(nextX, nextY, effectiveBoxWidth, effectiveBoxHeight);
     };
 
     const onPointerUp = () => {
-      isDraggingRef.current = false;
-      dragStartRef.current = null;
+      dragStateRef.current = null;
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+  };
+
+  const handleResizePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const container = previewRef.current;
+    if (!container) return;
+
+    const zoom = getZoom();
+    const rect = container.getBoundingClientRect();
+    const pointerX = (event.clientX - rect.left) / zoom;
+    const pointerY = (event.clientY - rect.top) / zoom;
+    const localX = pointerX - mediaBox.offsetX;
+    const localY = pointerY - mediaBox.offsetY;
+
+    dragStateRef.current = {
+      mode: "resize",
+      pointerOffsetX: localX,
+      pointerOffsetY: localY,
+      startWidth: effectiveBoxWidth,
+      startHeight: effectiveBoxHeight,
+    };
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const state = dragStateRef.current;
+      const containerEl = previewRef.current;
+      if (!state || state.mode !== "resize" || !containerEl) return;
+
+      const z = getZoom();
+      const r = containerEl.getBoundingClientRect();
+      const px = (moveEvent.clientX - r.left) / z;
+      const py = (moveEvent.clientY - r.top) / z;
+      const lx = px - mediaBox.offsetX;
+      const ly = py - mediaBox.offsetY;
+
+      const dx = lx - state.pointerOffsetX;
+      const dy = ly - state.pointerOffsetY;
+
+      const maxW = Math.max(1, mediaBox.width - boxPosition.x);
+      const maxH = Math.max(1, mediaBox.height - boxPosition.y);
+      const nextW = clamp(state.startWidth + dx, 1, maxW);
+      const nextH = clamp(state.startHeight + dy, 1, maxH);
+
+      const explicitW = Math.max(1, Math.round(nextW));
+      const explicitH = Math.max(1, Math.round(nextH));
+      persistRoiData(boxPosition.x, boxPosition.y, nextW, nextH, explicitW, explicitH);
+    };
+
+    const onPointerUp = () => {
+      dragStateRef.current = null;
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
     };
@@ -394,15 +537,35 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
                   className="block h-auto max-h-[320px] w-full bg-black"
                   src={previewUrl}
                   controls
+                  ref={(el) => {
+                    mediaRef.current = el;
+                  }}
+                  onLoadedMetadata={(e) => {
+                    const el = e.currentTarget;
+                    mediaIntrinsicRef.current = {
+                      width: el.videoWidth || 0,
+                      height: el.videoHeight || 0,
+                    };
+                    updatePreviewSize();
+                  }}
                   onLoadedData={updatePreviewSize}
-                  onLoadedMetadata={updatePreviewSize}
                 />
               ) : (
                 <img
                   className="block h-auto max-h-[320px] w-full bg-black object-contain"
                   src={previewUrl}
                   alt="ROI preview"
-                  onLoad={updatePreviewSize}
+                  ref={(el) => {
+                    mediaRef.current = el;
+                  }}
+                  onLoad={(e) => {
+                    const el = e.currentTarget;
+                    mediaIntrinsicRef.current = {
+                      width: el.naturalWidth || 0,
+                      height: el.naturalHeight || 0,
+                    };
+                    updatePreviewSize();
+                  }}
                 />
               )
             ) : (
@@ -416,12 +579,21 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
               style={{
                 width: `${effectiveBoxWidth}px`,
                 height: `${effectiveBoxHeight}px`,
-                left: `${boxPosition.x}px`,
-                top: `${boxPosition.y}px`,
+                left: `${mediaBox.offsetX + boxPosition.x}px`,
+                top: `${mediaBox.offsetY + boxPosition.y}px`,
                 touchAction: "none",
               }}
-              onPointerDown={handleDragStart}
-            />
+              onPointerDown={handleMovePointerDown}
+            >
+              <div className="pointer-events-none absolute left-1 top-1 rounded bg-slate-900/60 px-1 py-0.5 text-[10px] text-white">
+                {Math.round(effectiveBoxWidth)}×{Math.round(effectiveBoxHeight)}
+              </div>
+              <div
+                className="absolute bottom-[-6px] right-[-6px] h-3 w-3 rounded-sm border border-slate-900 bg-slate-200 cursor-se-resize"
+                style={{ touchAction: "none" }}
+                onPointerDown={handleResizePointerDown}
+              />
+            </div>
           </div>
         )}
       </NodeLogs>

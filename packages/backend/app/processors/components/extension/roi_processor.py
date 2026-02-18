@@ -1,6 +1,7 @@
 import uuid
 import os
 import tempfile
+import json
 from urllib.parse import urlparse
 
 try:
@@ -83,7 +84,36 @@ class RoiProcessor(BasicProcessor):
         if cv2 is None or np is None:
             raise RuntimeError("opencv-python and numpy are required for ROI processor")
 
-        input_ref = self.get_input_by_name("input_url", self.input_url)
+        # NOTE:
+        # Upstream processors typically output a *list* of values.
+        # get_input_by_name() historically JSON-serializes lists unless
+        # accept_object=True, so we unwrap here to reliably support stream refs.
+        input_raw = self.get_input_by_name(
+            "input_url",
+            self.input_url,
+            accept_object=True,
+        )
+
+        input_ref = None
+        if isinstance(input_raw, list):
+            input_ref = input_raw[0] if len(input_raw) > 0 else None
+        elif isinstance(input_raw, str):
+            s = input_raw.strip()
+            # Backward-compat: some chains pass JSON like ["stream://..."]
+            if s.startswith("[") and s.endswith("]"):
+                try:
+                    parsed = json.loads(s)
+                    if isinstance(parsed, list) and len(parsed) > 0:
+                        input_ref = parsed[0]
+                    else:
+                        input_ref = input_raw
+                except Exception:
+                    input_ref = input_raw
+            else:
+                input_ref = input_raw
+        else:
+            input_ref = input_raw
+
         if not input_ref:
             raise ValueError("roi requires input_url")
 
@@ -99,14 +129,21 @@ class RoiProcessor(BasicProcessor):
         x_norm = _clamp(self.x, 0.0, 1.0)
         y_norm = _clamp(self.y, 0.0, 1.0)
 
-        if self.width > 0 and self.height > 0:
+        # Prefer normalized w/h. This matches the UI behavior where width/height
+        # are specified in preview pixels, but we persist the normalized ROI (w/h).
+        w_norm = _safe_float(self.w, 1.0)
+        h_norm = _safe_float(self.h, 1.0)
+
+        if 0.0 < w_norm <= 1.0 and 0.0 < h_norm <= 1.0:
+            roi_w = max(1, int(_clamp(w_norm, 0.0, 1.0) * frame_w))
+            roi_h = max(1, int(_clamp(h_norm, 0.0, 1.0) * frame_h))
+        elif self.width > 0 and self.height > 0:
+            # Pixel crop mode (advanced).
             roi_w = int(_clamp(self.width, 1.0, float(frame_w)))
             roi_h = int(_clamp(self.height, 1.0, float(frame_h)))
         else:
-            roi_w = int(_clamp(self.w, 0.0, 1.0) * frame_w)
-            roi_h = int(_clamp(self.h, 0.0, 1.0) * frame_h)
-            roi_w = max(1, roi_w)
-            roi_h = max(1, roi_h)
+            roi_w = frame_w
+            roi_h = frame_h
 
         x1 = int(x_norm * frame_w)
         y1 = int(y_norm * frame_h)
@@ -131,8 +168,8 @@ class RoiProcessor(BasicProcessor):
             return self._crop(frame)
 
         out_stream_id = manager.create_transform_stream(source_stream_id, _transform)
-        # Return canonical stream ref; UI converts it to a host-correct MJPEG URL.
-        return [f"stream://{out_stream_id}"]
+        # Return canonical stream ref + convenience MJPEG URL.
+        return [f"stream://{out_stream_id}", manager.build_mjpeg_url(out_stream_id)]
 
     def _process_file(self, input_url: str):
         filename = _extract_asset_filename(input_url)

@@ -1,4 +1,5 @@
 import uuid
+import json
 from urllib.parse import urlparse
 
 try:
@@ -61,7 +62,31 @@ class ImageProcessingProcessor(BasicProcessor):
                 "opencv-python and numpy are required for image-processing processor"
             )
 
-        input_ref = self.get_input_by_name("input_url", self.input_url)
+        input_raw = self.get_input_by_name(
+            "input_url",
+            self.input_url,
+            accept_object=True,
+        )
+
+        input_ref = None
+        if isinstance(input_raw, list):
+            input_ref = input_raw[0] if len(input_raw) > 0 else None
+        elif isinstance(input_raw, str):
+            s = input_raw.strip()
+            if s.startswith("[") and s.endswith("]"):
+                try:
+                    parsed = json.loads(s)
+                    if isinstance(parsed, list) and len(parsed) > 0:
+                        input_ref = parsed[0]
+                    else:
+                        input_ref = input_raw
+                except Exception:
+                    input_ref = input_raw
+            else:
+                input_ref = input_raw
+        else:
+            input_ref = input_raw
+
         if not input_ref:
             raise ValueError("image-processing requires input_url")
 
