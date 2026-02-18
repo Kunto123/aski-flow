@@ -13,7 +13,14 @@ import NodePlayButton from "./node-button/NodePlayButton";
 import HandleWrapper from "../handles/HandleWrapper";
 import useHandlePositions from "../../hooks/useHandlePositions";
 import { GenericNodeData } from "./types/node";
-import { NodeBand, NodeHeader, NodeIcon, NodeTitle } from "./Node.styles";
+import {
+  NodeBand,
+  NodeContainer,
+  NodeHeader,
+  NodeIcon,
+  NodeLogs,
+  NodeTitle,
+} from "./Node.styles";
 import OutputDisplay from "./node-output/OutputDisplay";
 import { useTranslation } from "react-i18next";
 import { FaTv } from "react-icons/fa";
@@ -65,8 +72,7 @@ function ResizeIcon() {
 const DisplayNode: React.FC<DisplayNodeProps> = React.memo(
   ({ data, id, selected }) => {
     const { t } = useTranslation("flow");
-    const { onUpdateNodeData } = useContext(NodeContext);
-    const [nodeId, setNodeId] = useState<string>(`${data.name}-${Date.now()}`);
+    const { onUpdateNodeData, getIncomingEdges, findNode } = useContext(NodeContext);
     const [dimensions, setDimensions] = useState<Dimensions>({
       width: data.nodeDimensions?.width ?? 450,
       height: data.nodeDimensions?.height ?? 200,
@@ -82,10 +88,72 @@ const DisplayNode: React.FC<DisplayNodeProps> = React.memo(
     ]);
 
     useEffect(() => {
-      setNodeId(`${data.name}-${Date.now()}`);
       setIsPlaying(false);
       updateNodeInternals(id);
     }, [data.lastRun]);
+
+    useEffect(() => {
+      if (!data.nodeDimensions) return;
+      setDimensions({
+        width: data.nodeDimensions.width ?? dimensions.width,
+        height: data.nodeDimensions.height ?? dimensions.height,
+      });
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [data.nodeDimensions?.width, data.nodeDimensions?.height]);
+
+    const incomingEdge = useMemo(() => {
+      const incoming = getIncomingEdges?.(id) ?? [];
+      return (
+        incoming.find((edge: any) => edge.targetHandle === inputHandleId) ??
+        incoming[0]
+      );
+    }, [getIncomingEdges, id, inputHandleId, data.lastRun]);
+
+    const upstreamOutput = useMemo(() => {
+      if (!incomingEdge) return undefined;
+      const source = findNode?.(incomingEdge.source);
+      return source?.data?.outputData;
+    }, [incomingEdge, findNode]);
+
+    const normalizedOutput = useMemo(() => {
+      const hasMeaningfulOutput = (value: any) => {
+        if (value == null) return false;
+        if (typeof value === "string") return value.trim().length > 0;
+        if (Array.isArray(value)) {
+          const nonEmpty = value.filter(
+            (item) =>
+              item != null &&
+              (typeof item !== "string" || item.trim().length > 0),
+          );
+          return nonEmpty.length > 0;
+        }
+        return true;
+      };
+
+      const raw = hasMeaningfulOutput(data.outputData)
+        ? data.outputData
+        : upstreamOutput;
+      if (raw == null) return null;
+
+      // Normalize to a string array so OutputDisplay is stable.
+      if (Array.isArray(raw)) {
+        return raw
+          .flatMap((item) => (item == null ? [] : [item]))
+          .map((item) =>
+            typeof item === "string" ? item : JSON.stringify(item, null, 2),
+          );
+      }
+
+      return [typeof raw === "string" ? raw : JSON.stringify(raw, null, 2)];
+    }, [data.outputData, upstreamOutput]);
+
+    const displayData = useMemo(
+      () => ({
+        ...data,
+        outputData: normalizedOutput ?? undefined,
+      }),
+      [data, normalizedOutput],
+    );
 
     const handlePlayClick = () => {
       setIsPlaying(true);
@@ -110,20 +178,25 @@ const DisplayNode: React.FC<DisplayNodeProps> = React.memo(
     };
 
     const handleSaveDimensions = (params: ResizeParams) => {
-      setDimensions({
+      const next = {
         width: params.width,
         height: params.height,
+      };
+      setDimensions(next);
+
+      // Persist so the size survives re-renders / reloads.
+      onUpdateNodeData(id, {
+        ...data,
+        nodeDimensions: next,
       });
     };
 
     return (
-      <div
+      <NodeContainer
         key={id}
-        className={`flex h-full flex-col rounded-lg bg-zinc-900 `}
-        style={{
-          width: "100%",
-          minWidth: "300px",
-        }}
+        width={dimensions.width}
+        height={dimensions.height}
+        style={{ minWidth: 300 }}
       >
         {selected && (
           <NodeResizeControl
@@ -182,14 +255,20 @@ const DisplayNode: React.FC<DisplayNodeProps> = React.memo(
           isOutput
         />
 
-        <div className="nodrag nowheel flex h-full w-full overflow-auto">
-          {data.outputData != null ? (
-            <OutputDisplay key={reloadDisplay} data={data} />
+        <NodeLogs
+          className="nodrag nowheel flex h-full w-full"
+          showLogs={true}
+          noPadding
+        >
+          {normalizedOutput != null ? (
+            <OutputDisplay key={reloadDisplay} data={displayData as any} />
           ) : (
-            <div className="h-10" />
+            <div className="flex h-full w-full items-center justify-center p-3 text-sm text-slate-300">
+              {t("ConnectOutputToDisplay", "Connect an output to display")}
+            </div>
           )}
-        </div>
-      </div>
+        </NodeLogs>
+      </NodeContainer>
     );
   },
 );

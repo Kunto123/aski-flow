@@ -164,7 +164,9 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
             output = node.run()
             end_time = time.time()
             duration = end_time - start_time
-            self.notify_progress(node.get_processor(), output, duration=duration)
+            # Mark completion so the UI can reliably stop spinners and allow re-runs.
+            # (Streaming processors can still emit intermediate updates via STREAMING.)
+            self.notify_progress(node.get_processor(), output, duration=duration, isDone=True)
         except Exception as e:
             node.state = AsyncProcessorLauncher.NodeState.ERROR
             self.notify_error(node.get_processor(), e)

@@ -13,6 +13,7 @@ from werkzeug.utils import secure_filename
 from ..core.processor_type_name_utils import ProcessorType
 from ..processor import BasicProcessor
 from ....vision import draw_boxes_overlay
+from .media_ref_utils import unwrap_primary_input
 
 
 def _extract_asset_filename(url: str):
@@ -38,7 +39,12 @@ class AROverlayProcessor(BasicProcessor):
             raise RuntimeError(
                 "opencv-python and numpy are required for ar-overlay processor."
             )
-        image_url = self.get_input_by_name("image_url", self.image_url)
+        image_raw = self.get_input_by_name(
+            "image_url",
+            self.image_url,
+            accept_object=True,
+        )
+        image_url = unwrap_primary_input(image_raw)
         predictions_raw = self.get_input_by_name(
             "predictions_json",
             self.predictions_json,

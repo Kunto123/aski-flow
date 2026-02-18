@@ -166,7 +166,16 @@ const Flow = forwardRef((props: FlowProps, ref) => {
     FlowOnProgressEventData,
     FlowOnErrorEventData,
     FlowOnProgressEventData
-  >(onProgress, onError, () => {}, onCurrentNodeRunning);
+  >(
+    onProgress,
+    onError,
+    () => {
+      // Safety: if a run completes without per-node completion flags,
+      // ensure the UI can re-run nodes without requiring a refresh.
+      setCurrentNodesRunning([]);
+    },
+    onCurrentNodeRunning,
+  );
 
   // Best-effort cleanup: if the Flow component unmounts (route change / reload),
   // ensure camera streams are stopped.
@@ -179,6 +188,7 @@ const Flow = forwardRef((props: FlowProps, ref) => {
   function onProgress(data: FlowOnProgressEventData) {
     const nodeToUpdate = data.instanceName;
     const output = data.output;
+    const isDone = data.isDone ?? true;
 
     setCurrentNodesRunning((previous) => {
       return previous.filter((node) => node != nodeToUpdate);
@@ -193,7 +203,7 @@ const Flow = forwardRef((props: FlowProps, ref) => {
                 ...node.data,
                 outputData: output,
                 lastRun: new Date(),
-                isDone: data.isDone,
+                isDone,
               };
             }
 
@@ -239,7 +249,10 @@ const Flow = forwardRef((props: FlowProps, ref) => {
 
   function onCurrentNodeRunning(data: FlowOnCurrentNodeRunningEventData) {
     setCurrentNodesRunning((previous) => {
-      return [...previous, data.instanceName];
+      if (!data.instanceName) return previous;
+      return previous.includes(data.instanceName)
+        ? previous
+        : [...previous, data.instanceName];
     });
   }
 

@@ -2,6 +2,7 @@ import os
 import threading
 import time
 import uuid
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Generator, Optional
 
@@ -139,6 +140,7 @@ class StreamManager:
         source_stream_id: str,
         transform_fn: TransformFn,
         fps: float = 20.0,
+        owner_name: Optional[str] = None,
     ) -> str:
         source = self.get_stream(source_stream_id)
         if source is None:
@@ -149,8 +151,9 @@ class StreamManager:
             stream_id=stream_id,
             source_type="transform",
             source_stream_id=source_stream_id,
+            owner_name=owner_name,
             # Transform streams should also be reaped if nothing consumes them.
-            idle_timeout_sec=float(os.getenv("ASKI_STREAM_IDLE_TIMEOUT_SEC", "8")),
+            idle_timeout_sec=float(os.getenv("ASKI_STREAM_IDLE_TIMEOUT_SEC", "20")),
         )
         thread = threading.Thread(
             target=self._transform_loop,
@@ -214,36 +217,46 @@ class StreamManager:
         fps: float,
     ) -> None:
         delay = 1.0 / max(float(fps), 1.0)
-        while state.active:
-            source = self.get_stream(source_stream_id)
-            if source is None or not source.active:
+        while state.active and not state.stop_event.is_set():
+            try:
+                source = self.get_stream(source_stream_id)
+                if source is None or not source.active:
+                    state.active = False
+                    break
+
+                source_frame = self.get_latest_frame(source_stream_id)
+                if source_frame is None:
+                    time.sleep(delay)
+                    continue
+
+                transformed = transform_fn(source_frame.copy())
+                predictions: Dict[str, Any] = {}
+                frame = transformed
+
+                if isinstance(transformed, tuple) and len(transformed) == 2:
+                    frame, predictions = transformed
+
+                encoded_ok, encoded = cv2.imencode(".jpg", frame)
+                if not encoded_ok:
+                    time.sleep(delay)
+                    continue
+
+                with state.lock:
+                    state.latest_frame = frame
+                    state.latest_jpeg = encoded.tobytes()
+                    if predictions:
+                        state.latest_predictions = predictions
+
+                time.sleep(delay)
+            except Exception:
+                logging.exception(
+                    "Transform stream loop failed (stream_id=%s, source_stream_id=%s)",
+                    state.stream_id,
+                    source_stream_id,
+                )
                 state.active = False
+                state.stop_event.set()
                 break
-
-            source_frame = self.get_latest_frame(source_stream_id)
-            if source_frame is None:
-                time.sleep(delay)
-                continue
-
-            transformed = transform_fn(source_frame.copy())
-            predictions: Dict[str, Any] = {}
-            frame = transformed
-
-            if isinstance(transformed, tuple) and len(transformed) == 2:
-                frame, predictions = transformed
-
-            encoded_ok, encoded = cv2.imencode(".jpg", frame)
-            if not encoded_ok:
-                time.sleep(delay)
-                continue
-
-            with state.lock:
-                state.latest_frame = frame
-                state.latest_jpeg = encoded.tobytes()
-                if predictions:
-                    state.latest_predictions = predictions
-
-            time.sleep(delay)
 
     def get_stream(self, stream_id: str) -> Optional[StreamState]:
         with self._registry_lock:

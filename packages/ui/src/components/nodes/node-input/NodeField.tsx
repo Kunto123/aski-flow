@@ -46,9 +46,9 @@ function NodeField<
   const { getIncomingEdges, findNode } = useContext(NodeContext);
 
   const selectedNode = nodeId ? findNode(nodeId) : undefined;
-
-  const hasMultipleInputs =
-    (selectedNode?.data?.config?.inputNames?.length ?? 0) > 1;
+  const processorType = selectedNode?.data?.processorType;
+  const isDisplayLikeNode =
+    processorType === "display" || processorType === "text-display";
 
   const linkedVariable = useMemo(() => {
     if (!field.isLinked || !nodeId) return "";
@@ -69,7 +69,7 @@ function NodeField<
     handleId,
   ]);
 
-  const showLinkedVariableField = !!field.isLinked && hasMultipleInputs;
+  const showLinkedVariableField = !!field.isLinked && !isDisplayLikeNode;
   return (
     <>
       {field.label && displayParams?.showLabels && (
