@@ -4,6 +4,7 @@ import GenericNode from "../components/nodes/GenericNode";
 import NodeWrapper from "../components/nodes/NodeWrapper";
 import { nodeConfigs } from "../nodes-configuration/nodeConfig";
 import DisplayNode from "../components/nodes/DisplayNode";
+import RoiNode from "../components/nodes/RoiNode";
 
 let allNodeTypes: string[] = [];
 
@@ -14,6 +15,7 @@ export const specificNodeTypes: Partial<Record<string, React.FC<NodeProps>>> = {
   file: FileUploadNode,
   video: FileUploadNode,
   audio: FileUploadNode,
+  roi: RoiNode,
   display: DisplayNode,
   "text-display": DisplayNode,
 };

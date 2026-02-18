@@ -1,4 +1,6 @@
 import uuid
+import os
+import tempfile
 from urllib.parse import urlparse
 
 try:
@@ -13,6 +15,8 @@ from werkzeug.utils import secure_filename
 from ..core.processor_type_name_utils import ProcessorType
 from ..processor import BasicProcessor
 from ....streaming import get_stream_manager
+
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
 
 
 def _extract_stream_id(ref: str):
@@ -37,6 +41,19 @@ def _extract_asset_filename(url: str):
     return secure_filename(raw)
 
 
+def _safe_float(value, default):
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except Exception:
+        return default
+
+
+def _clamp(value, min_value, max_value):
+    return max(min_value, min(max_value, value))
+
+
 class RoiProcessor(BasicProcessor):
     """Simple ROI crop/warp/mask v1.
 
@@ -54,10 +71,13 @@ class RoiProcessor(BasicProcessor):
         super().__init__(config)
         self.input_url = config.get("input_url")
         # Normalized crop box (0..1)
-        self.x = float(config.get("x", 0.0))
-        self.y = float(config.get("y", 0.0))
-        self.w = float(config.get("w", 1.0))
-        self.h = float(config.get("h", 1.0))
+        self.x = _safe_float(config.get("x"), 0.0)
+        self.y = _safe_float(config.get("y"), 0.0)
+        self.w = _safe_float(config.get("w"), 1.0)
+        self.h = _safe_float(config.get("h"), 1.0)
+        # Pixel crop box (preferred by new UI). Falls back to normalized w/h.
+        self.width = _safe_float(config.get("width"), 0.0)
+        self.height = _safe_float(config.get("height"), 0.0)
 
     def process(self):
         if cv2 is None or np is None:
@@ -72,12 +92,34 @@ class RoiProcessor(BasicProcessor):
             return self._process_stream(stream_id)
         return self._process_file(input_ref)
 
+    def _resolve_roi_px(self, frame_w: int, frame_h: int):
+        if frame_w <= 0 or frame_h <= 0:
+            return 0, 0, frame_w, frame_h
+
+        x_norm = _clamp(self.x, 0.0, 1.0)
+        y_norm = _clamp(self.y, 0.0, 1.0)
+
+        if self.width > 0 and self.height > 0:
+            roi_w = int(_clamp(self.width, 1.0, float(frame_w)))
+            roi_h = int(_clamp(self.height, 1.0, float(frame_h)))
+        else:
+            roi_w = int(_clamp(self.w, 0.0, 1.0) * frame_w)
+            roi_h = int(_clamp(self.h, 0.0, 1.0) * frame_h)
+            roi_w = max(1, roi_w)
+            roi_h = max(1, roi_h)
+
+        x1 = int(x_norm * frame_w)
+        y1 = int(y_norm * frame_h)
+        x1 = int(_clamp(x1, 0, max(0, frame_w - roi_w)))
+        y1 = int(_clamp(y1, 0, max(0, frame_h - roi_h)))
+
+        return x1, y1, roi_w, roi_h
+
     def _crop(self, frame):
         h, w = frame.shape[:2]
-        x1 = int(max(0, min(1.0, self.x)) * w)
-        y1 = int(max(0, min(1.0, self.y)) * h)
-        x2 = int(max(0, min(1.0, self.x + self.w)) * w)
-        y2 = int(max(0, min(1.0, self.y + self.h)) * h)
+        x1, y1, roi_w, roi_h = self._resolve_roi_px(w, h)
+        x2 = x1 + roi_w
+        y2 = y1 + roi_h
         if x2 <= x1 or y2 <= y1:
             return frame
         return frame[y1:y2, x1:x2]
@@ -96,6 +138,13 @@ class RoiProcessor(BasicProcessor):
         if not filename:
             raise ValueError("roi expects /asset/<file> URL or stream:// ref")
 
+        extension = os.path.splitext(filename)[1].lower()
+        if extension in VIDEO_EXTENSIONS:
+            return self._process_video_file(filename)
+
+        return self._process_image_file(filename)
+
+    def _process_image_file(self, filename: str):
         storage = self.get_storage()
         content = storage.get_file(filename)
         image = cv2.imdecode(np.frombuffer(content, np.uint8), cv2.IMREAD_COLOR)
@@ -110,3 +159,72 @@ class RoiProcessor(BasicProcessor):
         out_name = f"{self.name}-roi-{uuid.uuid4().hex[:10]}.jpg"
         out_url = self.get_storage().save(out_name, encoded.tobytes())
         return [out_url]
+
+    def _process_video_file(self, filename: str):
+        storage = self.get_storage()
+        content = storage.get_file(filename)
+        ext = os.path.splitext(filename)[1].lower() or ".mp4"
+
+        input_path = None
+        output_path = None
+        cap = None
+        writer = None
+
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_input:
+                temp_input.write(content)
+                input_path = temp_input.name
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_output:
+                output_path = temp_output.name
+
+            cap = cv2.VideoCapture(input_path)
+            if not cap.isOpened():
+                raise RuntimeError("Could not decode input video")
+
+            frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = float(cap.get(cv2.CAP_PROP_FPS))
+            fps = fps if fps and fps > 0 else 25.0
+
+            x1, y1, roi_w, roi_h = self._resolve_roi_px(frame_w, frame_h)
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            writer = cv2.VideoWriter(output_path, fourcc, fps, (roi_w, roi_h))
+            if not writer.isOpened():
+                raise RuntimeError("Could not initialize output video writer")
+
+            wrote_any_frame = False
+            while True:
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                crop = frame[y1 : y1 + roi_h, x1 : x1 + roi_w]
+                if crop is None or crop.size == 0:
+                    continue
+                writer.write(crop)
+                wrote_any_frame = True
+
+            if not wrote_any_frame:
+                raise RuntimeError("Could not crop any video frame")
+
+            with open(output_path, "rb") as f:
+                out_bytes = f.read()
+
+            out_name = f"{self.name}-roi-{uuid.uuid4().hex[:10]}.mp4"
+            out_url = storage.save(out_name, out_bytes)
+            return [out_url]
+        finally:
+            if cap is not None:
+                cap.release()
+            if writer is not None:
+                writer.release()
+            if input_path and os.path.exists(input_path):
+                try:
+                    os.remove(input_path)
+                except Exception:
+                    pass
+            if output_path and os.path.exists(output_path):
+                try:
+                    os.remove(output_path)
+                except Exception:
+                    pass
