@@ -3,8 +3,9 @@ import threading
 import time
 import uuid
 import logging
+from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Generator, Optional
+from typing import Any, Callable, Deque, Dict, Generator, List, Optional
 
 try:
     import cv2
@@ -32,6 +33,12 @@ class StreamState:
     thread: Optional[threading.Thread] = None
     lock: threading.Lock = field(default_factory=threading.Lock)
     stop_event: threading.Event = field(default_factory=threading.Event)
+    frames_produced: int = 0
+    last_frame_at: Optional[float] = None
+    mjpeg_clients: int = 0
+    mjpeg_total_clients: int = 0
+    last_error: Optional[str] = None
+    stop_reason: Optional[str] = None
 
 
 class StreamManager:
@@ -40,6 +47,12 @@ class StreamManager:
     def __init__(self) -> None:
         self._streams: Dict[str, StreamState] = {}
         self._registry_lock = threading.Lock()
+        self._debug_enabled = (
+            str(os.getenv("ASKI_STREAM_DEBUG", "0")).strip().lower()
+            in ("1", "true", "yes", "on")
+        )
+        self._debug_events_max = int(os.getenv("ASKI_STREAM_DEBUG_MAX_EVENTS", "800"))
+        self._debug_events: Deque[Dict[str, Any]] = deque(maxlen=self._debug_events_max)
 
         # Safety net: auto-reap idle camera streams so we don't leave webcams
         # running if the UI forgets to call stop (e.g., node removed via keyboard,
@@ -50,6 +63,66 @@ class StreamManager:
             name="stream-idle-reaper",
         )
         self._reaper_thread.start()
+
+    def _debug_event(self, event: str, **payload: Any) -> None:
+        entry = {
+            "timestamp": time.time(),
+            "event": event,
+            **payload,
+        }
+        self._debug_events.append(entry)
+        if self._debug_enabled:
+            logging.info("[StreamDebug] %s", entry)
+
+    def clear_debug_events(self) -> None:
+        self._debug_events.clear()
+
+    def get_debug_snapshot(self, events_limit: int = 200) -> Dict[str, Any]:
+        now = time.time()
+        with self._registry_lock:
+            states = list(self._streams.values())
+
+        streams: List[Dict[str, Any]] = []
+        for state in states:
+            with state.lock:
+                streams.append(
+                    {
+                        "stream_id": state.stream_id,
+                        "source_type": state.source_type,
+                        "source_stream_id": state.source_stream_id,
+                        "owner_name": state.owner_name,
+                        "active": state.active,
+                        "thread_name": state.thread.name if state.thread else None,
+                        "thread_alive": bool(state.thread and state.thread.is_alive()),
+                        "stop_event_set": state.stop_event.is_set(),
+                        "stop_reason": state.stop_reason,
+                        "created_at": state.created_at,
+                        "last_access_at": state.last_access_at,
+                        "idle_timeout_sec": state.idle_timeout_sec,
+                        "idle_for_sec": max(0.0, now - state.last_access_at),
+                        "frames_produced": state.frames_produced,
+                        "last_frame_at": state.last_frame_at,
+                        "mjpeg_clients": state.mjpeg_clients,
+                        "mjpeg_total_clients": state.mjpeg_total_clients,
+                        "has_capture": state.capture is not None,
+                        "has_latest_frame": state.latest_frame is not None,
+                        "has_latest_jpeg": state.latest_jpeg is not None,
+                        "last_error": state.last_error,
+                    }
+                )
+
+        if events_limit <= 0:
+            events = []
+        else:
+            events = list(self._debug_events)[-events_limit:]
+
+        return {
+            "now": now,
+            "debug_enabled": self._debug_enabled,
+            "active_stream_count": len(streams),
+            "streams": streams,
+            "events": events,
+        }
 
     def _new_stream_id(self, prefix: str) -> str:
         return f"{prefix}-{uuid.uuid4().hex[:12]}"
@@ -96,6 +169,12 @@ class StreamManager:
         else:
             capture = cv2.VideoCapture(camera_index)
         if not capture.isOpened():
+            self._debug_event(
+                "create_camera_stream_failed",
+                camera_index=camera_index,
+                owner_name=owner_name,
+                backend=backend_name or "default",
+            )
             capture.release()
             raise RuntimeError(f"Cannot open camera index {camera_index}")
 
@@ -132,6 +211,16 @@ class StreamManager:
         with self._registry_lock:
             self._streams[stream_id] = state
 
+        self._debug_event(
+            "create_camera_stream",
+            stream_id=stream_id,
+            owner_name=owner_name,
+            camera_index=camera_index,
+            width=width,
+            height=height,
+            fps=fps,
+            backend=backend_name or "default",
+        )
         thread.start()
         return stream_id
 
@@ -166,6 +255,13 @@ class StreamManager:
         with self._registry_lock:
             self._streams[stream_id] = state
 
+        self._debug_event(
+            "create_transform_stream",
+            stream_id=stream_id,
+            source_stream_id=source_stream_id,
+            owner_name=owner_name,
+            fps=fps,
+        )
         thread.start()
         return stream_id
 
@@ -175,6 +271,11 @@ class StreamManager:
             state.active = False
             return
 
+        self._debug_event(
+            "camera_loop_started",
+            stream_id=state.stream_id,
+            owner_name=state.owner_name,
+        )
         try:
             while state.active and not state.stop_event.is_set():
                 # grab/retrieve tends to be more cooperative on some backends than read()
@@ -199,6 +300,8 @@ class StreamManager:
                 with state.lock:
                     state.latest_frame = frame
                     state.latest_jpeg = encoded.tobytes()
+                    state.frames_produced += 1
+                    state.last_frame_at = time.time()
         finally:
             # IMPORTANT (Windows): release inside the capture thread to avoid driver locks.
             try:
@@ -207,6 +310,13 @@ class StreamManager:
                 pass
             with state.lock:
                 state.capture = None
+            self._debug_event(
+                "camera_loop_stopped",
+                stream_id=state.stream_id,
+                owner_name=state.owner_name,
+                frames_produced=state.frames_produced,
+                stop_reason=state.stop_reason,
+            )
 
 
     def _transform_loop(
@@ -217,10 +327,18 @@ class StreamManager:
         fps: float,
     ) -> None:
         delay = 1.0 / max(float(fps), 1.0)
+        self._debug_event(
+            "transform_loop_started",
+            stream_id=state.stream_id,
+            owner_name=state.owner_name,
+            source_stream_id=source_stream_id,
+            fps=fps,
+        )
         while state.active and not state.stop_event.is_set():
             try:
                 source = self.get_stream(source_stream_id)
                 if source is None or not source.active:
+                    state.stop_reason = "source_inactive"
                     state.active = False
                     break
 
@@ -244,11 +362,14 @@ class StreamManager:
                 with state.lock:
                     state.latest_frame = frame
                     state.latest_jpeg = encoded.tobytes()
+                    state.frames_produced += 1
+                    state.last_frame_at = time.time()
                     if predictions:
                         state.latest_predictions = predictions
 
                 time.sleep(delay)
-            except Exception:
+            except Exception as e:
+                state.last_error = str(e)
                 logging.exception(
                     "Transform stream loop failed (stream_id=%s, source_stream_id=%s)",
                     state.stream_id,
@@ -256,7 +377,24 @@ class StreamManager:
                 )
                 state.active = False
                 state.stop_event.set()
+                state.stop_reason = "transform_exception"
+                self._debug_event(
+                    "transform_loop_error",
+                    stream_id=state.stream_id,
+                    owner_name=state.owner_name,
+                    source_stream_id=source_stream_id,
+                    error=state.last_error,
+                )
                 break
+        self._debug_event(
+            "transform_loop_stopped",
+            stream_id=state.stream_id,
+            owner_name=state.owner_name,
+            source_stream_id=source_stream_id,
+            frames_produced=state.frames_produced,
+            stop_reason=state.stop_reason,
+            last_error=state.last_error,
+        )
 
     def get_stream(self, stream_id: str) -> Optional[StreamState]:
         with self._registry_lock:
@@ -293,7 +431,7 @@ class StreamManager:
             state.last_access_at = time.time()
             return dict(state.latest_predictions)
 
-    def stop_stream(self, stream_id: str) -> bool:
+    def stop_stream(self, stream_id: str, reason: str = "manual") -> bool:
         """Stop a stream deterministically.
 
         On Windows (especially with USB cameras), OpenCV backends can keep the device
@@ -305,6 +443,11 @@ class StreamManager:
         with self._registry_lock:
             state = self._streams.get(stream_id)
             if state is None:
+                self._debug_event(
+                    "stop_stream_not_found",
+                    stream_id=stream_id,
+                    reason=reason,
+                )
                 return False
 
             dependent_ids = [
@@ -314,11 +457,21 @@ class StreamManager:
             # Mark inactive first so loops can terminate quickly.
             state.active = False
             state.stop_event.set()
+            state.stop_reason = reason
+
+        self._debug_event(
+            "stop_stream_requested",
+            stream_id=stream_id,
+            reason=reason,
+            source_type=state.source_type,
+            owner_name=state.owner_name,
+            dependent_ids=dependent_ids,
+        )
 
         # 2) Stop dependents first (outside lock) so they don't keep touching the source
         for dep_id in dependent_ids:
             try:
-                self.stop_stream(dep_id)
+                self.stop_stream(dep_id, reason=f"parent_stopped:{stream_id}")
             except Exception:
                 pass
 
@@ -356,6 +509,16 @@ class StreamManager:
         with self._registry_lock:
             self._streams.pop(stream_id, None)
 
+        self._debug_event(
+            "stop_stream_completed",
+            stream_id=stream_id,
+            reason=reason,
+            source_type=state.source_type,
+            owner_name=state.owner_name,
+            thread_alive=bool(state.thread and state.thread.is_alive()),
+            capture_released=state.capture is None,
+            frames_produced=state.frames_produced,
+        )
         return True
 
 
@@ -373,7 +536,7 @@ class StreamManager:
                     ]
 
                 for stream_id in stale_ids:
-                    self.stop_stream(stream_id)
+                    self.stop_stream(stream_id, reason="idle_timeout")
             except Exception:
                 # Never crash the backend because of a reaper failure.
                 pass
@@ -393,8 +556,14 @@ class StreamManager:
 
         stopped = 0
         for stream_id in target_ids:
-            if self.stop_stream(stream_id):
+            if self.stop_stream(stream_id, reason=f"owner_stop:{owner_name}"):
                 stopped += 1
+        self._debug_event(
+            "stop_streams_by_owner",
+            owner_name=owner_name,
+            target_ids=target_ids,
+            stopped=stopped,
+        )
         return stopped
 
     def stop_camera_streams(self) -> int:
@@ -407,37 +576,73 @@ class StreamManager:
 
         stopped = 0
         for stream_id in camera_stream_ids:
-            if self.stop_stream(stream_id):
+            if self.stop_stream(stream_id, reason="stop_all_camera_streams"):
                 stopped += 1
+        self._debug_event(
+            "stop_camera_streams",
+            target_ids=camera_stream_ids,
+            stopped=stopped,
+        )
         return stopped
 
     def mjpeg_generator(self, stream_id: str) -> Generator[bytes, None, None]:
         boundary = b"--frame\r\n"
-        while True:
-            state = self.get_stream(stream_id)
-            if state is None or not state.active:
-                break
+        opened = False
+        try:
+            while True:
+                state = self.get_stream(stream_id)
+                if state is None or not state.active:
+                    break
 
-            frame = self.get_latest_jpeg(stream_id)
-            if frame is None:
+                if not opened:
+                    with state.lock:
+                        state.mjpeg_clients += 1
+                        state.mjpeg_total_clients += 1
+                    self._debug_event(
+                        "mjpeg_client_connected",
+                        stream_id=stream_id,
+                        owner_name=state.owner_name,
+                        source_type=state.source_type,
+                        active_clients=state.mjpeg_clients,
+                        total_clients=state.mjpeg_total_clients,
+                    )
+                    opened = True
+
+                frame = self.get_latest_jpeg(stream_id)
+                if frame is None:
+                    time.sleep(0.03)
+                    continue
+
+                # Mark as accessed to prevent idle reaper stopping an active viewer.
+                try:
+                    with state.lock:
+                        state.last_access_at = time.time()
+                except Exception:
+                    pass
+
+                yield (
+                    boundary
+                    + b"Content-Type: image/jpeg\r\n"
+                    + f"Content-Length: {len(frame)}\r\n\r\n".encode("utf-8")
+                    + frame
+                    + b"\r\n"
+                )
                 time.sleep(0.03)
-                continue
-
-            # Mark as accessed to prevent idle reaper stopping an active viewer.
-            try:
+        finally:
+            state = self.get_stream(stream_id)
+            if state is not None and opened:
                 with state.lock:
-                    state.last_access_at = time.time()
-            except Exception:
-                pass
-
-            yield (
-                boundary
-                + b"Content-Type: image/jpeg\r\n"
-                + f"Content-Length: {len(frame)}\r\n\r\n".encode("utf-8")
-                + frame
-                + b"\r\n"
-            )
-            time.sleep(0.03)
+                    state.mjpeg_clients = max(0, state.mjpeg_clients - 1)
+                    active_clients = state.mjpeg_clients
+                    total_clients = state.mjpeg_total_clients
+                self._debug_event(
+                    "mjpeg_client_disconnected",
+                    stream_id=stream_id,
+                    owner_name=state.owner_name,
+                    source_type=state.source_type,
+                    active_clients=active_clients,
+                    total_clients=total_clients,
+                )
 
 
 _STREAM_MANAGER = StreamManager()

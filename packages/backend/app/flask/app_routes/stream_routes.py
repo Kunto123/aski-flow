@@ -73,3 +73,22 @@ def stop_all_camera_streams():
     manager = get_stream_manager()
     stopped_count = manager.stop_camera_streams()
     return {"stopped": stopped_count > 0, "stopped_count": stopped_count}
+
+
+@stream_blueprint.route("/stream/debug", methods=["GET"])
+def stream_debug_snapshot():
+    manager = get_stream_manager()
+    limit_raw = request.args.get("limit", "200")
+    try:
+        limit = int(limit_raw)
+    except Exception:
+        limit = 200
+    limit = max(0, min(limit, 2000))
+    return jsonify(manager.get_debug_snapshot(events_limit=limit))
+
+
+@stream_blueprint.route("/stream/debug/clear", methods=["POST"])
+def stream_debug_clear():
+    manager = get_stream_manager()
+    manager.clear_debug_events()
+    return {"cleared": True}

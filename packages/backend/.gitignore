@@ -9,9 +9,6 @@ __pycache__/
 # Fichiers de logs
 *.log
 
-# Fichiers d'env
-*.env
-
 # Fichiers de build
 build
 dist

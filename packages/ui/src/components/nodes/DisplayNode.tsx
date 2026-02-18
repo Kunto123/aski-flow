@@ -130,9 +130,16 @@ const DisplayNode: React.FC<DisplayNodeProps> = React.memo(
         return true;
       };
 
-      const raw = hasMeaningfulOutput(data.outputData)
-        ? data.outputData
-        : upstreamOutput;
+      const hasIncoming = !!incomingEdge;
+
+      // Prefer the currently connected upstream output so Display isn't stuck showing stale data
+      // after rewiring (e.g., Camera → Display then ROI → Display).
+      const raw =
+        hasIncoming && hasMeaningfulOutput(upstreamOutput)
+          ? upstreamOutput
+          : hasMeaningfulOutput(data.outputData)
+            ? data.outputData
+            : undefined;
       if (raw == null) return null;
 
       // Normalize to a string array so OutputDisplay is stable.
@@ -145,7 +152,7 @@ const DisplayNode: React.FC<DisplayNodeProps> = React.memo(
       }
 
       return [typeof raw === "string" ? raw : JSON.stringify(raw, null, 2)];
-    }, [data.outputData, upstreamOutput]);
+    }, [incomingEdge, data.outputData, upstreamOutput]);
 
     const displayData = useMemo(
       () => ({

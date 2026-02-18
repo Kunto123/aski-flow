@@ -98,7 +98,7 @@ const isVideoPreviewUrl = (url: string): boolean => {
 
 const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
   const { t } = useTranslation("flow");
-  const { onUpdateNodeData, getIncomingEdges, findNode } = useContext(NodeContext);
+  const { onUpdateNodeData, getIncomingEdges, getOutgoingEdges, findNode, runNode, currentNodesRunning } = useContext(NodeContext);
   const { getViewport } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
   const [isPlaying, setIsPlaying] = useIsPlaying();
@@ -111,6 +111,7 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
     height: 0,
   });
   const dataRef = useRef<GenericNodeData>(data);
+  const lastAutoRunRef = useRef<string>("");
   const dragStateRef = useRef<
     | {
         mode: "move" | "resize";
@@ -216,6 +217,12 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
     return incoming.find((edge) => edge.targetHandle === generateIdForHandle(0)) ?? incoming[0];
   }, [getIncomingEdges, id, data.lastRun, data.input_url]);
 
+  const outgoingEdges = useMemo(() => {
+    return getOutgoingEdges?.(id) ?? [];
+  }, [getOutgoingEdges, id]);
+
+  const hasDownstream = outgoingEdges.length > 0;
+
   const resolvedInputUrl = useMemo(() => {
     if (incomingEdge) {
       const sourceNode = findNode(incomingEdge.source);
@@ -223,6 +230,46 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
     }
     return data.input_url ?? "";
   }, [incomingEdge, findNode, data.input_url, data.lastRun]);
+
+  useEffect(() => {
+    if (!hasDownstream) return;
+    if (!resolvedInputUrl) return;
+
+    // Auto-run ROI when it has a connected downstream and a valid upstream input.
+    // This makes Camera → ROI → Display work without requiring manual "play" on ROI.
+    if (currentNodesRunning?.includes(data.name)) return;
+
+    const key = [
+      resolvedInputUrl,
+      data.x ?? 0,
+      data.y ?? 0,
+      data.w ?? 1,
+      data.h ?? 1,
+      data.width ?? "",
+      data.height ?? "",
+    ].join("|");
+
+    if (lastAutoRunRef.current === key) return;
+    lastAutoRunRef.current = key;
+
+    try {
+      runNode?.(data.name);
+    } catch (e) {
+      // ignore
+    }
+  }, [
+    hasDownstream,
+    resolvedInputUrl,
+    data.x,
+    data.y,
+    data.w,
+    data.h,
+    data.width,
+    data.height,
+    data.name,
+    runNode,
+    currentNodesRunning,
+  ]);
 
   useEffect(() => {
     const currentFields = data?.config?.fields ?? [];
@@ -538,7 +585,17 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
   return (
     <NodeContainer>
       <NodeHeader>
-        <NodeIcon>
+        
+<HandleWrapper
+  id={generateIdForHandle(0, false)}
+  position={
+    !!data?.handles?.[generateIdForHandle(0, false)]
+      ? data.handles[generateIdForHandle(0, false)]
+      : Position.Left
+  }
+  onChangeHandlePosition={handleChangeHandlePosition}
+/>
+<NodeIcon>
           <MdOutlineCrop />
         </NodeIcon>
         <NodeTitle>{data.appearance?.customName ?? "ROI"}</NodeTitle>
