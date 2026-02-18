@@ -321,6 +321,28 @@ export const NodeProvider = ({
   const clearNodeOutput = (nodeId: string) => {
     const nodeToUpdate = nodes.find((node) => node.id === nodeId);
     if (nodeToUpdate) {
+      const outputStreamIds = extractStreamIdsFromValue(nodeToUpdate.data?.outputData);
+      const configStreamIds = extractStreamIdsFromValue(nodeToUpdate.data?.stream_ref);
+      const streamIds = [...new Set([...outputStreamIds, ...configStreamIds])];
+      const isCameraNode = nodeToUpdate.data?.processorType === "camera-input";
+
+      // Clearing output should actively stop running streams instead of waiting
+      // for browser refresh/idle timeout.
+      void (async () => {
+        const byOwnerStopped = await stopStreamsByOwner(nodeToUpdate.data?.name);
+        const streamStopResults = await Promise.all(
+          streamIds.map((streamId) => stopStream(streamId)),
+        );
+        const anyByIdStopped = streamStopResults.some(Boolean);
+
+        if (isCameraNode) {
+          await stopAllCameraStreams();
+          if (!byOwnerStopped && !anyByIdStopped) {
+            await stopAllCameraStreams();
+          }
+        }
+      })();
+
       const nodesUpdated = nodes.map((node) => {
         if (node.id === nodeId) {
           return {
@@ -340,38 +362,62 @@ export const NodeProvider = ({
   };
 
   function clearAllOutput() {
-    const nodesCleared = nodes.map((node) => {
-      node.data.outputData = undefined;
-      node.data.lastRun = undefined;
-      return node;
-    });
+    // Stop any running streams (camera + transforms) so devices/resources aren't left active
+    // when users clear outputs or reset the canvas.
+    void (async () => {
+      await Promise.all(nodes.map((node) => stopStreamsByOwner(node.data?.name)));
+
+      await Promise.all(
+        nodes.map(async (node) => {
+          const outputStreamIds = extractStreamIdsFromValue(node.data?.outputData);
+          const configStreamIds = extractStreamIdsFromValue(node.data?.stream_ref);
+          const streamIds = [...new Set([...outputStreamIds, ...configStreamIds])];
+          await Promise.all(streamIds.map((sid) => stopStream(sid)));
+        }),
+      );
+
+      // Safety-net: ensure webcam is fully released, even if tracking failed.
+      // If no camera streams are active, this is a cheap no-op on the backend.
+      await stopAllCameraStreams();
+    })();
+
+    const nodesCleared = nodes.map((node) => ({
+      ...node,
+      data: {
+        ...node.data,
+        outputData: undefined,
+        lastRun: undefined,
+        isDone: false,
+      },
+    }));
     onUpdateNodes(nodesCleared, edges);
   }
-
   const removeNode = (nodeId: string) => {
     const nodeToRemove = nodes.find((node) => node.id === nodeId);
-    if (nodeToRemove?.data?.processorType === "camera-input") {
-      const outputStreamIds = extractStreamIdsFromValue(nodeToRemove.data.outputData);
-      const configStreamIds = extractStreamIdsFromValue(nodeToRemove.data.stream_ref);
+    if (nodeToRemove) {
+      const outputStreamIds = extractStreamIdsFromValue(nodeToRemove.data?.outputData);
+      const configStreamIds = extractStreamIdsFromValue(nodeToRemove.data?.stream_ref);
       const streamIds = [...new Set([...outputStreamIds, ...configStreamIds])];
+      const isCameraNode = nodeToRemove.data?.processorType === "camera-input";
 
       // Fire-and-forget cleanup so UI deletion stays responsive.
-      // Fallback to stop-all-camera to handle orphaned streams.
       void (async () => {
+        // Always try owner-based stop (covers transform streams owned by the node).
         const byOwnerStopped = await stopStreamsByOwner(nodeToRemove.data.name);
+
+        // Also stop by explicit stream IDs when available.
         const streamStopResults = await Promise.all(
           streamIds.map((streamId) => stopStream(streamId)),
         );
         const anyByIdStopped = streamStopResults.some(Boolean);
-        // Always attempt a global camera stop as a safety-net to avoid leaving
-        // the webcam running when a node is removed.
-        // This is acceptable for Week 5 (single camera use-case) and prevents
-        // orphaned captures when owner/stream-id tracking fails.
-        if (!byOwnerStopped && !anyByIdStopped) {
+
+        // For camera nodes, use the global stop as a safety-net to ensure the webcam is released.
+        if (isCameraNode) {
           await stopAllCameraStreams();
-        } else {
-          // Still do a best-effort cleanup for any orphaned camera stream.
-          await stopAllCameraStreams();
+          // If owner/ids tracking failed, global stop is still our best fallback.
+          if (!byOwnerStopped && !anyByIdStopped) {
+            await stopAllCameraStreams();
+          }
         }
       })();
     }
@@ -385,19 +431,18 @@ export const NodeProvider = ({
 
   const removeAll = () => {
     void (async () => {
-      const cameraNodes = nodes.filter(
-        (node) => node.data?.processorType === "camera-input",
-      );
+      await Promise.all(nodes.map((node) => stopStreamsByOwner(node.data?.name)));
+
       await Promise.all(
-        cameraNodes.map(async (node) => {
-          await stopStreamsByOwner(node.data.name);
-          const streamIds = extractStreamIdsFromValue(node.data.outputData);
+        nodes.map(async (node) => {
+          const outputStreamIds = extractStreamIdsFromValue(node.data?.outputData);
+          const configStreamIds = extractStreamIdsFromValue(node.data?.stream_ref);
+          const streamIds = [...new Set([...outputStreamIds, ...configStreamIds])];
           await Promise.all(streamIds.map((streamId) => stopStream(streamId)));
         }),
       );
-      if (cameraNodes.length > 0) {
-        await stopAllCameraStreams();
-      }
+
+      await stopAllCameraStreams();
     })();
     onUpdateNodes([], []);
   };

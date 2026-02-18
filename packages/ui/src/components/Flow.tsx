@@ -299,29 +299,26 @@ const Flow = forwardRef((props: FlowProps, ref) => {
 
       if (removedIds.length) {
         const removedNodes = nodes.filter((n) => removedIds.includes(n.id));
-        const cameraNodes = removedNodes.filter(
-          (n) => n?.data?.processorType === "camera-input",
-        );
-        if (cameraNodes.length) {
+        if (removedNodes.length) {
           void (async () => {
+            const hasAnyCamera = removedNodes.some(
+              (n) => n?.data?.processorType === "camera-input",
+            );
+
             await Promise.all(
-              cameraNodes.map(async (node) => {
+              removedNodes.map(async (node) => {
                 const outputStreamIds = extractStreamIdsFromValue(node.data?.outputData);
                 const configStreamIds = extractStreamIdsFromValue(node.data?.stream_ref);
                 const streamIds = [...new Set([...outputStreamIds, ...configStreamIds])];
-                const byOwnerStopped = await stopStreamsByOwner(node.data?.name);
-                const byIdResults = await Promise.all(
-                  streamIds.map((streamId) => stopStream(streamId)),
-                );
-                const anyByIdStopped = byIdResults.some(Boolean);
-                // Always run a global stop as a safety-net (Week 5 single-camera target).
-                if (!byOwnerStopped && !anyByIdStopped) {
-                  await stopAllCameraStreams();
-                } else {
-                  await stopAllCameraStreams();
-                }
+
+                await stopStreamsByOwner(node.data?.name);
+                await Promise.all(streamIds.map((streamId) => stopStream(streamId)));
               }),
             );
+
+            if (hasAnyCamera) {
+              await stopAllCameraStreams();
+            }
           })();
         }
       }
