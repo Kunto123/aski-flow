@@ -99,17 +99,25 @@ export default function OutputDisplay({
       return "markdown";
     }
 
+    const inferredType = getOutputExtension(output);
+
     // For multi-output nodes, infer type from the currently selected output item
     // to support mixed output content (e.g. JSON + stream URL in one node).
     if (typeof data.outputData !== "string") {
-      return getOutputExtension(output);
+      return inferredType;
+    }
+
+    // Prefer inferred media/file type over stale config outputType.
+    // This keeps stream/media rendering stable for legacy node configs.
+    if (inferredType !== "markdown") {
+      return inferredType;
     }
 
     if (data.config?.outputType && data.config.outputType !== "markdown") {
       return data.config.outputType;
     }
 
-    return getOutputExtension(output);
+    return inferredType;
   }
 
   return (

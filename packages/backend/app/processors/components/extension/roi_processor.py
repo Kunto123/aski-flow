@@ -131,9 +131,8 @@ class RoiProcessor(BasicProcessor):
             return self._crop(frame)
 
         out_stream_id = manager.create_transform_stream(source_stream_id, _transform)
-        # Return only the visual stream URL for UI and downstream chaining.
-        # Downstream processors can still recover stream id from /stream/<id>.mjpg URL.
-        return [manager.build_mjpeg_url(out_stream_id)]
+        # Return canonical stream ref; UI converts it to a host-correct MJPEG URL.
+        return [f"stream://{out_stream_id}"]
 
     def _process_file(self, input_url: str):
         filename = _extract_asset_filename(input_url)
