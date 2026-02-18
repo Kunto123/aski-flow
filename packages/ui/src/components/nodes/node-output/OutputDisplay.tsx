@@ -6,7 +6,7 @@ import ImageUrlOutput from "./ImageUrlOutput";
 import ImageBase64Output from "./ImageBase64Output";
 import VideoUrlOutput from "./VideoUrlOutput";
 import AudioUrlOutput from "./AudioUrlOutput";
-import { getOutputExtension } from "./outputUtils";
+import { getOutputExtension, normalizeStreamOutputUrl } from "./outputUtils";
 import PdfUrlOutput from "./PdfUrlOutput";
 import { OutputType } from "../../../nodes-configuration/types";
 import { useState } from "react";
@@ -35,8 +35,11 @@ export default function OutputDisplay({
 
   const getCurrentOutput = (): string => {
     if (!data.outputData) return "";
-    if (typeof data.outputData === "string") return data.outputData;
-    return data.outputData[indexDisplayed] ?? "";
+    if (typeof data.outputData === "string") {
+      return normalizeStreamOutputUrl(data.outputData);
+    }
+    const output = data.outputData[indexDisplayed] ?? "";
+    return normalizeStreamOutputUrl(output);
   };
 
   const getOutputComponent = () => {

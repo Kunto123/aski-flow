@@ -408,6 +408,7 @@ export function useFormFields(
       return (
         <NodeField
           key={`${id}-${field.name}`}
+          nodeId={id}
           field={field}
           label={t(field.label ?? field.name)}
           renderField={renderField}
