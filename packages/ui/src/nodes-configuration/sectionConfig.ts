@@ -64,23 +64,10 @@ function mapSectionToCategory(section?: string): CategoryType {
 export function getNonGenericNodeConfig() {
   const nonGenericNodeConfig: DnDNode[] = [
     {
-      label: "File / Image",
+      label: "Media (File/Image/Audio/Video)",
       type: "file",
+      keywords: ["media", "file", "image", "audio", "video"],
       helpMessage: "fileUploadHelp",
-      section: "input",
-      category: "input",
-    },
-    {
-      label: "Video",
-      type: "video",
-      helpMessage: "Upload a video file (Week 5)",
-      section: "input",
-      category: "input",
-    },
-    {
-      label: "Audio",
-      type: "audio",
-      helpMessage: "Upload an audio file (Week 5)",
       section: "input",
       category: "input",
     },
