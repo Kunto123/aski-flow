@@ -17,7 +17,7 @@ export const roiNodeConfig: NodeConfig = {
     },
     {
       name: "width",
-      label: "Width",
+      label: "Width (px)",
       type: "numericfield",
       defaultValue: 120,
       min: 1,
@@ -26,7 +26,7 @@ export const roiNodeConfig: NodeConfig = {
     },
     {
       name: "height",
-      label: "Height",
+      label: "Height (px)",
       type: "numericfield",
       defaultValue: 120,
       min: 1,
