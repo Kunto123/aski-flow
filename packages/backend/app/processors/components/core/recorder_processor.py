@@ -2,6 +2,7 @@ import time
 import tempfile
 import uuid
 import os
+import json
 from typing import Optional
 
 try:
@@ -15,7 +16,7 @@ from ....streaming import get_stream_manager
 
 
 def _extract_stream_id(ref: str) -> Optional[str]:
-    if not ref:
+    if not ref or not isinstance(ref, str):
         return None
 
     if ref.startswith("stream://"):
@@ -36,6 +37,30 @@ def _extract_stream_id(ref: str) -> Optional[str]:
     return None
 
 
+def _unwrap_primary_input(raw_value):
+    if isinstance(raw_value, list):
+        for item in raw_value:
+            if item is None:
+                continue
+            if isinstance(item, str) and item.strip() == "":
+                continue
+            return item
+        return None
+
+    if isinstance(raw_value, str):
+        value = raw_value.strip()
+        if value.startswith("[") and value.endswith("]"):
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, list):
+                    return _unwrap_primary_input(parsed)
+            except Exception:
+                return raw_value
+        return raw_value
+
+    return raw_value
+
+
 class RecorderProcessor(BasicProcessor):
     processor_type = ProcessorType.RECORDER
 
@@ -51,7 +76,12 @@ class RecorderProcessor(BasicProcessor):
                 "opencv-python is required for recorder processor. Install backend dependencies first."
             )
         manager = get_stream_manager()
-        stream_ref = self.get_input_by_name("stream_ref", self.stream_ref)
+        stream_raw = self.get_input_by_name(
+            "stream_ref",
+            self.stream_ref,
+            accept_object=True,
+        )
+        stream_ref = _unwrap_primary_input(stream_raw)
         stream_id = _extract_stream_id(stream_ref)
         if not stream_id:
             raise ValueError("Recorder requires stream_ref (stream://<id> or /stream/<id>.mjpg)")

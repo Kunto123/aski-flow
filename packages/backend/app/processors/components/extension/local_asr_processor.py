@@ -6,6 +6,7 @@ from ....utils.local_inference_utils import (
     post_json,
     sanitize_payload,
 )
+from .media_ref_utils import unwrap_primary_input
 
 
 class LocalASRProcessor(ContextAwareProcessor):
@@ -19,7 +20,12 @@ class LocalASRProcessor(ContextAwareProcessor):
         self.endpoint_url = config.get("endpoint_url")
 
     def process(self):
-        audio_url = self.get_input_by_name("audio_url", self.audio_url)
+        audio_raw = self.get_input_by_name(
+            "audio_url",
+            self.audio_url,
+            accept_object=True,
+        )
+        audio_url = unwrap_primary_input(audio_raw)
 
         if not audio_url:
             raise Exception("No audio provided")

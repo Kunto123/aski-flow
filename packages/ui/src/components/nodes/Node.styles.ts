@@ -92,8 +92,10 @@ export const NodeIcon = styled.div`
   font-size: 1.3em;
 `;
 
-export const NodeContainer = styled.div<{ width?: number }>`
-  width: 35em;
+export const NodeContainer = styled.div<{ width?: number; height?: number }>`
+  width: ${({ width }) => (width ? `${width}px` : "clamp(320px, 28vw, 520px)")};
+  max-width: 100%;
+  height: ${({ height }) => (height ? `${height}px` : "auto")};
 
   background: ${({ theme }) => theme.nodeGradientBg};
   background-color: ${({ theme }) => theme.bg};

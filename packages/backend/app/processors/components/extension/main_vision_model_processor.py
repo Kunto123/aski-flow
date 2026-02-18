@@ -171,6 +171,7 @@ class MainVisionModelProcessor(BasicProcessor):
 
     def _process_stream(self, source_stream_id: str):
         manager = get_stream_manager()
+        manager.stop_streams_by_owner(self.name)
         runtime = get_ultralytics_runtime()
 
         # Fail fast in local-first mode if the model weights are missing.
@@ -188,7 +189,11 @@ class MainVisionModelProcessor(BasicProcessor):
             overlay = draw_boxes_overlay(frame, predictions)
             return overlay, predictions
 
-        overlay_stream_id = manager.create_transform_stream(source_stream_id, _transform)
+        overlay_stream_id = manager.create_transform_stream(
+            source_stream_id,
+            _transform,
+            owner_name=self.name,
+        )
         predictions_url = manager.build_predictions_url(overlay_stream_id)
 
         predictions_payload = {

@@ -124,11 +124,16 @@ class ImageProcessingProcessor(BasicProcessor):
 
     def _process_stream(self, source_stream_id: str):
         manager = get_stream_manager()
+        manager.stop_streams_by_owner(self.name)
 
         def _transform(frame):
             return self._apply_ops(frame)
 
-        out_stream_id = manager.create_transform_stream(source_stream_id, _transform)
+        out_stream_id = manager.create_transform_stream(
+            source_stream_id,
+            _transform,
+            owner_name=self.name,
+        )
         return [f"stream://{out_stream_id}", manager.build_mjpeg_url(out_stream_id)]
 
     def _process_file(self, input_url: str):

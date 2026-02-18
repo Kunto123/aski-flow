@@ -171,7 +171,10 @@ class Processor(ABC):
     def get_input_node_output_keys(self) -> Optional[List[int]]:
         if self.inputs is None or len(self.inputs) == 0:
             return None
-        return [input.get("inputNodeOutputKey") for input in self.inputs]
+        return [
+            0 if input.get("inputNodeOutputKey") is None else input.get("inputNodeOutputKey")
+            for input in self.inputs
+        ]
 
     def get_input_names(self) -> Optional[List[str]]:
         if self.inputs is None or len(self.inputs) == 0:

@@ -23,12 +23,8 @@ export default function NodeOutput({
   const { t } = useTranslation("flow");
 
   function getOutputType(): OutputType {
-    if (data.config?.outputType) {
-      return data.config.outputType;
-    }
-
     if (!data.outputData) {
-      return "markdown";
+      return data.config?.outputType || "markdown";
     }
 
     let outputData = data.outputData;
@@ -40,9 +36,17 @@ export default function NodeOutput({
       output = outputData;
     }
 
-    const outputType = getOutputExtension(output);
+    const inferredType = getOutputExtension(output);
 
-    return outputType;
+    if (inferredType !== "markdown") {
+      return inferredType;
+    }
+
+    if (data.config?.outputType) {
+      return data.config.outputType;
+    }
+
+    return inferredType;
   }
 
   const outputType = getOutputType();

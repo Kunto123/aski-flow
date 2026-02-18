@@ -25,11 +25,55 @@ export const isStreamUrl = (url: string) => {
 
 export const normalizeStreamOutputUrl = (url: string) => {
   if (!url || typeof url !== "string") return url;
+  const resolveApiOrigin = () => {
+    try {
+      const configured = new URL(getRestApiUrl());
+      if (typeof window === "undefined") return configured.origin;
+
+      const browserHost = window.location.hostname;
+      const isLocalHost = (host: string) =>
+        host === "localhost" || host === "127.0.0.1" || host === "::1";
+
+      if (browserHost && !isLocalHost(browserHost) && isLocalHost(configured.hostname)) {
+        configured.hostname = browserHost;
+      }
+
+      return configured.origin;
+    } catch {
+      return getRestApiUrl();
+    }
+  };
+
+  const rewriteLocalhostStreamUrl = (rawUrl: string) => {
+    try {
+      const parsed = new URL(rawUrl);
+      if (!parsed.pathname.includes("/stream/")) return rawUrl;
+      if (typeof window === "undefined") return rawUrl;
+
+      const browserHost = window.location.hostname;
+      const isLocalHost = (host: string) =>
+        host === "localhost" || host === "127.0.0.1" || host === "::1";
+
+      if (
+        browserHost &&
+        !isLocalHost(browserHost) &&
+        isLocalHost(parsed.hostname)
+      ) {
+        parsed.hostname = browserHost;
+        return parsed.toString();
+      }
+    } catch {
+      return rawUrl;
+    }
+
+    return rawUrl;
+  };
+
   if (url.startsWith("stream://")) {
     const streamId = url.replace("stream://", "");
-    return `${getRestApiUrl()}/stream/${streamId}.mjpg`;
+    return `${resolveApiOrigin()}/stream/${streamId}.mjpg`;
   }
-  return url;
+  return rewriteLocalhostStreamUrl(url);
 };
 
 const extensionToTypeMap: { [key: string]: OutputType } = {

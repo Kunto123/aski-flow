@@ -172,10 +172,22 @@ class AbstractTopologicalProcessorLauncher(ProcessorLauncher):
                 config_data, node_name, []
             )
             related_config_data.reverse()
+            recomputed_nodes = set()
             for config in related_config_data:
                 config_output = config.get("outputData", None)
-                if config_output is None or config["name"] == node_name:
-                    logging.debug(f"Empty or current node - {config['name']}")
+                has_recomputed_parent = any(
+                    input_conf.get("inputNode") in recomputed_nodes
+                    for input_conf in (config.get("inputs") or [])
+                )
+                should_recompute = (
+                    config_output is None
+                    or config["name"] == node_name
+                    or self._contains_stream_reference(config_output)
+                    or has_recomputed_parent
+                )
+                if should_recompute:
+                    recomputed_nodes.add(config["name"])
+                    logging.debug(f"Recompute node - {config['name']}")
                     processor = self.processor_factory.create_processor(
                         config, self.context, self.storage_strategy
                     )
@@ -188,6 +200,23 @@ class AbstractTopologicalProcessorLauncher(ProcessorLauncher):
                     processor.set_output(config_output)
                     processors[config["name"]] = processor
         return processors
+
+    def _contains_stream_reference(self, value) -> bool:
+        """Detect ephemeral stream refs that should never be reused from cached outputData."""
+        if value is None:
+            return False
+
+        if isinstance(value, str):
+            lowered = value.lower()
+            return lowered.startswith("stream://") or "/stream/" in lowered
+
+        if isinstance(value, list):
+            return any(self._contains_stream_reference(item) for item in value)
+
+        if isinstance(value, dict):
+            return any(self._contains_stream_reference(v) for v in value.values())
+
+        return False
 
     def get_related_config_data(self, config_data, node_name, visited):
         if node_name in visited:

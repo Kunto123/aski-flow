@@ -8,7 +8,7 @@ except Exception:
 from ..processor import BasicProcessor
 from ....streaming import get_stream_manager
 
-from .media_ref_utils import extract_stream_id
+from .media_ref_utils import extract_stream_id, unwrap_primary_input
 
 
 class FaceRecognitionProcessor(BasicProcessor):
@@ -25,7 +25,12 @@ class FaceRecognitionProcessor(BasicProcessor):
         self.input_url = config.get("input_url")
 
     def process(self):
-        input_ref = self.get_input_by_name("input_url", self.input_url)
+        input_raw = self.get_input_by_name(
+            "input_url",
+            self.input_url,
+            accept_object=True,
+        )
+        input_ref = unwrap_primary_input(input_raw)
         if not input_ref:
             raise ValueError("face-recognition requires input_url")
 
@@ -45,12 +50,17 @@ class FaceRecognitionProcessor(BasicProcessor):
             raise RuntimeError("opencv-python is required for face-recognition stream mode")
 
         manager = get_stream_manager()
+        manager.stop_streams_by_owner(self.name)
 
         def _transform(frame):
             # Passthrough for now.
             return frame
 
-        out_stream_id = manager.create_transform_stream(source_stream_id, _transform)
+        out_stream_id = manager.create_transform_stream(
+            source_stream_id,
+            _transform,
+            owner_name=self.name,
+        )
         payload = {
             "mode": "stream",
             "status": "dummy",

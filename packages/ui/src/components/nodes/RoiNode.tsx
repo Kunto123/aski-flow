@@ -14,7 +14,7 @@ import {
   useUpdateNodeInternals,
 } from "reactflow";
 import HandleWrapper from "../handles/HandleWrapper";
-import { generateIdForHandle } from "../../utils/flowUtils";
+import { generateIdForHandle, getTargetHandleKey } from "../../utils/flowUtils";
 import { NodeContext } from "../../providers/NodeProvider";
 import { useIsPlaying } from "../../hooks/useIsPlaying";
 import NodePlayButton from "./node-button/NodePlayButton";
@@ -223,6 +223,58 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
     }
     return data.input_url ?? "";
   }, [incomingEdge, findNode, data.input_url, data.lastRun]);
+
+  useEffect(() => {
+    const currentFields = data?.config?.fields ?? [];
+    if (currentFields.length === 0) return;
+
+    const handleFields = currentFields.filter((field: any) => field.hasHandle);
+    if (handleFields.length === 0) return;
+
+    const incomingEdges = getIncomingEdges(id) ?? [];
+    const linkedFieldNames = new Set<string>();
+
+    incomingEdges.forEach((edge: any) => {
+      const key = getTargetHandleKey(edge);
+      const numericKey = Number(key);
+      if (!Number.isFinite(numericKey)) return;
+      const fieldName = handleFields[numericKey]?.name;
+      if (fieldName) linkedFieldNames.add(fieldName);
+    });
+
+    let hasChanged = false;
+    const updatedFields = currentFields.map((field: any) => {
+      const shouldLinked = linkedFieldNames.has(field.name);
+      const currentlyLinked = !!field.isLinked;
+      if (currentlyLinked !== shouldLinked) {
+        hasChanged = true;
+        return {
+          ...field,
+          isLinked: shouldLinked,
+        };
+      }
+      return field;
+    });
+
+    const patchedData: any = {};
+    linkedFieldNames.forEach((fieldName) => {
+      if (data[fieldName] !== undefined) {
+        hasChanged = true;
+        patchedData[fieldName] = undefined;
+      }
+    });
+
+    if (!hasChanged) return;
+
+    onUpdateNodeData(id, {
+      ...data,
+      ...patchedData,
+      config: {
+        ...data.config,
+        fields: updatedFields,
+      },
+    });
+  }, [data, id, getIncomingEdges, onUpdateNodeData]);
 
   const boxWidth = toPositiveNumber(data.width, DEFAULT_WIDTH);
   const boxHeight = toPositiveNumber(data.height, DEFAULT_HEIGHT);

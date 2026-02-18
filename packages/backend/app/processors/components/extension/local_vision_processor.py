@@ -8,6 +8,7 @@ from ....utils.local_inference_utils import (
     post_json,
     sanitize_payload,
 )
+from .media_ref_utils import unwrap_primary_input
 
 
 class LocalVisionProcessor(ContextAwareProcessor):
@@ -26,7 +27,12 @@ class LocalVisionProcessor(ContextAwareProcessor):
 
     def process(self):
         prompt = self.get_input_by_name("prompt", self.prompt)
-        image_url = self.get_input_by_name("image_url", self.image_url)
+        image_raw = self.get_input_by_name(
+            "image_url",
+            self.image_url,
+            accept_object=True,
+        )
+        image_url = unwrap_primary_input(image_raw)
 
         if not prompt:
             raise Exception("No prompt provided")
