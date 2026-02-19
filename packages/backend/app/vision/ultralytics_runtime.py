@@ -88,11 +88,19 @@ class UltralyticsRuntime:
         model_path: str,
         conf: float = 0.25,
         classes: Optional[Sequence[int]] = None,
+        imgsz: Optional[int] = None,
     ) -> Dict[str, Any]:
         model = self.get_model(model_path)
         kwargs: Dict[str, Any] = {"verbose": False, "conf": conf}
         if classes is not None:
             kwargs["classes"] = list(classes)
+        if imgsz is not None:
+            try:
+                imgsz_value = int(imgsz)
+                if imgsz_value > 0:
+                    kwargs["imgsz"] = imgsz_value
+            except Exception:
+                pass
 
         result = model.predict(image, **kwargs)[0]
         names = result.names or {}

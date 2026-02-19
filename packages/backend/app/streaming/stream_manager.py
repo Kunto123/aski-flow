@@ -67,6 +67,11 @@ class StreamManager:
             str(os.getenv("ASKI_STREAM_DEBUG", "0")).strip().lower()
             in ("1", "true", "yes", "on")
         )
+        try:
+            self._jpeg_quality = int(os.getenv("ASKI_STREAM_JPEG_QUALITY", "80"))
+        except Exception:
+            self._jpeg_quality = 80
+        self._jpeg_quality = max(30, min(95, self._jpeg_quality))
         self._debug_events_max = int(os.getenv("ASKI_STREAM_DEBUG_MAX_EVENTS", "800"))
         self._debug_events: Deque[Dict[str, Any]] = deque(maxlen=self._debug_events_max)
 
@@ -153,6 +158,18 @@ class StreamManager:
             except Exception:
                 pass
         time.sleep(seconds)
+
+    def _encode_jpeg(self, frame: Any):
+        if cv2 is None:
+            return False, None
+        try:
+            return cv2.imencode(
+                ".jpg",
+                frame,
+                [int(cv2.IMWRITE_JPEG_QUALITY), int(self._jpeg_quality)],
+            )
+        except Exception:
+            return cv2.imencode(".jpg", frame)
 
 
     def _camera_config_matches(
@@ -496,7 +513,7 @@ class StreamManager:
                     time.sleep(0.05)
                     continue
 
-                encoded_ok, encoded = cv2.imencode(".jpg", frame)
+                encoded_ok, encoded = self._encode_jpeg(frame)
                 if not encoded_ok:
                     time.sleep(0.01)
                     continue
@@ -550,6 +567,7 @@ class StreamManager:
         consumer_grace_sec = float(os.getenv("ASKI_STREAM_CONSUMER_GRACE_SEC", "6"))
         no_consumer_idle_sec = float(os.getenv("ASKI_STREAM_NO_CONSUMERS_IDLE_SEC", "1"))
         while state.active and not state.stop_event.is_set():
+            loop_started_at = time.perf_counter()
             now = time.time()
             if (now - state.created_at) >= consumer_grace_sec:
                 try:
@@ -573,19 +591,20 @@ class StreamManager:
 
                 source_frame = self.get_latest_frame(source_stream_id)
                 if source_frame is None:
-                    time.sleep(delay)
+                    self._cooperative_sleep(min(delay, 0.03))
                     continue
 
-                transformed = transform_fn(source_frame.copy())
+                # get_latest_frame() already returns a frame copy.
+                transformed = transform_fn(source_frame)
                 predictions: Dict[str, Any] = {}
                 frame = transformed
 
                 if isinstance(transformed, tuple) and len(transformed) == 2:
                     frame, predictions = transformed
 
-                encoded_ok, encoded = cv2.imencode(".jpg", frame)
+                encoded_ok, encoded = self._encode_jpeg(frame)
                 if not encoded_ok:
-                    time.sleep(delay)
+                    self._cooperative_sleep(min(delay, 0.01))
                     continue
 
                 with state.lock:
@@ -596,7 +615,11 @@ class StreamManager:
                     if predictions:
                         state.latest_predictions = predictions
 
-                time.sleep(delay)
+                # Keep realtime behavior: only sleep the remaining frame budget.
+                elapsed = time.perf_counter() - loop_started_at
+                sleep_for = delay - elapsed
+                if sleep_for > 0:
+                    self._cooperative_sleep(sleep_for)
             except Exception as e:
                 state.last_error = str(e)
                 logging.exception(
