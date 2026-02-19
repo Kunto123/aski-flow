@@ -61,7 +61,13 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
                     self.output = self.processor.process_and_update()
                 except Exception as e:
                     self.state = AsyncProcessorLauncher.NodeState.ERROR
-                    raise e
+                    # IMPORTANT:
+                    # Never raise out of this node execution.
+                    # Unhandled exceptions in eventlet greenthreads can abort
+                    # the Socket.IO handler before it emits `run_end`, leaving
+                    # the UI stuck in a loading state.
+                    self.output = None
+                    return self.output
 
                 self.state = AsyncProcessorLauncher.NodeState.COMPLETED
                 return self.output
@@ -119,7 +125,12 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
             nodes = self.remove_completed_nodes(nodes)
             logging.debug(f"Remaining nodes: {[node.id for node in nodes.values()]}")
 
-        pool.waitall()
+        # Best-effort wait: never let exceptions abort the socket handler.
+        try:
+            pool.waitall()
+        except Exception as e:
+            logging.error(f"GreenPool.waitall raised: {e}")
+            pass
 
     def remove_completed_nodes(self, nodes: List[Node]):
         return {
@@ -153,7 +164,12 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
             self.notify_progress(processor, output, duration=duration, isDone=True)
         except Exception as e:
             self.notify_error(processor, e)
-            raise e
+            # IMPORTANT:
+            # Do not re-raise here.
+            #
+            # This launcher is invoked from Socket.IO handlers. Re-raising will bubble
+            # up and can prevent `run_end` from being emitted, leaving the UI stuck.
+            return None
 
     def run_node(self, node: Node):
         try:
@@ -171,7 +187,13 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
             node.state = AsyncProcessorLauncher.NodeState.ERROR
             self.notify_error(node.get_processor(), e)
             traceback.print_exc()
-            raise e
+            # IMPORTANT:
+            # Do not re-raise here.
+            #
+            # If we re-raise, GreenPool.waitall() can raise and abort the socket
+            # handler before it emits `run_end`, which causes the frontend to keep
+            # spinning ("loading" forever).
+            return None
 
     def notify(self, event: EventType, data: ProcessorEvent):
         if event == EventType.STREAMING:

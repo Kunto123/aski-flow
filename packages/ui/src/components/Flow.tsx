@@ -41,7 +41,6 @@ import {
 import { useVisibility } from "../providers/VisibilityProvider";
 import { FlowMetadata } from "../layout/main-layout/AppLayout";
 import {
-  stopAllCameraStreams,
   stopStream,
   stopStreamsByOwner,
 } from "../api/stream";
@@ -177,13 +176,13 @@ const Flow = forwardRef((props: FlowProps, ref) => {
     onCurrentNodeRunning,
   );
 
-  // Best-effort cleanup: if the Flow component unmounts (route change / reload),
-  // ensure camera streams are stopped.
-  useEffect(() => {
-    return () => {
-      stopAllCameraStreams().catch(() => {});
-    };
-  }, []);
+  // NOTE:
+  // We intentionally do NOT force-stop camera streams on component unmount.
+  // A browser refresh briefly unmounts the React tree and would otherwise cause
+  // the webcam to repeatedly stop/start ("mati/nyala" loop) on Windows.
+  // Stream lifetimes are managed by:
+  // - explicit node removal / clear output actions
+  // - backend idle reaper (ASKI_CAMERA_IDLE_TIMEOUT_SEC)
 
   function onProgress(data: FlowOnProgressEventData) {
     const nodeToUpdate = data.instanceName;
@@ -301,10 +300,6 @@ const Flow = forwardRef((props: FlowProps, ref) => {
         const removedNodes = nodes.filter((n) => removedIds.includes(n.id));
         if (removedNodes.length) {
           void (async () => {
-            const hasAnyCamera = removedNodes.some(
-              (n) => n?.data?.processorType === "camera-input",
-            );
-
             await Promise.all(
               removedNodes.map(async (node) => {
                 const outputStreamIds = extractStreamIdsFromValue(node.data?.outputData);
@@ -315,10 +310,6 @@ const Flow = forwardRef((props: FlowProps, ref) => {
                 await Promise.all(streamIds.map((streamId) => stopStream(streamId)));
               }),
             );
-
-            if (hasAnyCamera) {
-              await stopAllCameraStreams();
-            }
           })();
         }
       }

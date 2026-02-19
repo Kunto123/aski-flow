@@ -335,11 +335,11 @@ export const NodeProvider = ({
         );
         const anyByIdStopped = streamStopResults.some(Boolean);
 
-        if (isCameraNode) {
+        // Only use the global camera stop as a fallback.
+        // Stopping everything on every clear/remove makes webcam usage feel
+        // "flaky" (stop/start loops) when the UI re-runs nodes.
+        if (isCameraNode && !byOwnerStopped && !anyByIdStopped) {
           await stopAllCameraStreams();
-          if (!byOwnerStopped && !anyByIdStopped) {
-            await stopAllCameraStreams();
-          }
         }
       })();
 
@@ -412,12 +412,9 @@ export const NodeProvider = ({
         const anyByIdStopped = streamStopResults.some(Boolean);
 
         // For camera nodes, use the global stop as a safety-net to ensure the webcam is released.
-        if (isCameraNode) {
+        // Only use the global camera stop as a fallback.
+        if (isCameraNode && !byOwnerStopped && !anyByIdStopped) {
           await stopAllCameraStreams();
-          // If owner/ids tracking failed, global stop is still our best fallback.
-          if (!byOwnerStopped && !anyByIdStopped) {
-            await stopAllCameraStreams();
-          }
         }
       })();
     }

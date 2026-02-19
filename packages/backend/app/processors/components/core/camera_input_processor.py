@@ -17,8 +17,19 @@ class CameraInputProcessor(ContextAwareProcessor):
 
     def process(self):
         manager = get_stream_manager()
-        # Ensure previous stream instances from this node are cleaned up first.
-        manager.stop_streams_by_owner(self.name)
+        # IMPORTANT:
+        # Do NOT stop streams by owner here.
+        #
+        # Why:
+        # - The UI can re-run nodes during refresh / hot reload / "Run Node".
+        # - Stopping by owner causes the camera stream to be killed and recreated,
+        #   producing a new stream_id. Downstream nodes that already captured the
+        #   previous stream_id can then fail with "Source stream not found".
+        #
+        # StreamManager.create_camera_stream() already implements:
+        # - reuse by camera_index when possible
+        # - deduplication of duplicates bound to the same device
+        # So we rely on that logic for correctness and to avoid camera "mati/nyala" loops.
         self.stream_id = manager.create_camera_stream(
             camera_index=self.camera_index,
             width=int(self.width) if self.width else None,
