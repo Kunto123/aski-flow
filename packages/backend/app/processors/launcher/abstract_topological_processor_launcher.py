@@ -13,6 +13,8 @@ from ..observer.observer import Observer
 
 from ...storage.storage_strategy import StorageStrategy
 from ..factory.processor_factory import ProcessorFactory
+from app.processors.runtime import get_output_cache
+from app.streaming import get_stream_manager
 
 
 class AbstractTopologicalProcessorLauncher(ProcessorLauncher):
@@ -66,6 +68,10 @@ class AbstractTopologicalProcessorLauncher(ProcessorLauncher):
                     processor.add_input_processor(input_processor)
 
     def load_processors(self, config_data):
+        # Backend-side safety-net: always execute in a valid dependency order.
+        # Frontend already sorts, but we don't want execution correctness to depend on it.
+        config_data = self._topological_sort_config_data(config_data or [])
+
         processors = {
             config["name"]: self.processor_factory.create_processor(
                 config, self.context, self.storage_strategy
@@ -75,6 +81,52 @@ class AbstractTopologicalProcessorLauncher(ProcessorLauncher):
 
         self._link_processors(processors)
         return processors
+
+    def _topological_sort_config_data(self, config_data: List[dict]) -> List[dict]:
+        """Stable topological sort based on config['inputs'][].inputNode.
+
+        Returns the input list order if the graph is cyclic or malformed.
+        """
+        if not config_data:
+            return []
+
+        index = {cfg.get("name"): i for i, cfg in enumerate(config_data) if cfg.get("name")}
+        nodes = [cfg.get("name") for cfg in config_data if cfg.get("name")]
+        if not nodes:
+            return config_data
+
+        indeg = {n: 0 for n in nodes}
+        out = {n: [] for n in nodes}
+
+        for cfg in config_data:
+            dst = cfg.get("name")
+            if not dst:
+                continue
+            for inp in (cfg.get("inputs") or []):
+                src = inp.get("inputNode")
+                if not src or src not in indeg:
+                    continue
+                out[src].append(dst)
+                indeg[dst] += 1
+
+        # Kahn (stable by original index)
+        ready = sorted([n for n, d in indeg.items() if d == 0], key=lambda n: index.get(n, 0))
+        ordered: List[str] = []
+        while ready:
+            n = ready.pop(0)
+            ordered.append(n)
+            for m in out.get(n, []):
+                indeg[m] -= 1
+                if indeg[m] == 0:
+                    ready.append(m)
+                    ready.sort(key=lambda x: index.get(x, 0))
+
+        if len(ordered) != len(nodes):
+            # Cycle or malformed edges; fall back to original order.
+            return config_data
+
+        by_name = {cfg.get("name"): cfg for cfg in config_data}
+        return [by_name[n] for n in ordered if n in by_name]
 
     def get_node_by_name(self, config_data, node_name):
         """
@@ -173,8 +225,21 @@ class AbstractTopologicalProcessorLauncher(ProcessorLauncher):
             )
             related_config_data.reverse()
             recomputed_nodes = set()
+
+            session_id = None
+            try:
+                session_id = self.context.get_session_id() if self.context else None
+            except Exception:
+                session_id = None
+            output_cache = get_output_cache()
+
             for config in related_config_data:
+                # Prefer frontend outputData, but fall back to backend-side cache.
                 config_output = config.get("outputData", None)
+                if config_output is None:
+                    cached = output_cache.get_output(session_id, config.get("name"))
+                    if cached is not None:
+                        config_output = cached
                 has_recomputed_parent = any(
                     input_conf.get("inputNode") in recomputed_nodes
                     for input_conf in (config.get("inputs") or [])
@@ -199,23 +264,69 @@ class AbstractTopologicalProcessorLauncher(ProcessorLauncher):
                     )
                     processor.set_output(config_output)
                     processors[config["name"]] = processor
+        # CRITICAL:
+        # Ensure required processors are linked so downstream nodes can
+        # read upstream outputs even when executed later (run_node).
+        if processors:
+            try:
+                self._link_processors(processors)
+            except Exception:
+                # Let the caller surface the error via notify_error.
+                raise
         return processors
 
     def _contains_stream_reference(self, value) -> bool:
-        """Detect ephemeral stream refs that should never be reused from cached outputData."""
+        """Return True if value contains a *stale* stream reference.
+
+        Historically, we forced recomputation when outputData contained stream refs
+        (stream://... or /stream/<id>.mjpg) because the underlying stream may have
+        been stopped and the reference became invalid.
+
+        Improvement:
+        - If the referenced stream still exists and is active in StreamManager, we
+          allow reusing it. This enables downstream nodes to run later (non-simultan)
+          while still reading the last active stream.
+        - If any referenced stream is missing/inactive, we treat it as stale and
+          force recompute.
+        """
         if value is None:
             return False
 
-        if isinstance(value, str):
-            lowered = value.lower()
-            return lowered.startswith("stream://") or "/stream/" in lowered
+        def _extract_stream_ids(v) -> List[str]:
+            if v is None:
+                return []
+            if isinstance(v, str):
+                s = v.strip()
+                ids: List[str] = []
+                if s.lower().startswith("stream://"):
+                    ids.append(s.split("stream://", 1)[1])
+                if "/stream/" in s and (".mjpg" in s or ".mjpeg" in s):
+                    try:
+                        ids.append(s.split("/stream/")[1].split(".")[0])
+                    except Exception:
+                        pass
+                return ids
+            if isinstance(v, list):
+                out: List[str] = []
+                for item in v:
+                    out.extend(_extract_stream_ids(item))
+                return out
+            if isinstance(v, dict):
+                out: List[str] = []
+                for item in v.values():
+                    out.extend(_extract_stream_ids(item))
+                return out
+            return []
 
-        if isinstance(value, list):
-            return any(self._contains_stream_reference(item) for item in value)
+        stream_ids = _extract_stream_ids(value)
+        if not stream_ids:
+            return False
 
-        if isinstance(value, dict):
-            return any(self._contains_stream_reference(v) for v in value.values())
-
+        manager = get_stream_manager()
+        for sid in stream_ids:
+            st = manager.get_stream(sid)
+            if st is None or not st.active:
+                return True
         return False
 
     def get_related_config_data(self, config_data, node_name, visited):
@@ -242,10 +353,8 @@ class AbstractTopologicalProcessorLauncher(ProcessorLauncher):
         return related_configs
 
     def load_processors_for_node(self, config_data, node_name):
-        processors = self.load_required_processors(config_data, node_name)
-
-        self._link_processors(processors)
-        return processors
+        # load_required_processors() already links the subgraph.
+        return self.load_required_processors(config_data, node_name)
 
     @abstractmethod
     def launch_processors(self, processors):
