@@ -51,7 +51,7 @@ class MainVisionModelProcessor(BasicProcessor):
 
     def __init__(self, config):
         super().__init__(config)
-        self.model_path = config.get("model_path", "models/yolov8n.pt")
+        self.model_path = config.get("model_path", "models/yolov5mu.pt")
         self.conf_threshold = float(config.get("conf_threshold", 0.25))
         self.input_url = config.get("input_url")
         self.classes = config.get("classes")
@@ -198,6 +198,7 @@ class MainVisionModelProcessor(BasicProcessor):
 
         predictions_payload = {
             "mode": "stream",
+            "live": True,
             "predictions_url": predictions_url,
             "stream_id": overlay_stream_id,
         }
@@ -205,8 +206,6 @@ class MainVisionModelProcessor(BasicProcessor):
         return [
             json.dumps(predictions_payload),
             f"stream://{overlay_stream_id}",
-            manager.build_mjpeg_url(overlay_stream_id),
-            predictions_url,
         ]
 
     def _process_file(self, input_url: str):

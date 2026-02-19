@@ -72,16 +72,9 @@ export function getNonGenericNodeConfig() {
       category: "input",
     },
     {
-      label: "Image/Video Display",
+      label: "Display",
       type: "display",
       helpMessage: "displayHelp",
-      section: "tools",
-      category: "output",
-    },
-    {
-      label: "Text/JSON Display",
-      type: "text-display",
-      helpMessage: "Display text or JSON output",
       section: "tools",
       category: "output",
     },

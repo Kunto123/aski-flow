@@ -17,12 +17,14 @@ interface MarkdownOutputProps {
   data: string;
   name: string;
   appearance?: NodeAppearance;
+  fitInContainer?: boolean;
 }
 
 const MarkdownOutput: React.FC<MarkdownOutputProps> = ({
   data,
   name,
   appearance,
+  fitInContainer = false,
 }) => {
   const { t } = useTranslation("flow");
   const { updateNodeAppearance } = useContext(NodeContext);
@@ -73,7 +75,9 @@ const MarkdownOutput: React.FC<MarkdownOutputProps> = ({
   };
 
   return (
-    <div className="relative">
+    <div
+      className={`relative ${fitInContainer ? "h-full overflow-auto" : ""}`}
+    >
       <MemoizedStyledReactMarkdown
         remarkPlugins={[remarkGfm]}
         children={stringifiedData}

@@ -6,12 +6,16 @@ interface ImageBase64OutputProps {
   data: string;
   name: string;
   lastRun?: string;
+  fitInContainer?: boolean;
+  fitMode?: "contain" | "cover" | "fill";
 }
 
 const ImageBase64Output: React.FC<ImageBase64OutputProps> = ({
   data,
   name,
   lastRun,
+  fitInContainer = false,
+  fitMode = "contain",
 }) => {
   const blob = new Blob([
     new Uint8Array(
@@ -34,8 +38,13 @@ const ImageBase64Output: React.FC<ImageBase64OutputProps> = ({
   };
 
   return (
-    <OutputImageContainer>
-      <OutputImage src={url} alt="Output Image" />
+    <OutputImageContainer $fitInContainer={fitInContainer}>
+      <OutputImage
+        $fitInContainer={fitInContainer}
+        $fitMode={fitMode}
+        src={url}
+        alt="Output Image"
+      />
       <DownloadButton onClick={handleDownloadClick}>
         <FaDownload />
       </DownloadButton>
@@ -43,15 +52,30 @@ const ImageBase64Output: React.FC<ImageBase64OutputProps> = ({
   );
 };
 
-const OutputImageContainer = styled.div`
+const OutputImageContainer = styled.div<{ $fitInContainer: boolean }>`
   position: relative;
-  margin-top: 10px;
+  margin-top: ${({ $fitInContainer }) => ($fitInContainer ? "0" : "10px")};
+  width: 100%;
+  height: ${({ $fitInContainer }) => ($fitInContainer ? "100%" : "auto")};
+  display: ${({ $fitInContainer }) => ($fitInContainer ? "flex" : "block")};
+  align-items: ${({ $fitInContainer }) =>
+    $fitInContainer ? "center" : "stretch"};
+  justify-content: ${({ $fitInContainer }) =>
+    $fitInContainer ? "center" : "stretch"};
+  overflow: hidden;
 `;
 
-const OutputImage = styled.img`
+const OutputImage = styled.img<{
+  $fitInContainer: boolean;
+  $fitMode: "contain" | "cover" | "fill";
+}>`
   display: block;
   width: 100%;
-  height: auto;
+  height: ${({ $fitInContainer }) => ($fitInContainer ? "100%" : "auto")};
+  max-width: 100%;
+  max-height: ${({ $fitInContainer }) => ($fitInContainer ? "100%" : "none")};
+  object-fit: ${({ $fitInContainer, $fitMode }) =>
+    $fitInContainer ? $fitMode : "initial"};
   border-radius: 8px;
 `;
 

@@ -14,6 +14,8 @@ import ThreeDimensionalUrlOutput from "./ThreeDimensionalUrlOutput";
 
 interface OutputDisplayProps {
   data: NodeData;
+  fitInContainer?: boolean;
+  fitMode?: "contain" | "cover" | "fill";
   getOutputComponentOverride?: (
     data: NodeData,
     outputType: OutputType,
@@ -22,6 +24,8 @@ interface OutputDisplayProps {
 
 export default function OutputDisplay({
   data,
+  fitInContainer = false,
+  fitMode = "contain",
   getOutputComponentOverride,
 }: OutputDisplayProps) {
   const { t } = useTranslation("flow");
@@ -56,17 +60,33 @@ export default function OutputDisplay({
 
     switch (getOutputType()) {
       case "imageUrl":
-        return <ImageUrlOutput url={output} name={data.name} />;
+        return (
+          <ImageUrlOutput
+            url={output}
+            name={data.name}
+            fitInContainer={fitInContainer}
+            fitMode={fitMode}
+          />
+        );
       case "imageBase64":
         return (
           <ImageBase64Output
             data={output}
             name={data.name}
             lastRun={data.lastRun}
+            fitInContainer={fitInContainer}
+            fitMode={fitMode}
           />
         );
       case "videoUrl":
-        return <VideoUrlOutput url={output} name={data.name} />;
+        return (
+          <VideoUrlOutput
+            url={output}
+            name={data.name}
+            fitInContainer={fitInContainer}
+            fitMode={fitMode}
+          />
+        );
       case "audioUrl":
         return <AudioUrlOutput url={output} name={data.name} />;
       case "3dUrl":
@@ -88,6 +108,7 @@ export default function OutputDisplay({
             data={output}
             name={data.name}
             appearance={data.appearance}
+            fitInContainer={fitInContainer}
           />
         );
     }
@@ -121,9 +142,13 @@ export default function OutputDisplay({
   }
 
   return (
-    <div className="flex h-full w-full flex-col">
+    <div
+      className={`flex h-full w-full flex-col ${fitInContainer ? "min-h-0 overflow-hidden" : ""}`}
+    >
       {nbOutput > 1 && typeof data.outputData !== "string" && (
-        <div className="mt-2 flex flex-row items-center justify-center gap-1 overflow-x-auto p-1">
+        <div
+          className={`flex flex-row items-center justify-center gap-1 overflow-x-auto p-1 ${fitInContainer ? "mt-0 shrink-0" : "mt-2"}`}
+        >
           {data?.outputData?.map((output, index) => (
             <button
               key={index}
@@ -135,7 +160,9 @@ export default function OutputDisplay({
           ))}
         </div>
       )}
-      {getOutputComponent()}
+      <div className={fitInContainer ? "min-h-0 flex-1 overflow-hidden" : ""}>
+        {getOutputComponent()}
+      </div>
     </div>
   );
 }

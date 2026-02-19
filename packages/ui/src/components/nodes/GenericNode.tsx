@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useContext, useMemo, FC } from "react";
+import React, { useState, useEffect, useContext, useMemo, FC, useRef } from "react";
 import { Position, NodeProps, useUpdateNodeInternals } from "reactflow";
 import {
   NodeContainer,
@@ -57,9 +57,12 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
       showOnlyOutput,
       onUpdateNodeData,
       getIncomingEdges,
+      getOutgoingEdges,
       overrideConfigForNode,
       findNode,
       removeEdgesByIds,
+      runNode,
+      currentNodesRunning,
     } = useContext(NodeContext);
 
     const updateNodeInternals = useUpdateNodeInternals();
@@ -73,6 +76,7 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
         ? true
         : !data.config.defaultHideOutput,
     );
+    const lastAutoRunKeyRef = useRef<string>("");
     const [fields, setFields] = useState<Field[]>(
       !!data.config?.fields
         ? data.config.fields
@@ -164,6 +168,92 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
     }, [data?.config?.inputNames]);
 
     const [isPlaying, setIsPlaying] = useIsPlaying();
+
+    useEffect(() => {
+      const isImageProcessing = data.processorType === "image-processing";
+      const isMainVisionModel = data.processorType === "main-vision-model";
+
+      // Keep stream-based processing nodes reactive when upstream stream refs change
+      // (e.g. ROI box moved -> new ROI stream id).
+      if (!isImageProcessing && !isMainVisionModel) return;
+      if (!runNode) return;
+      if (currentNodesRunning?.includes(data.name)) return;
+
+      const outgoing = getOutgoingEdges?.(id) ?? [];
+      const hasExistingOutput = Array.isArray(data.outputData)
+        ? data.outputData.length > 0
+        : !!data.outputData;
+      if (outgoing.length === 0 && !hasExistingOutput) return;
+
+      const incoming = getIncomingEdges(id) ?? [];
+      const inputEdge =
+        incoming.find((edge) => Number(getTargetHandleKey(edge)) === 0) ??
+        incoming[0];
+
+      let upstreamSignature = "";
+      if (inputEdge) {
+        const sourceNode = findNode?.(inputEdge.source);
+        const sourceOutput = sourceNode?.data?.outputData;
+        const sourceLastRun = sourceNode?.data?.lastRun;
+        upstreamSignature = JSON.stringify({
+          source: inputEdge.source,
+          output: sourceOutput,
+          lastRun: sourceLastRun,
+        });
+      } else {
+        const manualInput = data.input_url ?? "";
+        if (!manualInput) return;
+        upstreamSignature = JSON.stringify({
+          source: "manual_input_url",
+          output: manualInput,
+        });
+      }
+
+      if (!upstreamSignature) return;
+
+      const processingParams = isImageProcessing
+        ? JSON.stringify({
+            resize_width: data.resize_width ?? null,
+            resize_height: data.resize_height ?? null,
+            grayscale: data.grayscale ?? false,
+            blur: data.blur ?? null,
+            threshold: data.threshold ?? null,
+          })
+        : JSON.stringify({
+            model_path: data.model_path ?? "models/yolov5mu.pt",
+            conf_threshold: data.conf_threshold ?? 0.25,
+            classes: data.classes ?? [],
+          });
+
+      const key = `${data.processorType}|${data.name}|${upstreamSignature}|${processingParams}`;
+      if (lastAutoRunKeyRef.current === key) return;
+      lastAutoRunKeyRef.current = key;
+
+      try {
+        runNode(data.name);
+      } catch (e) {
+        // ignore auto-run errors; manual run path remains available
+      }
+    }, [
+      data.processorType,
+      data.name,
+      data.input_url,
+      data.resize_width,
+      data.resize_height,
+      data.grayscale,
+      data.blur,
+      data.threshold,
+      data.model_path,
+      data.conf_threshold,
+      data.classes,
+      data.outputData,
+      id,
+      getIncomingEdges,
+      getOutgoingEdges,
+      findNode,
+      runNode,
+      currentNodesRunning,
+    ]);
 
     useHandleShowOutput({
       showOnlyOutput,

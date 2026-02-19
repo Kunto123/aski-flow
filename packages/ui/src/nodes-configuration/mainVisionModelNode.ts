@@ -19,8 +19,8 @@ export const mainVisionModelNodeConfig: NodeConfig = {
       name: "model_path",
       label: "Model Path",
       type: "textfield",
-      defaultValue: "models/yolov8n.pt",
-      placeholder: "e.g. models/yolov8n.pt",
+      defaultValue: "models/yolov5mu.pt",
+      placeholder: "e.g. models/yolov5mu.pt",
     },
     {
       name: "conf_threshold",
