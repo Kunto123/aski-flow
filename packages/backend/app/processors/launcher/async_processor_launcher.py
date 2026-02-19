@@ -20,6 +20,8 @@ from .abstract_topological_processor_launcher import (
     AbstractTopologicalProcessorLauncher,
 )
 
+from app.processors.runtime import get_output_cache
+
 
 class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
     """
@@ -44,6 +46,7 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
             self.parent_ids = parent_ids
             self.state = AsyncProcessorLauncher.NodeState.PENDING
             self.output = None
+            self.error = None
             self.processor = processor
             self.lock = Semaphore(1)
 
@@ -60,6 +63,7 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
                 try:
                     self.output = self.processor.process_and_update()
                 except Exception as e:
+                    self.error = e
                     self.state = AsyncProcessorLauncher.NodeState.ERROR
                     # IMPORTANT:
                     # Never raise out of this node execution.
@@ -76,9 +80,15 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
             return self.processor
 
     def get_input_processor_names(self, processor: Processor):
-        return [
-            input_processor.name for input_processor in processor.get_input_processors()
-        ]
+        # Prefer config-declared inputs for robust dependency tracking.
+        try:
+            inputs = processor.get_inputs() or []
+        except Exception:
+            inputs = []
+        parent_ids = [inp.get("inputNode") for inp in inputs if inp and inp.get("inputNode")]
+        if parent_ids:
+            return parent_ids
+        return [input_processor.name for input_processor in processor.get_input_processors()]
 
     def convert_processors_to_node_dict(self, processors: List[Processor]):
         nodes = {}
@@ -100,6 +110,8 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
 
         initialized_nodes = set()
 
+        stagnant_ticks = 0
+
         while nodes:
             error_detected = any(
                 node.state == AsyncProcessorLauncher.NodeState.ERROR
@@ -110,6 +122,8 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
                 logging.debug("A node is in ERROR state. Halting processing.")
                 break
 
+            spawned_any = False
+
             for id, node in nodes.items():
                 if (
                     node.state == AsyncProcessorLauncher.NodeState.PENDING
@@ -119,11 +133,30 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
                     logging.debug(f"Spawning green thread for node {id}.")
                     initialized_nodes.add(id)
                     pool.spawn(self.run_node, node)
+                    spawned_any = True
 
             eventlet.sleep(0.5)
 
+            before = set(nodes.keys())
             nodes = self.remove_completed_nodes(nodes)
+            after = set(nodes.keys())
             logging.debug(f"Remaining nodes: {[node.id for node in nodes.values()]}")
+
+            # Deadlock/cycle detection: nothing spawned and nothing completed for a while.
+            if (not spawned_any) and before == after:
+                stagnant_ticks += 1
+            else:
+                stagnant_ticks = 0
+            if stagnant_ticks >= 10:
+                logging.error(
+                    "Execution appears stuck (cycle or missing dependencies). Halting."
+                )
+                # Emit a visible error on remaining pending nodes.
+                for n in nodes.values():
+                    if n.state == AsyncProcessorLauncher.NodeState.PENDING:
+                        self.notify_error(n.processor, RuntimeError("Graph deadlock/cycle detected"))
+                        n.state = AsyncProcessorLauncher.NodeState.ERROR
+                break
 
         # Best-effort wait: never let exceptions abort the socket handler.
         try:
@@ -159,6 +192,15 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
             start_time = time.time()
             output = processor.process_and_update()
 
+            # Persist last output so downstream nodes can be executed later
+            # without requiring upstream re-run simultaneously.
+            session_id = None
+            try:
+                session_id = self.context.get_session_id() if self.context else None
+            except Exception:
+                session_id = None
+            get_output_cache().set_output(session_id, processor.name, processor.get_output())
+
             end_time = time.time()
             duration = end_time - start_time
             self.notify_progress(processor, output, duration=duration, isDone=True)
@@ -178,6 +220,16 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
 
             start_time = time.time()
             output = node.run()
+
+            session_id = None
+            try:
+                session_id = self.context.get_session_id() if self.context else None
+            except Exception:
+                session_id = None
+            get_output_cache().set_output(session_id, processor.name, processor.get_output())
+
+            if node.state == AsyncProcessorLauncher.NodeState.ERROR and node.error is not None:
+                self.notify_error(processor, node.error)
             end_time = time.time()
             duration = end_time - start_time
             # Mark completion so the UI can reliably stop spinners and allow re-runs.

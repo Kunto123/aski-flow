@@ -75,6 +75,26 @@ def stop_all_camera_streams():
     return {"stopped": stopped_count > 0, "stopped_count": stopped_count}
 
 
+@stream_blueprint.route("/stream/camera/by-index/stop", methods=["POST"])
+def stop_camera_streams_by_index():
+    body = request.json or {}
+    camera_index_raw = body.get("camera_index")
+    if camera_index_raw is None:
+        return {"stopped": False, "error": "camera_index is required"}, 400
+    try:
+        camera_index = int(camera_index_raw)
+    except Exception:
+        return {"stopped": False, "error": "camera_index must be an integer"}, 400
+
+    manager = get_stream_manager()
+    stopped_count = manager.stop_camera_streams_by_index(camera_index)
+    return {
+        "stopped": stopped_count > 0,
+        "stopped_count": stopped_count,
+        "camera_index": camera_index,
+    }
+
+
 @stream_blueprint.route("/stream/debug", methods=["GET"])
 def stream_debug_snapshot():
     manager = get_stream_manager()

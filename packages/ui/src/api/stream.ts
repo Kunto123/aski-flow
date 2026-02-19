@@ -32,3 +32,24 @@ export async function stopAllCameraStreams(): Promise<boolean> {
     return false;
   }
 }
+
+export async function stopCameraStreamsByIndex(
+  cameraIndex: number | string,
+): Promise<boolean> {
+  if (cameraIndex === undefined || cameraIndex === null || cameraIndex === "") {
+    return false;
+  }
+  try {
+    const response = await client.post("/stream/camera/by-index/stop", {
+      camera_index: Number(cameraIndex),
+    });
+    return !!response?.data?.stopped;
+  } catch (error) {
+    console.error(
+      "Failed to stop camera streams by index:",
+      cameraIndex,
+      error,
+    );
+    return false;
+  }
+}

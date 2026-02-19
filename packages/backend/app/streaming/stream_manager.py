@@ -12,6 +12,11 @@ try:
 except Exception:
     cv2 = None
 
+try:
+    import eventlet
+except Exception:
+    eventlet = None
+
 
 TransformFn = Callable[[Any], Any]
 
@@ -139,6 +144,16 @@ class StreamManager:
     def _new_stream_id(self, prefix: str) -> str:
         return f"{prefix}-{uuid.uuid4().hex[:12]}"
 
+    def _cooperative_sleep(self, seconds: float) -> None:
+        """Yield cooperatively when running under eventlet; fallback to blocking sleep."""
+        if eventlet is not None:
+            try:
+                eventlet.sleep(seconds)
+                return
+            except Exception:
+                pass
+        time.sleep(seconds)
+
 
     def _camera_config_matches(
         self,
@@ -245,8 +260,17 @@ class StreamManager:
 
             with reusable.lock:
                 if owner_name:
+                    # IMPORTANT:
+                    # Do NOT accumulate owner_names on camera streams.
+                    #
+                    # On the frontend, a browser refresh / hot reload can regenerate node IDs.
+                    # If we keep adding owners, the old (now-unreachable) owner IDs will remain
+                    # and stop_streams_by_owner() won't stop the stream, leaving the webcam
+                    # locked even after the node is deleted.
+                    #
+                    # For camera devices, we treat the "current" owner as authoritative.
                     reusable.owner_name = owner_name
-                    reusable.owner_names.add(owner_name)
+                    reusable.owner_names = set([owner_name])
                 reusable.last_access_at = time.time()
 
             self._debug_event(
@@ -323,6 +347,18 @@ class StreamManager:
         source = self.get_stream(source_stream_id)
         if source is None:
             raise RuntimeError(f"Source stream not found: {source_stream_id}")
+        with source.lock:
+            source_active = bool(source.active and (not source.stop_event.is_set()))
+        source_thread = source.thread
+        source_thread_ok = True if source_thread is None else bool(source_thread.is_alive())
+        if (not source_active) or (not source_thread_ok):
+            self._debug_event(
+                "create_transform_stream_rejected",
+                source_stream_id=source_stream_id,
+                owner_name=owner_name,
+                reason="source_inactive",
+            )
+            raise RuntimeError(f"Source stream inactive: {source_stream_id}")
 
         stream_id = self._new_stream_id("xform")
         state = StreamState(
@@ -478,6 +514,15 @@ class StreamManager:
                 pass
             with state.lock:
                 state.capture = None
+
+            # Defensive: on some Windows + USB camera drivers, the handle can remain locked
+            # until the capture object is garbage-collected.
+            try:
+                import gc
+                del capture
+                gc.collect()
+            except Exception:
+                pass
             self._debug_event(
                 "camera_loop_stopped",
                 stream_id=state.stream_id,
@@ -808,6 +853,27 @@ class StreamManager:
         )
         return stopped
 
+    def stop_camera_streams_by_index(self, camera_index: int) -> int:
+        camera_index = int(camera_index)
+        with self._registry_lock:
+            camera_stream_ids = [
+                stream_id
+                for stream_id, state in self._streams.items()
+                if state.source_type == "camera" and state.camera_index == camera_index
+            ]
+
+        stopped = 0
+        for stream_id in camera_stream_ids:
+            if self.stop_stream(stream_id, reason=f"stop_camera_index:{camera_index}"):
+                stopped += 1
+        self._debug_event(
+            "stop_camera_streams_by_index",
+            camera_index=camera_index,
+            target_ids=camera_stream_ids,
+            stopped=stopped,
+        )
+        return stopped
+
     def mjpeg_generator(self, stream_id: str) -> Generator[bytes, None, None]:
         boundary = b"--frame\r\n"
         opened = False
@@ -833,7 +899,7 @@ class StreamManager:
 
                 frame = self.get_latest_jpeg(stream_id)
                 if frame is None:
-                    time.sleep(0.03)
+                    self._cooperative_sleep(0.03)
                     continue
 
                 # Mark as accessed to prevent idle reaper stopping an active viewer.
@@ -850,7 +916,7 @@ class StreamManager:
                     + frame
                     + b"\r\n"
                 )
-                time.sleep(0.03)
+                self._cooperative_sleep(0.03)
         finally:
             state = self.get_stream(stream_id)
             if state is not None and opened:

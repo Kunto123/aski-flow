@@ -15,6 +15,7 @@ import { getDefaultOptions } from "../utils/nodeConfigurationUtils";
 import { FlowMetadata } from "../layout/main-layout/AppLayout";
 import {
   stopAllCameraStreams,
+  stopCameraStreamsByIndex,
   stopStream,
   stopStreamsByOwner,
 } from "../api/stream";
@@ -44,6 +45,21 @@ function extractStreamIdsFromValue(value: any): string[] {
   }
 
   return Array.from(streamIds);
+}
+
+function isLikelyCameraNode(node: any): boolean {
+  const processorType = String(node?.data?.processorType || "").toLowerCase();
+  const nodeName = String(node?.data?.name || "").toLowerCase();
+  const hasCameraIndex =
+    node?.data?.camera_index !== undefined &&
+    node?.data?.camera_index !== null &&
+    node?.data?.camera_index !== "";
+  return (
+    processorType === "camera-input" ||
+    processorType.includes("camera") ||
+    nodeName.endsWith("#camera-input") ||
+    hasCameraIndex
+  );
 }
 
 export type NodeDimensions = {
@@ -324,21 +340,24 @@ export const NodeProvider = ({
       const outputStreamIds = extractStreamIdsFromValue(nodeToUpdate.data?.outputData);
       const configStreamIds = extractStreamIdsFromValue(nodeToUpdate.data?.stream_ref);
       const streamIds = [...new Set([...outputStreamIds, ...configStreamIds])];
-      const isCameraNode = nodeToUpdate.data?.processorType === "camera-input";
+      const isCameraNode = isLikelyCameraNode(nodeToUpdate);
 
       // Clearing output should actively stop running streams instead of waiting
       // for browser refresh/idle timeout.
       void (async () => {
-        const byOwnerStopped = await stopStreamsByOwner(nodeToUpdate.data?.name);
+        await stopStreamsByOwner(nodeToUpdate.data?.name);
         const streamStopResults = await Promise.all(
           streamIds.map((streamId) => stopStream(streamId)),
         );
         const anyByIdStopped = streamStopResults.some(Boolean);
+        const byCameraIndexStopped = isCameraNode
+          ? await stopCameraStreamsByIndex(nodeToUpdate.data?.camera_index)
+          : false;
 
         // Only use the global camera stop as a fallback.
         // Stopping everything on every clear/remove makes webcam usage feel
         // "flaky" (stop/start loops) when the UI re-runs nodes.
-        if (isCameraNode && !byOwnerStopped && !anyByIdStopped) {
+        if (isCameraNode && !byCameraIndexStopped && !anyByIdStopped) {
           await stopAllCameraStreams();
         }
       })();
@@ -398,22 +417,25 @@ export const NodeProvider = ({
       const outputStreamIds = extractStreamIdsFromValue(nodeToRemove.data?.outputData);
       const configStreamIds = extractStreamIdsFromValue(nodeToRemove.data?.stream_ref);
       const streamIds = [...new Set([...outputStreamIds, ...configStreamIds])];
-      const isCameraNode = nodeToRemove.data?.processorType === "camera-input";
+      const isCameraNode = isLikelyCameraNode(nodeToRemove);
 
       // Fire-and-forget cleanup so UI deletion stays responsive.
       void (async () => {
         // Always try owner-based stop (covers transform streams owned by the node).
-        const byOwnerStopped = await stopStreamsByOwner(nodeToRemove.data.name);
+        await stopStreamsByOwner(nodeToRemove.data?.name);
 
         // Also stop by explicit stream IDs when available.
         const streamStopResults = await Promise.all(
           streamIds.map((streamId) => stopStream(streamId)),
         );
         const anyByIdStopped = streamStopResults.some(Boolean);
+        const byCameraIndexStopped = isCameraNode
+          ? await stopCameraStreamsByIndex(nodeToRemove.data?.camera_index)
+          : false;
 
         // For camera nodes, use the global stop as a safety-net to ensure the webcam is released.
         // Only use the global camera stop as a fallback.
-        if (isCameraNode && !byOwnerStopped && !anyByIdStopped) {
+        if (isCameraNode && !byCameraIndexStopped && !anyByIdStopped) {
           await stopAllCameraStreams();
         }
       })();
