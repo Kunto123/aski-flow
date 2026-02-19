@@ -21,7 +21,10 @@ class StreamState:
     stream_id: str
     source_type: str
     source_stream_id: Optional[str] = None
+    # Last/primary owner (for debug/UI). A stream can have multiple owners over time
+    # (e.g., browser refresh regenerates node IDs), so we also keep owner_names.
     owner_name: Optional[str] = None
+    owner_names: set[str] = field(default_factory=set)
     active: bool = True
     created_at: float = field(default_factory=time.time)
     last_access_at: float = field(default_factory=time.time)
@@ -99,6 +102,7 @@ class StreamManager:
                         "source_type": state.source_type,
                         "source_stream_id": state.source_stream_id,
                         "owner_name": state.owner_name,
+                        "owner_names": sorted(list(getattr(state, "owner_names", set()))),
                         "active": state.active,
                         "thread_name": state.thread.name if state.thread else None,
                         "thread_alive": bool(state.thread and state.thread.is_alive()),
@@ -240,7 +244,9 @@ class StreamManager:
                     pass
 
             with reusable.lock:
-                reusable.owner_name = owner_name
+                if owner_name:
+                    reusable.owner_name = owner_name
+                    reusable.owner_names.add(owner_name)
                 reusable.last_access_at = time.time()
 
             self._debug_event(
@@ -270,13 +276,17 @@ class StreamManager:
             stream_id=stream_id,
             source_type="camera",
             owner_name=owner_name,
+            owner_names=set([owner_name]) if owner_name else set(),
             camera_index=int(camera_index),
             camera_width=int(width) if width is not None else None,
             camera_height=int(height) if height is not None else None,
             camera_fps=float(fps) if fps is not None else None,
             camera_backend=backend_name or "default",
-            # Stop camera quickly if nobody is consuming frames anymore.
-            idle_timeout_sec=float(os.getenv("ASKI_CAMERA_IDLE_TIMEOUT_SEC", "4")),
+            # Stop camera if nobody is consuming frames anymore.
+            # Default is intentionally NOT too aggressive because a browser refresh
+            # briefly disconnects MJPEG clients and can otherwise cause visible
+            # camera "mati/nyala" loops on Windows.
+            idle_timeout_sec=float(os.getenv("ASKI_CAMERA_IDLE_TIMEOUT_SEC", "30")),
         )
 
         thread = threading.Thread(
@@ -320,6 +330,7 @@ class StreamManager:
             source_type="transform",
             source_stream_id=source_stream_id,
             owner_name=owner_name,
+            owner_names=set([owner_name]) if owner_name else set(),
             # Transform streams should also be reaped if nothing consumes them.
             idle_timeout_sec=float(os.getenv("ASKI_STREAM_IDLE_TIMEOUT_SEC", "20")),
         )
@@ -742,12 +753,33 @@ class StreamManager:
             target_ids = [
                 stream_id
                 for stream_id, state in self._streams.items()
-                if state.owner_name == owner_name
+                if state.active
+                and (
+                    state.owner_name == owner_name
+                    or (hasattr(state, "owner_names") and owner_name in state.owner_names)
+                )
             ]
 
         stopped = 0
         for stream_id in target_ids:
-            if self.stop_stream(stream_id, reason=f"owner_stop:{owner_name}"):
+            # Release ownership first. Only stop if there are no owners left.
+            should_stop = False
+            with self._registry_lock:
+                state = self._streams.get(stream_id)
+                if state is None:
+                    continue
+                try:
+                    state.owner_names.discard(owner_name)
+                except Exception:
+                    pass
+                if state.owner_name == owner_name:
+                    state.owner_name = None
+                    if state.owner_names:
+                        state.owner_name = next(iter(state.owner_names))
+                if (not state.owner_names) and (state.owner_name is None):
+                    should_stop = True
+
+            if should_stop and self.stop_stream(stream_id, reason=f"owner_stop:{owner_name}"):
                 stopped += 1
         self._debug_event(
             "stop_streams_by_owner",

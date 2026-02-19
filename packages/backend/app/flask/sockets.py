@@ -89,8 +89,11 @@ def handle_process_file(data):
         else:
             logging.warning("Invalid input or missing configuration file")
             emit("error", {"error": "Invalid input or missing configuration file"})
+            emit("run_end", {"output": None})
     except Exception as e:
         emit("error", {"error": str(e)})
+        # Ensure the frontend does not get stuck in a running state.
+        emit("run_end", {"output": None})
         traceback.print_exc()
         logging.error(f"An error occurred: {str(e)}")
 
@@ -123,11 +126,13 @@ def handle_run_node(data):
         else:
             logging.warning("Invalid input or missing parameters")
             emit("error", {"error": "Invalid input or missing parameters"})
+            emit("run_end", {"output": None})
     except Exception as e:
         emit(
             "error",
             {"error": str(e), "nodeName": node_name},
         )
+        emit("run_end", {"output": None})
         traceback.print_exc()
         logging.error(f"An error occurred: {node_name} - {str(e)}")
 
