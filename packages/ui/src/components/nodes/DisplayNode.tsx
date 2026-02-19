@@ -46,6 +46,11 @@ interface Dimensions {
   height: number;
 }
 
+const DISPLAY_DEFAULT_WIDTH = 450;
+const DISPLAY_DEFAULT_HEIGHT = 260;
+const DISPLAY_MIN_WIDTH = 320;
+const DISPLAY_MIN_HEIGHT = 180;
+
 function ResizeIcon() {
   return (
     <svg
@@ -58,7 +63,7 @@ function ResizeIcon() {
       fill="none"
       strokeLinecap="round"
       strokeLinejoin="round"
-      style={{ position: "absolute", right: -20, bottom: -20 }}
+      style={{ position: "absolute", right: -4, bottom: -4 }}
     >
       <path stroke="none" d="M0 0h24v24H0z" fill="none" />
       <polyline points="16 20 20 20 20 16" />
@@ -74,10 +79,9 @@ const DisplayNode: React.FC<DisplayNodeProps> = React.memo(
     const { t } = useTranslation("flow");
     const { onUpdateNodeData, getIncomingEdges, findNode } = useContext(NodeContext);
     const [dimensions, setDimensions] = useState<Dimensions>({
-      width: data.nodeDimensions?.width ?? 450,
-      height: data.nodeDimensions?.height ?? 200,
+      width: data.nodeDimensions?.width ?? DISPLAY_DEFAULT_WIDTH,
+      height: data.nodeDimensions?.height ?? DISPLAY_DEFAULT_HEIGHT,
     });
-    const [reloadDisplay, setReloadDisplay] = useState<number>(0);
     const [isPlaying, setIsPlaying] = useIsPlaying();
     const updateNodeInternals = useUpdateNodeInternals();
 
@@ -90,16 +94,19 @@ const DisplayNode: React.FC<DisplayNodeProps> = React.memo(
     useEffect(() => {
       setIsPlaying(false);
       updateNodeInternals(id);
-    }, [data.lastRun]);
+    }, [data.lastRun, id, setIsPlaying, updateNodeInternals]);
 
     useEffect(() => {
       if (!data.nodeDimensions) return;
-      setDimensions({
-        width: data.nodeDimensions.width ?? dimensions.width,
-        height: data.nodeDimensions.height ?? dimensions.height,
-      });
-      // eslint-disable-next-line react-hooks/exhaustive-deps
+      setDimensions((prev) => ({
+        width: data.nodeDimensions?.width ?? prev.width,
+        height: data.nodeDimensions?.height ?? prev.height,
+      }));
     }, [data.nodeDimensions?.width, data.nodeDimensions?.height]);
+
+    useEffect(() => {
+      updateNodeInternals(id);
+    }, [id, dimensions.width, dimensions.height, updateNodeInternals]);
 
     const incomingEdge = useMemo(() => {
       const incoming = getIncomingEdges?.(id) ?? [];
@@ -109,11 +116,14 @@ const DisplayNode: React.FC<DisplayNodeProps> = React.memo(
       );
     }, [getIncomingEdges, id, inputHandleId, data.lastRun]);
 
-    const upstreamOutput = useMemo(() => {
+    const upstreamNode = useMemo(() => {
       if (!incomingEdge) return undefined;
-      const source = findNode?.(incomingEdge.source);
-      return source?.data?.outputData;
+      return findNode?.(incomingEdge.source);
     }, [incomingEdge, findNode]);
+
+    const upstreamOutput = useMemo(() => {
+      return upstreamNode?.data?.outputData;
+    }, [upstreamNode]);
 
     const normalizedOutput = useMemo(() => {
       const hasMeaningfulOutput = (value: any) => {
@@ -180,15 +190,19 @@ const DisplayNode: React.FC<DisplayNodeProps> = React.memo(
       updateNodeInternals(id);
     };
 
-    const handleReloadDisplay = () => {
-      setReloadDisplay(reloadDisplay + 1);
+    const toDisplayDimensions = (params: ResizeParams): Dimensions => {
+      return {
+        width: Math.max(DISPLAY_MIN_WIDTH, Math.round(params.width)),
+        height: Math.max(DISPLAY_MIN_HEIGHT, Math.round(params.height)),
+      };
+    };
+
+    const handleResize = (params: ResizeParams) => {
+      setDimensions(toDisplayDimensions(params));
     };
 
     const handleSaveDimensions = (params: ResizeParams) => {
-      const next = {
-        width: params.width,
-        height: params.height,
-      };
+      const next = toDisplayDimensions(params);
       setDimensions(next);
 
       // Persist so the size survives re-renders / reloads.
@@ -203,14 +217,22 @@ const DisplayNode: React.FC<DisplayNodeProps> = React.memo(
         key={id}
         width={dimensions.width}
         height={dimensions.height}
-        style={{ minWidth: 300 }}
+        style={{
+          minWidth: DISPLAY_MIN_WIDTH,
+          minHeight: DISPLAY_MIN_HEIGHT,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
       >
         {selected && (
           <NodeResizeControl
-            minWidth={300}
-            minHeight={100}
-            onResizeEnd={(event, params) => {
-              handleReloadDisplay();
+            minWidth={DISPLAY_MIN_WIDTH}
+            minHeight={DISPLAY_MIN_HEIGHT}
+            onResize={(_, params) => {
+              handleResize(params);
+            }}
+            onResizeEnd={(_, params) => {
               handleSaveDimensions(params);
             }}
             style={{
@@ -263,12 +285,17 @@ const DisplayNode: React.FC<DisplayNodeProps> = React.memo(
         />
 
         <NodeLogs
-          className="nodrag nowheel flex h-full w-full"
+          className="nodrag nowheel flex h-full min-h-0 w-full flex-1 overflow-hidden"
           showLogs={true}
           noPadding
+          style={{ maxHeight: "none", overflowY: "hidden" }}
         >
           {normalizedOutput != null ? (
-            <OutputDisplay key={reloadDisplay} data={displayData as any} />
+            <OutputDisplay
+              data={displayData as any}
+              fitInContainer
+              fitMode="contain"
+            />
           ) : (
             <div className="flex h-full w-full items-center justify-center p-3 text-sm text-slate-300">
               {t("ConnectOutputToDisplay", "Connect an output to display")}

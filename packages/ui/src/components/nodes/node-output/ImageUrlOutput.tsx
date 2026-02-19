@@ -8,9 +8,16 @@ import { useTranslation } from "react-i18next";
 interface ImageUrlOutputProps {
   url: string;
   name: string;
+  fitInContainer?: boolean;
+  fitMode?: "contain" | "cover" | "fill";
 }
 
-const ImageUrlOutput: React.FC<ImageUrlOutputProps> = ({ url, name }) => {
+const ImageUrlOutput: React.FC<ImageUrlOutputProps> = ({
+  url,
+  name,
+  fitInContainer = false,
+  fitMode = "contain",
+}) => {
   const { t } = useTranslation("flow");
   const [hasError, setHasError] = useState(false);
   const downloadAllowed = !isStreamUrl(url);
@@ -41,12 +48,14 @@ const ImageUrlOutput: React.FC<ImageUrlOutputProps> = ({ url, name }) => {
   };
 
   return (
-    <OutputImageContainer>
+    <OutputImageContainer $fitInContainer={fitInContainer}>
       {hasError ? (
         <p className="text-center"> {t("ExpiredURL")}</p>
       ) : (
         <>
           <OutputImage
+            $fitInContainer={fitInContainer}
+            $fitMode={fitMode}
             src={url}
             alt="Output Image"
             onError={handleError}
@@ -66,15 +75,30 @@ const ImageUrlOutput: React.FC<ImageUrlOutputProps> = ({ url, name }) => {
   );
 };
 
-const OutputImageContainer = styled.div`
+const OutputImageContainer = styled.div<{ $fitInContainer: boolean }>`
   position: relative;
-  margin-top: 10px;
+  margin-top: ${({ $fitInContainer }) => ($fitInContainer ? "0" : "10px")};
+  width: 100%;
+  height: ${({ $fitInContainer }) => ($fitInContainer ? "100%" : "auto")};
+  display: ${({ $fitInContainer }) => ($fitInContainer ? "flex" : "block")};
+  align-items: ${({ $fitInContainer }) =>
+    $fitInContainer ? "center" : "stretch"};
+  justify-content: ${({ $fitInContainer }) =>
+    $fitInContainer ? "center" : "stretch"};
+  overflow: hidden;
 `;
 
-const OutputImage = styled.img`
+const OutputImage = styled.img<{
+  $fitInContainer: boolean;
+  $fitMode: "contain" | "cover" | "fill";
+}>`
   display: block;
   width: 100%;
-  height: auto;
+  height: ${({ $fitInContainer }) => ($fitInContainer ? "100%" : "auto")};
+  max-width: 100%;
+  max-height: ${({ $fitInContainer }) => ($fitInContainer ? "100%" : "none")};
+  object-fit: ${({ $fitInContainer, $fitMode }) =>
+    $fitInContainer ? $fitMode : "initial"};
   border-radius: 8px;
 `;
 

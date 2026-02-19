@@ -10,7 +10,7 @@ class UltralyticsRuntime:
 
     def _normalize_key(self, model_path: str) -> str:
         if not model_path:
-            model_path = "yolov8n.pt"
+            model_path = "yolov5mu.pt"
 
         resolved = self._resolve_model_path(model_path)
         if resolved is not None:
@@ -18,14 +18,14 @@ class UltralyticsRuntime:
 
         # Local-first safety: do NOT allow implicit downloads.
         # Ultralytics will attempt to download weights when given a known name
-        # (e.g. "yolov8n.pt") if it does not exist on disk.
+        # (e.g. "yolov5mu.pt") if it does not exist on disk.
         allow_download = os.getenv("ASKI_ALLOW_ULTRALYTICS_DOWNLOAD", "0") == "1"
         if not allow_download:
             raise FileNotFoundError(
                 "YOLO weights not found locally: "
                 f"'{model_path}'.\n"
                 "Local-first mode blocks implicit downloads. "
-                "Place the weights file locally (e.g. './models/yolov8n.pt' or './data/models/yolo/yolov8n.pt') "
+                "Place the weights file locally (e.g. './models/yolov5mu.pt' or './data/models/yolo/yolov5mu.pt') "
                 "and set 'model_path' accordingly.\n"
                 "(To override for dev only, set ASKI_ALLOW_ULTRALYTICS_DOWNLOAD=1)"
             )

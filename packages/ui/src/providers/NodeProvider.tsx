@@ -165,7 +165,10 @@ export const NodeProvider = ({
 
   const runNode = (name: string) => {
     const nodesSorted = nodesTopologicalSort(nodes, edges);
-    const flowFile = convertFlowToJson(nodesSorted, edges, true, true);
+    // Runtime execution should not include canvas coordinates.
+    // Some processors legitimately use fields named `x` / `y` (e.g. ROI),
+    // and serializing node positions here can overwrite those values.
+    const flowFile = convertFlowToJson(nodesSorted, edges, false, true);
 
     const nodesInError = getNodeInError(flowFile, nodesSorted, name);
 
@@ -193,7 +196,9 @@ export const NodeProvider = ({
     }
 
     const nodesSorted = nodesTopologicalSort(nodes, edges);
-    const flowFile = convertFlowToJson(nodesSorted, edges, true, true);
+    // Same rationale as runNode(): avoid overwriting processor config fields
+    // with canvas coordinates during runtime execution.
+    const flowFile = convertFlowToJson(nodesSorted, edges, false, true);
 
     const nodesInError = getNodeInError(flowFile, nodesSorted);
 
