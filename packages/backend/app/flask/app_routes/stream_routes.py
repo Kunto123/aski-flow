@@ -16,6 +16,12 @@ def stream_mjpeg(stream_id: str):
     return Response(
         manager.mjpeg_generator(stream_id),
         mimetype="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

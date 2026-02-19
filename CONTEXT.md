@@ -6,7 +6,7 @@
 
 ## Last Updated
 - Date: 2026-02-19
-- Scope: Main Vision Model output simplification (2 outputs), ROI-runtime reactive update, default model `yolov5mu`.
+- Scope: Main Vision lag/stutter hardening (frame-skipped inference + lighter JPEG encode).
 
 ## User Goal
 - Use `ai-flow-main.zip` as reference base.
@@ -23,6 +23,8 @@
 - User requested ROI display should preserve aspect ratio (no stretch); this mode is now checkpoint-stable.
 - New chat context bootstrap prompt in this file is now the standard resume prompt.
 - Main Vision patch (2 outputs + ROI-reactive rerun + `yolov5mu` default) is implemented and awaiting runtime confirmation.
+- Main Vision lag-reduction patch is implemented and awaiting runtime confirmation.
+- Main Vision anti-stutter patch (controlled inference FPS + JPEG quality optimization) is implemented and awaiting runtime confirmation.
 
 ## Reference Check
 - `d:/ProjectMagang/aiflow/ai-flow-main.zip` extracted to `d:/ProjectMagang/aiflow/ai-flow-main/ai-flow-main`.
@@ -56,6 +58,13 @@
 - Main vision runtime issue root cause:
   - `main-vision-model` stream mode returned 4 outputs, causing unnecessary output-handle complexity.
   - Downstream runtime from ROI updates required rerun of `main-vision-model`; without auto-run behavior, users could see stale main-vision outputs after ROI changes.
+- Main vision lag/delay root cause:
+  - Transform stream loop used fixed `sleep(delay)` after each iteration, even when processing already exceeded frame budget; this added unnecessary extra latency.
+  - Transform loop performed an extra frame copy (`source_frame.copy()`) although frame was already copied in `get_latest_frame()`.
+  - Main Vision stream inference default settings were not tuned for realtime responsiveness (`stream_fps`/`imgsz` not exposed).
+- Main vision stutter root cause (follow-up):
+  - YOLO inference still ran on every transform frame, which is too heavy on CPU and causes frame pacing collapse.
+  - MJPEG encode quality default was relatively high and added encoding overhead under load.
 
 ## Changes Implemented
 1. Backend stream manager:
@@ -156,6 +165,55 @@
    - Backend defaults:
      - `packages/backend/app/processors/components/extension/main_vision_model_processor.py`
      - `packages/backend/app/vision/ultralytics_runtime.py`
+16. Transform loop realtime pacing optimization:
+   - Removed extra frame copy in `_transform_loop`.
+   - Replaced fixed post-process sleep with elapsed-aware pacing (`sleep only remaining frame budget`).
+   - Replaced fallback sleeps with cooperative sleep helper.
+   - File:
+     - `packages/backend/app/streaming/stream_manager.py`
+17. Main Vision realtime tuning parameters:
+   - Added `stream_fps` (default `12`) and `imgsz` (default `512`) to Main Vision node config.
+   - Backend now consumes these parameters and applies them in stream/file inference.
+   - `create_transform_stream(..., fps=stream_fps)` now used for main vision stream.
+   - File:
+     - `packages/ui/src/nodes-configuration/mainVisionModelNode.ts`
+     - `packages/backend/app/processors/components/extension/main_vision_model_processor.py`
+     - `packages/backend/app/vision/ultralytics_runtime.py`
+18. Main Vision auto-run fingerprint update:
+   - Added `stream_fps` and `imgsz` into auto-run parameter signature so changes retrigger run immediately.
+   - File:
+     - `packages/ui/src/components/nodes/GenericNode.tsx`
+19. MJPEG anti-buffering response headers:
+   - Added no-cache / no-buffer headers to stream endpoint to reduce display latency caused by buffering:
+     - `Cache-Control: no-cache, no-store, must-revalidate`
+     - `Pragma: no-cache`
+     - `Expires: 0`
+     - `X-Accel-Buffering: no`
+   - File:
+     - `packages/backend/app/flask/app_routes/stream_routes.py`
+20. Main Vision controlled inference rate:
+   - Added `inference_fps` parameter (default `6`) so YOLO inference is not executed on every displayed frame.
+   - Stream transform now:
+     - runs inference only at `inference_fps`,
+     - reuses latest predictions between inference ticks,
+     - still renders output at `stream_fps`.
+   - Files:
+     - `packages/backend/app/processors/components/extension/main_vision_model_processor.py`
+     - `packages/ui/src/nodes-configuration/mainVisionModelNode.ts`
+     - `packages/ui/src/components/nodes/GenericNode.tsx`
+21. Stream JPEG encoding optimization:
+   - Added configurable JPEG quality in stream manager (`ASKI_STREAM_JPEG_QUALITY`, default `80`, clamped `30..95`).
+   - Camera and transform loops now use shared JPEG encoder helper with this quality.
+   - File:
+     - `packages/backend/app/streaming/stream_manager.py`
+22. Runtime defaults tuned in backend env (for immediate smoother behavior):
+   - Added:
+     - `ASKI_MAIN_VISION_STREAM_FPS=10`
+     - `ASKI_MAIN_VISION_INFERENCE_FPS=5`
+     - `ASKI_MAIN_VISION_IMGSZ=416`
+     - `ASKI_STREAM_JPEG_QUALITY=70`
+   - File:
+     - `packages/backend/.env`
 
 ## Current Behavior After Patch
 - When a camera node is removed/cleared (including keyboard delete path), UI now attempts:
@@ -184,6 +242,17 @@
   - Stream mode now exposes only 2 outputs (JSON live-state + image stream).
   - In ROI -> Main Vision pipelines, ROI move/resize should retrigger main-vision processing automatically so output stays updated at runtime.
   - Default model path for new Main Vision nodes is `models/yolov5mu.pt`.
+- Main Vision lag expectation after patch:
+  - Overlay stream should feel more responsive (reduced end-to-end delay).
+  - Default realtime tuning for new Main Vision nodes:
+    - `stream_fps = 12`
+    - `inference_fps = 6`
+    - `imgsz = 512`
+  - Users can further tune these fields per node for speed/accuracy tradeoff.
+- Main Vision anti-stutter expectation after patch:
+  - Reduced patah-patah under CPU load because inference frequency is decoupled from display frame frequency.
+  - Better smoothness/throughput due lighter JPEG encoding.
+  - Global runtime tuning now defaults to lower load values via backend `.env`.
 
 ## Validation Status
 - Static code update completed.
@@ -214,6 +283,17 @@
   - Static code update completed.
   - Python syntax check passed:
     - `python -m py_compile packages/backend/app/processors/components/extension/main_vision_model_processor.py packages/backend/app/vision/ultralytics_runtime.py`
+  - Frontend build remains blocked only by pre-existing unrelated error:
+    - `packages/ui/src/nodes-configuration/lampControlNode.ts:21`
+- Main Vision lag patch validation:
+  - Python syntax check passed:
+    - `python -m py_compile packages/backend/app/streaming/stream_manager.py packages/backend/app/processors/components/extension/main_vision_model_processor.py packages/backend/app/vision/ultralytics_runtime.py`
+    - `python -m py_compile packages/backend/app/flask/app_routes/stream_routes.py`
+  - Frontend build remains blocked only by pre-existing unrelated error:
+    - `packages/ui/src/nodes-configuration/lampControlNode.ts:21`
+- Main Vision anti-stutter patch validation:
+  - Python syntax check passed:
+    - `python -m py_compile packages/backend/app/processors/components/extension/main_vision_model_processor.py packages/backend/app/streaming/stream_manager.py`
   - Frontend build remains blocked only by pre-existing unrelated error:
     - `packages/ui/src/nodes-configuration/lampControlNode.ts:21`
 
@@ -265,6 +345,17 @@
 14. Verify default model:
    - Add new Main Vision node.
    - Expected default `model_path` value: `models/yolov5mu.pt`.
+15. Verify main-vision lag reduction:
+   - Build chain: Camera -> ROI -> Main Vision Model -> Display.
+   - Observe live movement latency before/after patch.
+   - Expected: reduced delay and more stable realtime feel.
+   - Tune `stream_fps` (`8-15`) and `imgsz` (`384-640`) if device is slower/faster.
+16. Verify anti-stutter tuning:
+   - On Main Vision node set:
+     - `stream_fps = 10..12`
+     - `inference_fps = 4..8`
+     - `imgsz = 384..512`
+   - Expected: smoother stream (less patah-patah) with acceptable detection refresh.
 
 ## New Chat Bootstrap Prompt
 - Use this prompt in a new chat to restore context quickly:

@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import time
 import uuid
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
@@ -53,6 +54,24 @@ class MainVisionModelProcessor(BasicProcessor):
         super().__init__(config)
         self.model_path = config.get("model_path", "models/yolov5mu.pt")
         self.conf_threshold = float(config.get("conf_threshold", 0.25))
+        self.stream_fps = float(
+            config.get(
+                "stream_fps",
+                os.getenv("ASKI_MAIN_VISION_STREAM_FPS", "12"),
+            )
+        )
+        self.inference_fps = float(
+            config.get(
+                "inference_fps",
+                os.getenv("ASKI_MAIN_VISION_INFERENCE_FPS", "6"),
+            )
+        )
+        self.imgsz = int(
+            config.get(
+                "imgsz",
+                os.getenv("ASKI_MAIN_VISION_IMGSZ", "512"),
+            )
+        )
         self.input_url = config.get("input_url")
         self.classes = config.get("classes")
 
@@ -178,20 +197,37 @@ class MainVisionModelProcessor(BasicProcessor):
         # Without this, the transform thread can silently loop without frames.
         _ = runtime._normalize_key(self.model_path)
         class_indices = self._resolve_class_indices(runtime)
+        inference_interval = 1.0 / max(float(self.inference_fps), 1.0)
+        last_inference_at = 0.0
+        last_predictions: Dict[str, Any] = {}
 
         def _transform(frame):
-            predictions = runtime.predict(
-                frame,
-                model_path=self.model_path,
-                conf=self.conf_threshold,
-                classes=class_indices,
-            )
+            nonlocal last_inference_at, last_predictions
+            now = time.monotonic()
+
+            # Run heavy model inference at a controlled rate, while still pushing
+            # display frames at stream_fps with the latest known predictions.
+            should_infer = (now - last_inference_at) >= inference_interval or not last_predictions
+            if should_infer:
+                predictions = runtime.predict(
+                    frame,
+                    model_path=self.model_path,
+                    conf=self.conf_threshold,
+                    classes=class_indices,
+                    imgsz=self.imgsz,
+                )
+                last_predictions = predictions or {}
+                last_inference_at = now
+            else:
+                predictions = last_predictions
+
             overlay = draw_boxes_overlay(frame, predictions)
             return overlay, predictions
 
         overlay_stream_id = manager.create_transform_stream(
             source_stream_id,
             _transform,
+            fps=max(1.0, float(self.stream_fps)),
             owner_name=self.name,
         )
         predictions_url = manager.build_predictions_url(overlay_stream_id)
@@ -232,6 +268,7 @@ class MainVisionModelProcessor(BasicProcessor):
             model_path=self.model_path,
             conf=self.conf_threshold,
             classes=class_indices,
+            imgsz=self.imgsz,
         )
         overlay = draw_boxes_overlay(image, predictions)
         ok, encoded = cv2.imencode(".jpg", overlay)
@@ -279,6 +316,7 @@ class MainVisionModelProcessor(BasicProcessor):
                 model_path=self.model_path,
                 conf=self.conf_threshold,
                 classes=class_indices,
+                imgsz=self.imgsz,
             )
             frame_overlay = draw_boxes_overlay(frame, preds)
             writer.write(frame_overlay)
