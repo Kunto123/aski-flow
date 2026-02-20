@@ -342,6 +342,7 @@ export const NodeProvider = ({
   const clearNodeOutput = (nodeId: string) => {
     const nodeToUpdate = nodes.find((node) => node.id === nodeId);
     if (nodeToUpdate) {
+      const outputClearedAt = Date.now();
       const outputStreamIds = extractStreamIdsFromValue(nodeToUpdate.data?.outputData);
       const configStreamIds = extractStreamIdsFromValue(nodeToUpdate.data?.stream_ref);
       const streamIds = [...new Set([...outputStreamIds, ...configStreamIds])];
@@ -376,6 +377,7 @@ export const NodeProvider = ({
               outputData: undefined,
               lastRun: undefined,
               isDone: false,
+              outputClearedAt,
             },
           };
         }
@@ -386,6 +388,7 @@ export const NodeProvider = ({
   };
 
   function clearAllOutput() {
+    const outputClearedAt = Date.now();
     // Stop any running streams (camera + transforms) so devices/resources aren't left active
     // when users clear outputs or reset the canvas.
     void (async () => {
@@ -412,6 +415,7 @@ export const NodeProvider = ({
         outputData: undefined,
         lastRun: undefined,
         isDone: false,
+        outputClearedAt,
       },
     }));
     onUpdateNodes(nodesCleared, edges);

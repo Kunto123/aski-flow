@@ -57,7 +57,6 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
       showOnlyOutput,
       onUpdateNodeData,
       getIncomingEdges,
-      getOutgoingEdges,
       overrideConfigForNode,
       findNode,
       removeEdgesByIds,
@@ -184,11 +183,12 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
       }
       if (currentNodesRunning?.includes(data.name)) return;
 
-      const outgoing = getOutgoingEdges?.(id) ?? [];
       const hasExistingOutput = Array.isArray(data.outputData)
         ? data.outputData.length > 0
         : !!data.outputData;
-      if (outgoing.length === 0 && !hasExistingOutput) return;
+      // Avoid surprise execution on first wire-up. Auto-run is only for nodes
+      // that have already produced output at least once.
+      if (!hasExistingOutput) return;
 
       const incoming = getIncomingEdges(id) ?? [];
       const inputEdge =
@@ -265,7 +265,6 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
       data.outputData,
       id,
       getIncomingEdges,
-      getOutgoingEdges,
       findNode,
       runNode,
       currentNodesRunning,
