@@ -330,6 +330,12 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
 
     if (!hasDownstream) return;
     if (!resolvedInputUrl) return;
+    const hasExistingOutput = Array.isArray(data.outputData)
+      ? data.outputData.length > 0
+      : !!data.outputData;
+    // Avoid surprise execution on first wire-up. Auto-run is only for nodes
+    // that have already produced output at least once.
+    if (!hasExistingOutput) return;
 
     // Auto-run ROI when it has a connected downstream and a valid upstream input.
     // This makes Camera → ROI → Display work without requiring manual "play" on ROI.
@@ -371,6 +377,7 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
     data.h,
     data.width,
     data.height,
+    data.outputData,
     data.name,
     runNode,
     currentNodesRunning,
@@ -686,7 +693,15 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
     updateNodeInternals(id);
   };
 
-  const previewUrl = resolvedInputUrl;
+  const outputClearedAt = Number(data.outputClearedAt ?? 0);
+  const lastRunAt = (() => {
+    if (!data.lastRun) return 0;
+    const parsed = new Date(data.lastRun as any).getTime();
+    return Number.isFinite(parsed) ? parsed : 0;
+  })();
+  const previewBlockedByClear =
+    outputClearedAt > 0 && (lastRunAt <= 0 || lastRunAt <= outputClearedAt);
+  const previewUrl = previewBlockedByClear ? "" : resolvedInputUrl;
   const canRenderPreview = !!previewUrl && !previewUrl.startsWith("stream://");
   const showVideoPreview = isVideoPreviewUrl(previewUrl);
   const formFields = useFormFields(
@@ -799,7 +814,9 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
               )
             ) : (
               <div className="flex min-h-[220px] items-center justify-center px-3 text-center text-sm text-slate-700">
-                Masukkan URL / stream yang valid untuk preview.
+                {previewBlockedByClear
+                  ? "Output dihapus. Jalankan node untuk menampilkan lagi."
+                  : "Masukkan URL / stream yang valid untuk preview."}
               </div>
             )}
 

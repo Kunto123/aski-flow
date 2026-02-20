@@ -6,7 +6,7 @@
 
 ## Last Updated
 - Date: 2026-02-20
-- Scope: ROI seamless stream update (live ROI params without rerun/recreate stream).
+- Scope: ROI erase-output UX fix (hide ROI preview until rerun).
 
 ## User Goal
 - Use `ai-flow-main.zip` as reference base.
@@ -27,6 +27,8 @@
 - Main Vision anti-stutter patch (controlled inference FPS + JPEG quality optimization) is implemented and awaiting runtime confirmation.
 - Node auto-run-on-insert guard patch is implemented for ROI and stream-reactive generic processors, awaiting runtime confirmation.
 - ROI seamless live-update patch (stable ROI stream + runtime params API) is implemented and awaiting runtime confirmation.
+- Erase-output reliability patch + no-auto-run-on-connect guard is implemented and awaiting runtime confirmation.
+- ROI node erase-output visibility fix is implemented and awaiting runtime confirmation.
 
 ## Reference Check
 - `d:/ProjectMagang/aiflow/ai-flow-main.zip` extracted to `d:/ProjectMagang/aiflow/ai-flow-main/ai-flow-main`.
@@ -70,6 +72,11 @@
 - ROI seamlessness root cause (latest):
   - ROI drag/resize previously triggered frequent `run_node` executions.
   - Each ROI stream run recreated transform stream IDs, which forced downstream reruns and caused visible stutter/non-seamless updates.
+- Erase output reliability root cause (latest):
+  - Some nodes appeared unchanged after erase because reactive auto-run re-triggered immediately after `outputData` was cleared.
+  - Display node also prioritizes upstream connected output, so clearing Display's own output alone did not blank the view.
+- Surprise auto-run root cause (latest):
+  - Auto-run logic on ROI / stream-reactive generic nodes still triggered on input wiring/upstream signature change even before users intentionally ran the node.
 
 ## Changes Implemented
 1. Backend stream manager:
@@ -242,6 +249,23 @@
      - `packages/backend/app/processors/components/extension/roi_processor.py`
      - `packages/ui/src/api/stream.ts`
      - `packages/ui/src/components/nodes/RoiNode.tsx`
+25. Erase-output reliability + no-auto-run-on-connect (latest request):
+   - Added `outputClearedAt` marker on node clear actions (`clearNodeOutput` / `clearAllOutput`) so clear state is explicit in node data.
+   - Display now respects `outputClearedAt` and temporarily blocks stale upstream rendering until upstream is rerun after clear.
+   - Updated auto-run guards:
+     - `GenericNode` (`image-processing`, `main-vision-model`) now auto-runs only if node already has existing output.
+     - `RoiNode` now auto-runs only if node already has existing output.
+   - Effect: connecting a fresh input no longer auto-runs these nodes unexpectedly; clear output no longer instantly re-runs and repopulates output.
+   - Files:
+     - `packages/ui/src/providers/NodeProvider.tsx`
+     - `packages/ui/src/components/nodes/DisplayNode.tsx`
+     - `packages/ui/src/components/nodes/GenericNode.tsx`
+     - `packages/ui/src/components/nodes/RoiNode.tsx`
+26. ROI erase-output visibility fix (latest):
+   - ROI preview panel now respects `outputClearedAt` and stays hidden after erase until node is rerun.
+   - This removes confusion where ROI looked like it still had output because source preview stayed visible.
+   - File:
+     - `packages/ui/src/components/nodes/RoiNode.tsx`
 
 ## Current Behavior After Patch
 - When a camera node is removed/cleared (including keyboard delete path), UI now attempts:
@@ -288,6 +312,15 @@
   - In stream pipelines (e.g., Camera -> ROI -> Display / Image Processing / Main Vision), moving/resizing ROI updates crop live without rerunning ROI/downstream nodes.
   - ROI output stream ID should remain stable while only ROI box parameters change.
   - Downstream nodes continue consuming updated frames from the same stream reference.
+- Erase output expectation after patch (latest):
+  - Erasing output on nodes should visibly clear output state and not be immediately overwritten by auto-run side effects.
+  - Erasing Display output should blank Display even when connected, until upstream is rerun.
+- Connect-input expectation after patch (latest):
+  - Connecting input handles to upstream outputs should not auto-run ROI / Image Processing / Main Vision when the target node has never produced output yet.
+  - Reactive auto-run remains active only for nodes that already have output history.
+- ROI erase-output expectation after patch (latest):
+  - After `erase output` on ROI node, ROI preview panel is blank.
+  - ROI preview appears again only after node is run and produces fresh output.
 
 ## Validation Status
 - Static code update completed.
@@ -338,6 +371,14 @@
 - ROI seamless live-update validation:
   - Python syntax check passed:
     - `python -m py_compile packages/backend/app/streaming/stream_manager.py packages/backend/app/flask/app_routes/stream_routes.py packages/backend/app/processors/components/extension/roi_processor.py`
+  - Frontend build remains blocked only by pre-existing unrelated error:
+    - `packages/ui/src/nodes-configuration/lampControlNode.ts:21`
+- Erase-output + connect-input guard validation:
+  - Static code update completed.
+  - Frontend build remains blocked only by pre-existing unrelated error:
+    - `packages/ui/src/nodes-configuration/lampControlNode.ts:21`
+- ROI erase-output visibility fix validation:
+  - Static code update completed.
   - Frontend build remains blocked only by pre-existing unrelated error:
     - `packages/ui/src/nodes-configuration/lampControlNode.ts:21`
 
@@ -413,6 +454,25 @@
      - Display/downstream output updates smoothly without repeatedly pressing run.
      - ROI stream ID remains unchanged while dragging.
      - `/stream/debug` shows `update_stream_runtime_params` events for ROI stream updates.
+19. Verify erase output on each node type:
+   - Test clear output on ROI, Image Processing, Main Vision, and Display nodes.
+   - Expected:
+     - output clears immediately,
+     - no immediate auto-rerun repopulating output unless user runs again.
+   - For Display:
+     - after clear, display area becomes empty even with incoming connection,
+     - display shows again only after upstream rerun/new output.
+20. Verify no surprise run on connect:
+   - Add fresh ROI / Image Processing / Main Vision node (never run), then connect inputs.
+   - Expected: node does not auto-run only due connection.
+   - Run node once manually, then change upstream signature.
+   - Expected: reactive auto-run works for subsequent updates.
+21. Verify ROI erase visibility:
+   - Run ROI once (Camera -> ROI -> Display), ensure preview active.
+   - Click `erase output` on ROI.
+   - Expected: ROI preview panel becomes blank with erase message.
+   - Run ROI again.
+   - Expected: ROI preview appears again.
 
 ## New Chat Bootstrap Prompt
 - Use this prompt in a new chat to restore context quickly:

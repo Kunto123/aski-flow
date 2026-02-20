@@ -141,11 +141,22 @@ const DisplayNode: React.FC<DisplayNodeProps> = React.memo(
       };
 
       const hasIncoming = !!incomingEdge;
+      const outputClearedAt = Number(data.outputClearedAt ?? 0);
+      const upstreamLastRunAt = (() => {
+        if (!upstreamNode?.data?.lastRun) return 0;
+        const parsed = new Date(upstreamNode.data.lastRun as any).getTime();
+        return Number.isFinite(parsed) ? parsed : 0;
+      })();
+      const upstreamBlockedByClear =
+        outputClearedAt > 0 &&
+        (upstreamLastRunAt <= 0 || upstreamLastRunAt <= outputClearedAt);
 
       // Prefer the currently connected upstream output so Display isn't stuck showing stale data
       // after rewiring (e.g., Camera → Display then ROI → Display).
       const raw =
-        hasIncoming && hasMeaningfulOutput(upstreamOutput)
+        hasIncoming &&
+        !upstreamBlockedByClear &&
+        hasMeaningfulOutput(upstreamOutput)
           ? upstreamOutput
           : hasMeaningfulOutput(data.outputData)
             ? data.outputData
@@ -162,7 +173,7 @@ const DisplayNode: React.FC<DisplayNodeProps> = React.memo(
       }
 
       return [typeof raw === "string" ? raw : JSON.stringify(raw, null, 2)];
-    }, [incomingEdge, data.outputData, upstreamOutput]);
+    }, [incomingEdge, data.outputData, data.outputClearedAt, upstreamOutput, upstreamNode?.data?.lastRun]);
 
     const displayData = useMemo(
       () => ({
