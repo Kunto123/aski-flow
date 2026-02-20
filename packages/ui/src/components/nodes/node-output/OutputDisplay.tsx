@@ -29,6 +29,7 @@ export default function OutputDisplay({
   getOutputComponentOverride,
 }: OutputDisplayProps) {
   const { t } = useTranslation("flow");
+  const isMainVisionModel = data.processorType === "main-vision-model";
 
   const [indexDisplayed, setIndexDisplayed] = useState(0);
 
@@ -63,16 +64,98 @@ export default function OutputDisplay({
     return deduped;
   }, [data.outputData]);
 
-  useEffect(() => {
-    if (indexDisplayed < normalizedOutputs.length) return;
-    setIndexDisplayed(0);
-  }, [indexDisplayed, normalizedOutputs.length]);
+  const selectorOutputs = useMemo(() => {
+    if (isMainVisionModel && normalizedOutputs.length > 1) {
+      return [normalizedOutputs[0]];
+    }
+    return normalizedOutputs;
+  }, [isMainVisionModel, normalizedOutputs]);
 
-  const nbOutput = normalizedOutputs.length > 0 ? normalizedOutputs.length : 1;
+  useEffect(() => {
+    if (indexDisplayed < selectorOutputs.length) return;
+    setIndexDisplayed(0);
+  }, [indexDisplayed, selectorOutputs.length]);
+
+  const nbOutput = selectorOutputs.length > 0 ? selectorOutputs.length : 1;
 
   const getCurrentOutput = (): string => {
-    if (normalizedOutputs.length === 0) return "";
-    return normalizedOutputs[indexDisplayed] ?? normalizedOutputs[0] ?? "";
+    if (selectorOutputs.length === 0) return "";
+    return selectorOutputs[indexDisplayed] ?? selectorOutputs[0] ?? "";
+  };
+
+  const getMainVisionCombinedOutput = () => {
+    if (normalizedOutputs.length === 0) return <></>;
+
+    const jsonRaw = normalizedOutputs[0] ?? "";
+    const sceneRaw = normalizedOutputs[1] ?? "";
+
+    let prettyJson = jsonRaw;
+    try {
+      prettyJson = JSON.stringify(JSON.parse(jsonRaw), null, 2);
+    } catch {
+      // keep raw text
+    }
+
+    const jsonMarkdown = `\`\`\`json\n${prettyJson}\n\`\`\``;
+    const sceneType = getOutputExtension(sceneRaw);
+
+    const renderScene = () => {
+      switch (sceneType) {
+        case "imageUrl":
+          return (
+            <ImageUrlOutput
+              url={sceneRaw}
+              name={data.name}
+              fitInContainer={fitInContainer}
+              fitMode={fitMode}
+            />
+          );
+        case "videoUrl":
+          return (
+            <VideoUrlOutput
+              url={sceneRaw}
+              name={data.name}
+              fitInContainer={fitInContainer}
+              fitMode={fitMode}
+            />
+          );
+        default:
+          return (
+            <MarkdownOutput
+              data={sceneRaw}
+              name={data.name}
+              appearance={data.appearance}
+              fitInContainer={fitInContainer}
+            />
+          );
+      }
+    };
+
+    return (
+      <div
+        className={`flex w-full ${fitInContainer ? "h-full min-h-0 flex-col overflow-hidden" : "flex-col gap-2"}`}
+      >
+        <div className={fitInContainer ? "shrink-0 overflow-auto" : ""}>
+          <MarkdownOutput
+            data={jsonMarkdown}
+            name={data.name}
+            appearance={data.appearance}
+            fitInContainer={fitInContainer}
+          />
+        </div>
+        {sceneRaw && (
+          <div
+            className={
+              fitInContainer
+                ? "min-h-0 flex-1 overflow-hidden"
+                : ""
+            }
+          >
+            {renderScene()}
+          </div>
+        )}
+      </div>
+    );
   };
 
   const getOutputComponent = () => {
@@ -81,6 +164,10 @@ export default function OutputDisplay({
       if (override) {
         return override;
       }
+    }
+
+    if (isMainVisionModel && normalizedOutputs.length > 1) {
+      return getMainVisionCombinedOutput();
     }
 
     if (normalizedOutputs.length === 0) return <></>;
@@ -174,15 +261,22 @@ export default function OutputDisplay({
     <div
       className={`flex h-full w-full flex-col ${fitInContainer ? "min-h-0 overflow-hidden" : ""}`}
     >
-      {nbOutput > 1 && typeof data.outputData !== "string" && (
+      {(nbOutput > 1 || (isMainVisionModel && normalizedOutputs.length > 1)) &&
+        typeof data.outputData !== "string" && (
         <div
           className={`flex flex-row items-center justify-center gap-1 overflow-x-auto p-1 ${fitInContainer ? "mt-0 shrink-0" : "mt-2"}`}
         >
-          {normalizedOutputs.map((output, index) => (
+          {(isMainVisionModel && normalizedOutputs.length > 1
+            ? [selectorOutputs[0] ?? ""]
+            : selectorOutputs
+          ).map((output, index) => (
             <button
               key={`${index}-${output.slice(0, 48)}`}
-              className={`rounded-full ${index === indexDisplayed ? "bg-orange-400" : "bg-gray-500 hover:bg-orange-200"} whitespace-nowrap p-1.5 focus:outline-none focus:ring-2 focus:ring-orange-400`}
-              onClick={() => setIndexDisplayed(index)}
+              className={`rounded-full ${isMainVisionModel ? "bg-orange-400" : index === indexDisplayed ? "bg-orange-400" : "bg-gray-500 hover:bg-orange-200"} whitespace-nowrap p-1.5 focus:outline-none focus:ring-2 focus:ring-orange-400`}
+              onClick={() => {
+                if (isMainVisionModel) return;
+                setIndexDisplayed(index);
+              }}
               aria-label={`View output ${index + 1}`}
               title={`Output ${index + 1}`}
             />

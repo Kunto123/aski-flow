@@ -75,6 +75,58 @@ class MainVisionModelProcessor(BasicProcessor):
         self.input_url = config.get("input_url")
         self.classes = config.get("classes")
 
+    def _build_detection_payload(
+        self,
+        predictions: Optional[Dict[str, Any]],
+        mode: str,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        predictions = predictions or {}
+        boxes = predictions.get("boxes") or []
+        counts_by_label: Dict[str, int] = {}
+        detections: List[Dict[str, Any]] = []
+
+        for idx, box in enumerate(boxes):
+            label = str(box.get("label", "unknown"))
+            counts_by_label[label] = counts_by_label.get(label, 0) + 1
+
+            xyxy = box.get("xyxy") or [0, 0, 0, 0]
+            try:
+                x1, y1, x2, y2 = [float(v) for v in xyxy[:4]]
+            except Exception:
+                x1, y1, x2, y2 = 0.0, 0.0, 0.0, 0.0
+
+            detections.append(
+                {
+                    "index": idx,
+                    "label": label,
+                    "class_id": box.get("class_id"),
+                    "confidence": float(box.get("conf", 0.0)),
+                    "position": {
+                        "x1": x1,
+                        "y1": y1,
+                        "x2": x2,
+                        "y2": y2,
+                    },
+                }
+            )
+
+        summary = {
+            "total_detections": len(detections),
+            "counts_by_label": counts_by_label,
+            "labels_detected": sorted(list(counts_by_label.keys())),
+        }
+
+        payload: Dict[str, Any] = {
+            "mode": mode,
+            "detection_summary": summary,
+            "detections": detections,
+            "shape": predictions.get("shape"),
+        }
+        if extra:
+            payload.update(extra)
+        return payload
+
     def _resolve_class_indices(self, runtime) -> Optional[List[int]]:
         """Resolve the optional `classes` filter into a list of class indices.
 
@@ -201,6 +253,23 @@ class MainVisionModelProcessor(BasicProcessor):
         last_inference_at = 0.0
         last_predictions: Dict[str, Any] = {}
 
+        # Prime initial summary so output JSON already contains useful detections
+        # for conditional-state / python-code right after run.
+        source_frame = manager.get_latest_frame(source_stream_id)
+        if source_frame is not None:
+            try:
+                last_predictions = runtime.predict(
+                    source_frame,
+                    model_path=self.model_path,
+                    conf=self.conf_threshold,
+                    classes=class_indices,
+                    imgsz=self.imgsz,
+                ) or {}
+                last_inference_at = time.monotonic()
+            except Exception:
+                last_predictions = {}
+                last_inference_at = 0.0
+
         def _transform(frame):
             nonlocal last_inference_at, last_predictions
             now = time.monotonic()
@@ -232,12 +301,15 @@ class MainVisionModelProcessor(BasicProcessor):
         )
         predictions_url = manager.build_predictions_url(overlay_stream_id)
 
-        predictions_payload = {
-            "mode": "stream",
-            "live": True,
-            "predictions_url": predictions_url,
-            "stream_id": overlay_stream_id,
-        }
+        predictions_payload = self._build_detection_payload(
+            last_predictions,
+            mode="stream",
+            extra={
+                "live": True,
+                "predictions_url": predictions_url,
+                "stream_id": overlay_stream_id,
+            },
+        )
 
         return [
             json.dumps(predictions_payload),
@@ -277,7 +349,8 @@ class MainVisionModelProcessor(BasicProcessor):
 
         filename = f"{self.name}-overlay-{uuid.uuid4().hex[:10]}.jpg"
         overlay_url = self.get_storage().save(filename, encoded.tobytes())
-        return [json.dumps(predictions), overlay_url]
+        payload = self._build_detection_payload(predictions, mode="image")
+        return [json.dumps(payload), overlay_url]
 
     def _process_video_bytes(self, content: bytes, runtime):
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as src:
@@ -336,11 +409,11 @@ class MainVisionModelProcessor(BasicProcessor):
 
         overlay_filename = f"{self.name}-overlay-{uuid.uuid4().hex[:10]}.mp4"
         overlay_url = self.get_storage().save(overlay_filename, overlay_bytes)
-        payload = {
-            "mode": "video",
-            "frame_count": frame_count,
-            "last_predictions": last_predictions,
-        }
+        payload = self._build_detection_payload(
+            last_predictions,
+            mode="video",
+            extra={"frame_count": frame_count},
+        )
         return [json.dumps(payload), overlay_url]
 
     def cancel(self):

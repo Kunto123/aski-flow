@@ -13,14 +13,22 @@ export const getGeneratedFileName = (url: string, nodeName: string) => {
 
 export const isStreamUrl = (url: string) => {
   if (!url || typeof url !== "string") return false;
-  const normalized = url.toLowerCase();
-  return (
-    normalized.includes("/stream/") ||
-    normalized.endsWith(".mjpg") ||
-    normalized.includes(".mjpg?") ||
-    normalized.endsWith(".mjpeg") ||
-    normalized.includes(".mjpeg?")
-  );
+  const raw = url.trim();
+  if (!raw) return false;
+
+  const lower = raw.toLowerCase();
+  if (lower.startsWith("stream://")) return true;
+
+  // Relative stream endpoint.
+  if (/^\/stream\/[^/?#]+\.(mjpg|mjpeg)(\?.*)?$/i.test(raw)) return true;
+
+  // Absolute stream endpoint.
+  try {
+    const parsed = new URL(raw);
+    return /^\/stream\/[^/?#]+\.(mjpg|mjpeg)$/i.test(parsed.pathname);
+  } catch {
+    return false;
+  }
 };
 
 export const normalizeStreamOutputUrl = (url: string) => {
