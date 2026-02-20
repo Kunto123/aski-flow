@@ -34,6 +34,51 @@ def stream_predictions(stream_id: str):
     return jsonify(manager.get_predictions(stream_id))
 
 
+@stream_blueprint.route("/stream/<stream_id>/roi/params", methods=["POST"])
+def update_roi_stream_params(stream_id: str):
+    manager = get_stream_manager()
+    stream = manager.get_stream(stream_id)
+    if stream is None:
+        return {"updated": False, "error": "Stream not found"}, 404
+
+    if stream.source_type != "transform" or getattr(stream, "stream_tag", None) != "roi":
+        return {"updated": False, "error": "Stream is not an ROI transform stream"}, 400
+
+    body = request.json or {}
+    allowed_fields = ("x", "y", "w", "h", "width", "height")
+    updates = {}
+
+    for field_name in allowed_fields:
+        if field_name not in body:
+            continue
+        raw = body.get(field_name)
+        if raw is None or raw == "":
+            continue
+        try:
+            updates[field_name] = float(raw)
+        except Exception:
+            return {
+                "updated": False,
+                "error": f"{field_name} must be a number",
+            }, 400
+
+    if not updates:
+        return {
+            "updated": False,
+            "error": "No ROI parameters provided",
+        }, 400
+
+    ok = manager.update_stream_runtime_params(stream_id, updates)
+    if not ok:
+        return {"updated": False, "error": "Stream not found"}, 404
+
+    return {
+        "updated": True,
+        "stream_id": stream_id,
+        "params": updates,
+    }
+
+
 @stream_blueprint.route("/stream/<stream_id>/stop", methods=["POST"])
 def stop_stream(stream_id: str):
     manager = get_stream_manager()

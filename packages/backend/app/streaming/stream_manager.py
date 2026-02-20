@@ -25,6 +25,7 @@ TransformFn = Callable[[Any], Any]
 class StreamState:
     stream_id: str
     source_type: str
+    stream_tag: Optional[str] = None
     source_stream_id: Optional[str] = None
     # Last/primary owner (for debug/UI). A stream can have multiple owners over time
     # (e.g., browser refresh regenerates node IDs), so we also keep owner_names.
@@ -55,6 +56,8 @@ class StreamState:
     mjpeg_total_clients: int = 0
     last_error: Optional[str] = None
     stop_reason: Optional[str] = None
+    # Per-stream mutable runtime parameters (e.g. live ROI box coordinates).
+    runtime_params: Dict[str, Any] = field(default_factory=dict)
 
 
 class StreamManager:
@@ -110,6 +113,7 @@ class StreamManager:
                     {
                         "stream_id": state.stream_id,
                         "source_type": state.source_type,
+                        "stream_tag": state.stream_tag,
                         "source_stream_id": state.source_stream_id,
                         "owner_name": state.owner_name,
                         "owner_names": sorted(list(getattr(state, "owner_names", set()))),
@@ -130,6 +134,7 @@ class StreamManager:
                         "has_latest_frame": state.latest_frame is not None,
                         "has_latest_jpeg": state.latest_jpeg is not None,
                         "last_error": state.last_error,
+                        "runtime_param_keys": sorted(list((state.runtime_params or {}).keys())),
                     }
                 )
 
@@ -360,6 +365,8 @@ class StreamManager:
         transform_fn: TransformFn,
         fps: float = 20.0,
         owner_name: Optional[str] = None,
+        stream_tag: Optional[str] = None,
+        runtime_params: Optional[Dict[str, Any]] = None,
     ) -> str:
         source = self.get_stream(source_stream_id)
         if source is None:
@@ -381,11 +388,13 @@ class StreamManager:
         state = StreamState(
             stream_id=stream_id,
             source_type="transform",
+            stream_tag=stream_tag,
             source_stream_id=source_stream_id,
             owner_name=owner_name,
             owner_names=set([owner_name]) if owner_name else set(),
             # Transform streams should also be reaped if nothing consumes them.
             idle_timeout_sec=float(os.getenv("ASKI_STREAM_IDLE_TIMEOUT_SEC", "20")),
+            runtime_params=dict(runtime_params or {}),
         )
         thread = threading.Thread(
             target=self._transform_loop,
@@ -404,6 +413,8 @@ class StreamManager:
             source_stream_id=source_stream_id,
             owner_name=owner_name,
             fps=fps,
+            stream_tag=stream_tag,
+            runtime_param_keys=sorted(list((runtime_params or {}).keys())),
         )
         thread.start()
         return stream_id
@@ -682,6 +693,33 @@ class StreamManager:
         with state.lock:
             state.last_access_at = time.time()
             return dict(state.latest_predictions)
+
+    def update_stream_runtime_params(self, stream_id: str, params: Dict[str, Any]) -> bool:
+        if not stream_id or not isinstance(params, dict):
+            return False
+        state = self.get_stream(stream_id)
+        if state is None:
+            return False
+
+        with state.lock:
+            state.runtime_params.update(params)
+            state.last_access_at = time.time()
+
+        self._debug_event(
+            "update_stream_runtime_params",
+            stream_id=stream_id,
+            stream_tag=state.stream_tag,
+            keys=sorted(list(params.keys())),
+        )
+        return True
+
+    def get_stream_runtime_params(self, stream_id: str) -> Dict[str, Any]:
+        state = self.get_stream(stream_id)
+        if state is None:
+            return {}
+        with state.lock:
+            state.last_access_at = time.time()
+            return dict(state.runtime_params or {})
 
     def stop_stream(self, stream_id: str, reason: str = "manual") -> bool:
         """Stop a stream deterministically.

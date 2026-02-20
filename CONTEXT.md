@@ -5,8 +5,8 @@
 - Update this file on every assistant reply that changes analysis, code, or next actions.
 
 ## Last Updated
-- Date: 2026-02-19
-- Scope: Main Vision lag/stutter hardening (frame-skipped inference + lighter JPEG encode).
+- Date: 2026-02-20
+- Scope: ROI seamless stream update (live ROI params without rerun/recreate stream).
 
 ## User Goal
 - Use `ai-flow-main.zip` as reference base.
@@ -25,6 +25,8 @@
 - Main Vision patch (2 outputs + ROI-reactive rerun + `yolov5mu` default) is implemented and awaiting runtime confirmation.
 - Main Vision lag-reduction patch is implemented and awaiting runtime confirmation.
 - Main Vision anti-stutter patch (controlled inference FPS + JPEG quality optimization) is implemented and awaiting runtime confirmation.
+- Node auto-run-on-insert guard patch is implemented for ROI and stream-reactive generic processors, awaiting runtime confirmation.
+- ROI seamless live-update patch (stable ROI stream + runtime params API) is implemented and awaiting runtime confirmation.
 
 ## Reference Check
 - `d:/ProjectMagang/aiflow/ai-flow-main.zip` extracted to `d:/ProjectMagang/aiflow/ai-flow-main/ai-flow-main`.
@@ -65,6 +67,9 @@
 - Main vision stutter root cause (follow-up):
   - YOLO inference still ran on every transform frame, which is too heavy on CPU and causes frame pacing collapse.
   - MJPEG encode quality default was relatively high and added encoding overhead under load.
+- ROI seamlessness root cause (latest):
+  - ROI drag/resize previously triggered frequent `run_node` executions.
+  - Each ROI stream run recreated transform stream IDs, which forced downstream reruns and caused visible stutter/non-seamless updates.
 
 ## Changes Implemented
 1. Backend stream manager:
@@ -214,6 +219,29 @@
      - `ASKI_STREAM_JPEG_QUALITY=70`
    - File:
      - `packages/backend/.env`
+23. Node initial auto-run guard (latest request):
+   - Prevented first-mount auto-run so nodes do not execute immediately when first inserted on canvas.
+   - Kept reactive auto-run behavior for subsequent user-driven input/upstream changes.
+   - Files:
+     - `packages/ui/src/components/nodes/GenericNode.tsx`
+     - `packages/ui/src/components/nodes/RoiNode.tsx`
+24. ROI seamless live stream update (latest request):
+   - Backend stream manager now supports mutable per-stream runtime params (`runtime_params`) and stream tagging (`stream_tag`).
+   - Added ROI runtime update route:
+     - `POST /stream/<stream_id>/roi/params`
+     - Body supports: `x`, `y`, `w`, `h`, `width`, `height`.
+   - ROI stream processor now:
+     - creates transform stream with `stream_tag="roi"` and initial params,
+     - reads latest runtime params each frame (no stream recreation needed for ROI moves).
+   - Frontend ROI node now:
+     - updates ROI stream params live (throttled) while drag/resize,
+     - avoids auto-rerun-on-every-ROI-param-change for stream input mode.
+   - Files:
+     - `packages/backend/app/streaming/stream_manager.py`
+     - `packages/backend/app/flask/app_routes/stream_routes.py`
+     - `packages/backend/app/processors/components/extension/roi_processor.py`
+     - `packages/ui/src/api/stream.ts`
+     - `packages/ui/src/components/nodes/RoiNode.tsx`
 
 ## Current Behavior After Patch
 - When a camera node is removed/cleared (including keyboard delete path), UI now attempts:
@@ -253,6 +281,13 @@
   - Reduced patah-patah under CPU load because inference frequency is decoupled from display frame frequency.
   - Better smoothness/throughput due lighter JPEG encoding.
   - Global runtime tuning now defaults to lower load values via backend `.env`.
+- Node run logic expectation after patch (latest):
+  - Adding a new ROI / Image Processing / Main Vision node to canvas does not trigger immediate auto-run on initial mount.
+  - Auto-run still works on later user-driven changes (e.g. input value updates, upstream output/signature changes).
+- ROI seamless expectation after patch (latest):
+  - In stream pipelines (e.g., Camera -> ROI -> Display / Image Processing / Main Vision), moving/resizing ROI updates crop live without rerunning ROI/downstream nodes.
+  - ROI output stream ID should remain stable while only ROI box parameters change.
+  - Downstream nodes continue consuming updated frames from the same stream reference.
 
 ## Validation Status
 - Static code update completed.
@@ -294,6 +329,15 @@
 - Main Vision anti-stutter patch validation:
   - Python syntax check passed:
     - `python -m py_compile packages/backend/app/processors/components/extension/main_vision_model_processor.py packages/backend/app/streaming/stream_manager.py`
+  - Frontend build remains blocked only by pre-existing unrelated error:
+    - `packages/ui/src/nodes-configuration/lampControlNode.ts:21`
+- Node initial auto-run guard validation:
+  - Static code update completed.
+  - Frontend build remains blocked only by pre-existing unrelated error:
+    - `packages/ui/src/nodes-configuration/lampControlNode.ts:21`
+- ROI seamless live-update validation:
+  - Python syntax check passed:
+    - `python -m py_compile packages/backend/app/streaming/stream_manager.py packages/backend/app/flask/app_routes/stream_routes.py packages/backend/app/processors/components/extension/roi_processor.py`
   - Frontend build remains blocked only by pre-existing unrelated error:
     - `packages/ui/src/nodes-configuration/lampControlNode.ts:21`
 
@@ -356,6 +400,19 @@
      - `inference_fps = 4..8`
      - `imgsz = 384..512`
    - Expected: smoother stream (less patah-patah) with acceptable detection refresh.
+17. Verify node does not auto-run on insert:
+   - Add ROI / Image Processing / Main Vision node to canvas (without pressing Run).
+   - Expected: node does not start processing on initial insert/mount.
+   - Then change input (connect upstream or edit `input_url`/params).
+   - Expected: auto-run can trigger on subsequent user-driven changes.
+18. Verify ROI seamless live update (no rerun storm):
+   - Build chain: Camera -> ROI -> Display (and optionally -> Image Processing / Main Vision -> Display).
+   - Run flow once until ROI output stream exists.
+   - Move/resize ROI box continuously.
+   - Expected:
+     - Display/downstream output updates smoothly without repeatedly pressing run.
+     - ROI stream ID remains unchanged while dragging.
+     - `/stream/debug` shows `update_stream_runtime_params` events for ROI stream updates.
 
 ## New Chat Bootstrap Prompt
 - Use this prompt in a new chat to restore context quickly:
