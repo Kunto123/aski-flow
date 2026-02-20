@@ -14,6 +14,18 @@ $ErrorActionPreference = "Stop"
 $uiDir = Join-Path $PSScriptRoot "ui"
 Set-Location $uiDir
 
+$nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+$npmCmd = Get-Command npm -ErrorAction SilentlyContinue
+if (-not $nodeCmd -or -not $npmCmd) {
+    throw @"
+Node.js/npm tidak ditemukan di PATH.
+Install Node.js LTS terlebih dahulu, lalu buka terminal PowerShell baru.
+Cek dengan:
+  node -v
+  npm -v
+"@
+}
+
 if ($InstallDeps -or -not (Test-Path (Join-Path $uiDir "node_modules"))) {
     npm install
 }
