@@ -122,25 +122,28 @@ class RoiProcessor(BasicProcessor):
             return self._process_stream(stream_id)
         return self._process_file(input_ref)
 
-    def _resolve_roi_px(self, frame_w: int, frame_h: int):
+    def _resolve_roi_px(self, frame_w: int, frame_h: int, params=None):
         if frame_w <= 0 or frame_h <= 0:
             return 0, 0, frame_w, frame_h
 
-        x_norm = _clamp(self.x, 0.0, 1.0)
-        y_norm = _clamp(self.y, 0.0, 1.0)
+        params = params or {}
+        x_norm = _clamp(_safe_float(params.get("x"), self.x), 0.0, 1.0)
+        y_norm = _clamp(_safe_float(params.get("y"), self.y), 0.0, 1.0)
 
         # Prefer normalized w/h. This matches the UI behavior where width/height
         # are specified in preview pixels, but we persist the normalized ROI (w/h).
-        w_norm = _safe_float(self.w, 1.0)
-        h_norm = _safe_float(self.h, 1.0)
+        w_norm = _safe_float(params.get("w"), self.w)
+        h_norm = _safe_float(params.get("h"), self.h)
+        width_px = _safe_float(params.get("width"), self.width)
+        height_px = _safe_float(params.get("height"), self.height)
 
         if 0.0 < w_norm <= 1.0 and 0.0 < h_norm <= 1.0:
             roi_w = max(1, int(_clamp(w_norm, 0.0, 1.0) * frame_w))
             roi_h = max(1, int(_clamp(h_norm, 0.0, 1.0) * frame_h))
-        elif self.width > 0 and self.height > 0:
+        elif width_px > 0 and height_px > 0:
             # Pixel crop mode (advanced).
-            roi_w = int(_clamp(self.width, 1.0, float(frame_w)))
-            roi_h = int(_clamp(self.height, 1.0, float(frame_h)))
+            roi_w = int(_clamp(width_px, 1.0, float(frame_w)))
+            roi_h = int(_clamp(height_px, 1.0, float(frame_h)))
         else:
             roi_w = frame_w
             roi_h = frame_h
@@ -152,9 +155,9 @@ class RoiProcessor(BasicProcessor):
 
         return x1, y1, roi_w, roi_h
 
-    def _crop(self, frame):
+    def _crop(self, frame, params=None):
         h, w = frame.shape[:2]
-        x1, y1, roi_w, roi_h = self._resolve_roi_px(w, h)
+        x1, y1, roi_w, roi_h = self._resolve_roi_px(w, h, params=params)
         x2 = x1 + roi_w
         y2 = y1 + roi_h
         if x2 <= x1 or y2 <= y1:
@@ -164,15 +167,32 @@ class RoiProcessor(BasicProcessor):
     def _process_stream(self, source_stream_id: str):
         manager = get_stream_manager()
         manager.stop_streams_by_owner(self.name)
+        initial_params = {
+            "x": self.x,
+            "y": self.y,
+            "w": self.w,
+            "h": self.h,
+            "width": self.width,
+            "height": self.height,
+        }
+        stream_id_ref = {"value": None}
 
         def _transform(frame):
-            return self._crop(frame)
+            stream_id = stream_id_ref.get("value")
+            live_params = (
+                manager.get_stream_runtime_params(stream_id) if stream_id else {}
+            )
+            roi_params = {**initial_params, **live_params}
+            return self._crop(frame, params=roi_params)
 
         out_stream_id = manager.create_transform_stream(
             source_stream_id,
             _transform,
             owner_name=self.name,
+            stream_tag="roi",
+            runtime_params=initial_params,
         )
+        stream_id_ref["value"] = out_stream_id
         # Return canonical stream ref + convenience MJPEG URL.
         return [f"stream://{out_stream_id}", manager.build_mjpeg_url(out_stream_id)]
 

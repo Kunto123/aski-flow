@@ -53,3 +53,24 @@ export async function stopCameraStreamsByIndex(
     return false;
   }
 }
+
+export async function updateRoiStreamParams(
+  streamId: string,
+  params: {
+    x?: number;
+    y?: number;
+    w?: number;
+    h?: number;
+    width?: number;
+    height?: number;
+  },
+): Promise<boolean> {
+  if (!streamId) return false;
+  try {
+    const response = await client.post(`/stream/${streamId}/roi/params`, params);
+    return !!response?.data?.updated;
+  } catch (error) {
+    console.error("Failed to update ROI stream params:", streamId, error);
+    return false;
+  }
+}

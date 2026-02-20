@@ -38,6 +38,7 @@ import {
   normalizeStreamOutputUrl,
 } from "./node-output/outputUtils";
 import { roiNodeConfig } from "../../nodes-configuration/roiNode";
+import { updateRoiStreamParams } from "../../api/stream";
 
 interface RoiNodeProps extends NodeProps {
   data: GenericNodeData;
@@ -59,6 +60,7 @@ type MediaBox = {
 
 const DEFAULT_WIDTH = 120;
 const DEFAULT_HEIGHT = 120;
+const LIVE_ROI_UPDATE_INTERVAL_MS = 120;
 
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, value));
@@ -90,6 +92,28 @@ const getPreviewUrlFromOutput = (outputData: any): string => {
   return typeof first === "string" ? normalizeStreamOutputUrl(first) : "";
 };
 
+const extractStreamIdFromOutput = (outputData: any): string => {
+  const parse = (raw: string) => {
+    if (!raw) return "";
+    if (raw.startsWith("stream://")) {
+      return raw.replace("stream://", "");
+    }
+    const match = raw.match(/\/stream\/([^/.?]+)\.(mjpg|mjpeg)/i);
+    return match?.[1] ?? "";
+  };
+
+  if (!outputData) return "";
+  if (typeof outputData === "string") return parse(outputData);
+  if (!Array.isArray(outputData)) return "";
+
+  for (const item of outputData) {
+    if (typeof item !== "string") continue;
+    const streamId = parse(item.trim());
+    if (streamId) return streamId;
+  }
+  return "";
+};
+
 const isVideoPreviewUrl = (url: string): boolean => {
   if (!url) return false;
   if (isStreamUrl(url)) return false;
@@ -112,6 +136,17 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
   });
   const dataRef = useRef<GenericNodeData>(data);
   const lastAutoRunRef = useRef<string>("");
+  const hasInitializedAutoRunRef = useRef<boolean>(false);
+  const liveUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingLiveParamsRef = useRef<{
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    width?: number;
+    height?: number;
+  } | null>(null);
+  const lastLiveParamsKeyRef = useRef<string>("");
   const dragStateRef = useRef<
     | {
         mode: "move" | "resize";
@@ -231,7 +266,68 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
     return data.input_url ?? "";
   }, [incomingEdge, findNode, data.input_url, data.lastRun]);
 
+  const sourceIsStreamInput = useMemo(() => {
+    const input = (resolvedInputUrl ?? "").toString();
+    if (!input) return false;
+    if (input.startsWith("stream://")) return true;
+    return isStreamUrl(input);
+  }, [resolvedInputUrl]);
+
+  const roiOutputStreamId = useMemo(
+    () => extractStreamIdFromOutput(data.outputData),
+    [data.outputData],
+  );
+
+  const canLiveUpdateRoiStream = sourceIsStreamInput && !!roiOutputStreamId;
+
+  const flushLiveRoiUpdate = useCallback(async () => {
+    if (!canLiveUpdateRoiStream || !roiOutputStreamId) return;
+    const payload = pendingLiveParamsRef.current;
+    if (!payload) return;
+    pendingLiveParamsRef.current = null;
+    await updateRoiStreamParams(roiOutputStreamId, payload);
+  }, [canLiveUpdateRoiStream, roiOutputStreamId]);
+
+  const scheduleLiveRoiUpdate = useCallback(
+    (payload: {
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      width?: number;
+      height?: number;
+    }) => {
+      if (!canLiveUpdateRoiStream || !roiOutputStreamId) return;
+
+      const payloadKey = JSON.stringify(payload);
+      if (lastLiveParamsKeyRef.current === payloadKey) return;
+      lastLiveParamsKeyRef.current = payloadKey;
+      pendingLiveParamsRef.current = payload;
+
+      if (liveUpdateTimerRef.current) return;
+      liveUpdateTimerRef.current = setTimeout(async () => {
+        liveUpdateTimerRef.current = null;
+        await flushLiveRoiUpdate();
+      }, LIVE_ROI_UPDATE_INTERVAL_MS);
+    },
+    [canLiveUpdateRoiStream, roiOutputStreamId, flushLiveRoiUpdate],
+  );
+
   useEffect(() => {
+    return () => {
+      if (liveUpdateTimerRef.current) {
+        clearTimeout(liveUpdateTimerRef.current);
+        liveUpdateTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const isFirstAutoRunPass = !hasInitializedAutoRunRef.current;
+    if (isFirstAutoRunPass) {
+      hasInitializedAutoRunRef.current = true;
+    }
+
     if (!hasDownstream) return;
     if (!resolvedInputUrl) return;
 
@@ -239,15 +335,23 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
     // This makes Camera → ROI → Display work without requiring manual "play" on ROI.
     if (currentNodesRunning?.includes(data.name)) return;
 
-    const key = [
-      resolvedInputUrl,
-      data.x ?? 0,
-      data.y ?? 0,
-      data.w ?? 1,
-      data.h ?? 1,
-      data.width ?? "",
-      data.height ?? "",
-    ].join("|");
+    const key = sourceIsStreamInput
+      ? [resolvedInputUrl].join("|")
+      : [
+          resolvedInputUrl,
+          data.x ?? 0,
+          data.y ?? 0,
+          data.w ?? 1,
+          data.h ?? 1,
+          data.width ?? "",
+          data.height ?? "",
+        ].join("|");
+
+    // Do not auto-run immediately when the node is first mounted on canvas.
+    if (isFirstAutoRunPass) {
+      lastAutoRunRef.current = key;
+      return;
+    }
 
     if (lastAutoRunRef.current === key) return;
     lastAutoRunRef.current = key;
@@ -260,6 +364,7 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
   }, [
     hasDownstream,
     resolvedInputUrl,
+    sourceIsStreamInput,
     data.x,
     data.y,
     data.w,
@@ -356,17 +461,30 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
       mediaBox.height > 0
         ? clamp(safeHeightForNorm / mediaBox.height, 0, 1)
         : 1;
+    const safeExplicitWidth =
+      explicitWidth != null ? Math.max(1, explicitWidth) : undefined;
+    const safeExplicitHeight =
+      explicitHeight != null ? Math.max(1, explicitHeight) : undefined;
 
     onUpdateNodeData(id, {
       ...dataRef.current,
-      ...(explicitWidth != null ? { width: Math.max(1, explicitWidth) } : {}),
-      ...(explicitHeight != null
-        ? { height: Math.max(1, explicitHeight) }
-        : {}),
+      ...(safeExplicitWidth != null ? { width: safeExplicitWidth } : {}),
+      ...(safeExplicitHeight != null ? { height: safeExplicitHeight } : {}),
       x: normalizedX,
       y: normalizedY,
       w: normalizedW,
       h: normalizedH,
+    });
+
+    // Keep the existing ROI output stream alive and update crop params in-place.
+    // This avoids stream recreation + downstream reruns during drag/resize.
+    scheduleLiveRoiUpdate({
+      x: normalizedX,
+      y: normalizedY,
+      w: normalizedW,
+      h: normalizedH,
+      ...(safeExplicitWidth != null ? { width: safeExplicitWidth } : {}),
+      ...(safeExplicitHeight != null ? { height: safeExplicitHeight } : {}),
     });
   };
 
@@ -488,6 +606,7 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
       dragStateRef.current = null;
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
+      void flushLiveRoiUpdate();
     };
 
     window.addEventListener("pointermove", onPointerMove);
@@ -545,6 +664,7 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
       dragStateRef.current = null;
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
+      void flushLiveRoiUpdate();
     };
 
     window.addEventListener("pointermove", onPointerMove);

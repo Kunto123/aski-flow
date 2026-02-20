@@ -77,6 +77,7 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
         : !data.config.defaultHideOutput,
     );
     const lastAutoRunKeyRef = useRef<string>("");
+    const hasInitializedAutoRunRef = useRef<boolean>(false);
     const [fields, setFields] = useState<Field[]>(
       !!data.config?.fields
         ? data.config.fields
@@ -177,6 +178,10 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
       // (e.g. ROI box moved -> new ROI stream id).
       if (!isImageProcessing && !isMainVisionModel) return;
       if (!runNode) return;
+      const isFirstAutoRunPass = !hasInitializedAutoRunRef.current;
+      if (isFirstAutoRunPass) {
+        hasInitializedAutoRunRef.current = true;
+      }
       if (currentNodesRunning?.includes(data.name)) return;
 
       const outgoing = getOutgoingEdges?.(id) ?? [];
@@ -229,6 +234,11 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
           });
 
       const key = `${data.processorType}|${data.name}|${upstreamSignature}|${processingParams}`;
+      // Do not auto-run immediately when the node is first mounted on canvas.
+      if (isFirstAutoRunPass) {
+        lastAutoRunKeyRef.current = key;
+        return;
+      }
       if (lastAutoRunKeyRef.current === key) return;
       lastAutoRunKeyRef.current = key;
 
