@@ -1,5 +1,25 @@
 import os
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
+
+_COCO_KEYPOINT_NAMES = [
+    "nose",
+    "left_eye",
+    "right_eye",
+    "left_ear",
+    "right_ear",
+    "left_shoulder",
+    "right_shoulder",
+    "left_elbow",
+    "right_elbow",
+    "left_wrist",
+    "right_wrist",
+    "left_hip",
+    "right_hip",
+    "left_knee",
+    "right_knee",
+    "left_ankle",
+    "right_ankle",
+]
 
 
 class UltralyticsRuntime:
@@ -128,6 +148,106 @@ class UltralyticsRuntime:
             "boxes": boxes,
             "names": names,
             "shape": list(image.shape[:2]) if image is not None else None,
+        }
+
+    def predict_pose(
+        self,
+        image: Any,
+        model_path: str,
+        conf: float = 0.25,
+        imgsz: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        model = self.get_model(model_path)
+        kwargs: Dict[str, Any] = {"verbose": False, "conf": conf}
+        if imgsz is not None:
+            try:
+                imgsz_value = int(imgsz)
+                if imgsz_value > 0:
+                    kwargs["imgsz"] = imgsz_value
+            except Exception:
+                pass
+
+        result = model.predict(image, **kwargs)[0]
+        shape = list(image.shape[:2]) if image is not None else None
+        if result is None or result.keypoints is None:
+            return {"people": [], "shape": shape}
+
+        people: List[Dict[str, Any]] = []
+
+        boxes_xyxy = None
+        boxes_conf = None
+        if result.boxes is not None:
+            try:
+                boxes_xyxy = result.boxes.xyxy.cpu().numpy()
+            except Exception:
+                boxes_xyxy = None
+            try:
+                boxes_conf = result.boxes.conf.cpu().numpy()
+            except Exception:
+                boxes_conf = None
+
+        try:
+            kp_xy = result.keypoints.xy.cpu().numpy()
+        except Exception:
+            kp_xy = None
+        try:
+            kp_conf = result.keypoints.conf.cpu().numpy()
+        except Exception:
+            kp_conf = None
+
+        if kp_xy is None:
+            return {"people": [], "shape": shape}
+
+        for i in range(len(kp_xy)):
+            keypoints = []
+            person_xy = kp_xy[i]
+            person_conf = kp_conf[i] if kp_conf is not None and i < len(kp_conf) else None
+
+            for kp_idx in range(len(person_xy)):
+                x, y = person_xy[kp_idx]
+                conf_val = 1.0
+                if person_conf is not None and kp_idx < len(person_conf):
+                    try:
+                        conf_val = float(person_conf[kp_idx])
+                    except Exception:
+                        conf_val = 0.0
+
+                keypoints.append(
+                    {
+                        "index": int(kp_idx),
+                        "name": (
+                            _COCO_KEYPOINT_NAMES[kp_idx]
+                            if kp_idx < len(_COCO_KEYPOINT_NAMES)
+                            else str(kp_idx)
+                        ),
+                        "x": float(x),
+                        "y": float(y),
+                        "conf": float(conf_val),
+                    }
+                )
+
+            bbox_xyxy = None
+            det_conf = None
+            if boxes_xyxy is not None and i < len(boxes_xyxy):
+                bbox_xyxy = [float(v) for v in boxes_xyxy[i][:4]]
+            if boxes_conf is not None and i < len(boxes_conf):
+                try:
+                    det_conf = float(boxes_conf[i])
+                except Exception:
+                    det_conf = None
+
+            people.append(
+                {
+                    "person_index": int(i),
+                    "bbox_xyxy": bbox_xyxy,
+                    "confidence": det_conf,
+                    "keypoints": keypoints,
+                }
+            )
+
+        return {
+            "people": people,
+            "shape": shape,
         }
 
 

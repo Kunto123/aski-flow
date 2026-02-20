@@ -17,7 +17,12 @@ from werkzeug.utils import secure_filename
 from ..core.processor_type_name_utils import ProcessorType
 from ..processor import BasicProcessor
 from ....streaming import get_stream_manager
-from ....vision import draw_boxes_overlay, get_ultralytics_runtime
+from ....vision import (
+    assess_ergonomic_risk,
+    draw_boxes_overlay,
+    draw_skeleton_overlay,
+    get_ultralytics_runtime,
+)
 
 
 def _extract_stream_id(ref: str):
@@ -47,6 +52,16 @@ def _is_video_filename(filename: str):
     return lower.endswith(".mp4") or lower.endswith(".mov") or lower.endswith(".avi")
 
 
+def _to_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
 class MainVisionModelProcessor(BasicProcessor):
     processor_type = ProcessorType.MAIN_VISION_MODEL
 
@@ -74,12 +89,32 @@ class MainVisionModelProcessor(BasicProcessor):
         )
         self.input_url = config.get("input_url")
         self.classes = config.get("classes")
+        self.enable_ergonomic_check = _to_bool(
+            config.get(
+                "enable_ergonomic_check",
+                os.getenv("ASKI_MAIN_VISION_ENABLE_ERGONOMIC_CHECK", "0"),
+            )
+        )
+        self.ergonomic_pose_model_path = str(
+            config.get(
+                "ergonomic_pose_model_path",
+                os.getenv("ASKI_MAIN_VISION_POSE_MODEL_PATH", "models/yolov8n-pose.pt"),
+            )
+        )
+        self.ergonomic_min_keypoint_conf = float(
+            config.get(
+                "ergonomic_min_keypoint_conf",
+                os.getenv("ASKI_MAIN_VISION_ERGONOMIC_KP_CONF", "0.35"),
+            )
+        )
+        self._ergonomic_error_cache: Optional[str] = None
 
     def _build_detection_payload(
         self,
         predictions: Optional[Dict[str, Any]],
         mode: str,
         extra: Optional[Dict[str, Any]] = None,
+        ergonomic: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         predictions = predictions or {}
         boxes = predictions.get("boxes") or []
@@ -122,10 +157,120 @@ class MainVisionModelProcessor(BasicProcessor):
             "detection_summary": summary,
             "detections": detections,
             "shape": predictions.get("shape"),
+            "ergonomic": ergonomic or {"enabled": False},
         }
         if extra:
             payload.update(extra)
         return payload
+
+    def _run_ergonomic_inference(self, frame: Any, runtime) -> Dict[str, Any]:
+        if not self.enable_ergonomic_check:
+            return {"enabled": False}
+
+        if self._ergonomic_error_cache:
+            return {
+                "enabled": True,
+                "available": False,
+                "status": "error",
+                "pose_model_path": self.ergonomic_pose_model_path,
+                "person_count": 0,
+                "risk_summary": {
+                    "overall_risk_level": "unknown",
+                    "counts_by_level": {"low": 0, "medium": 0, "high": 0},
+                    "average_risk_score": 0,
+                },
+                "people": [],
+                "error": self._ergonomic_error_cache,
+            }
+
+        try:
+            pose_predictions = runtime.predict_pose(
+                frame,
+                model_path=self.ergonomic_pose_model_path,
+                conf=self.conf_threshold,
+                imgsz=self.imgsz,
+            ) or {}
+        except Exception as e:
+            self._ergonomic_error_cache = str(e)
+            return {
+                "enabled": True,
+                "available": False,
+                "status": "error",
+                "pose_model_path": self.ergonomic_pose_model_path,
+                "person_count": 0,
+                "risk_summary": {
+                    "overall_risk_level": "unknown",
+                    "counts_by_level": {"low": 0, "medium": 0, "high": 0},
+                    "average_risk_score": 0,
+                },
+                "people": [],
+                "error": self._ergonomic_error_cache,
+            }
+
+        raw_people = pose_predictions.get("people") or []
+        analyzed_people: List[Dict[str, Any]] = []
+        counts_by_level = {"low": 0, "medium": 0, "high": 0}
+        total_score = 0.0
+
+        for person in raw_people:
+            keypoints = person.get("keypoints") or []
+            assessment = assess_ergonomic_risk(
+                keypoints,
+                min_conf=self.ergonomic_min_keypoint_conf,
+            )
+            level = str(assessment.get("risk_level", "low"))
+            if level not in counts_by_level:
+                level = "low"
+            counts_by_level[level] += 1
+            total_score += float(assessment.get("risk_score", 0) or 0)
+            analyzed_people.append(
+                {
+                    **person,
+                    "assessment": assessment,
+                }
+            )
+
+        person_count = len(analyzed_people)
+        average_score = round(total_score / person_count, 1) if person_count > 0 else 0.0
+        overall_level = "low"
+        if counts_by_level["high"] > 0:
+            overall_level = "high"
+        elif counts_by_level["medium"] > 0:
+            overall_level = "medium"
+
+        return {
+            "enabled": True,
+            "available": True,
+            "status": "ok",
+            "pose_model_path": self.ergonomic_pose_model_path,
+            "person_count": person_count,
+            "risk_summary": {
+                "overall_risk_level": overall_level,
+                "counts_by_level": counts_by_level,
+                "average_risk_score": average_score,
+            },
+            "people": analyzed_people,
+        }
+
+    def _compose_overlay(
+        self,
+        frame: Any,
+        predictions: Dict[str, Any],
+        ergonomic_payload: Dict[str, Any],
+    ) -> Any:
+        overlay = draw_boxes_overlay(frame, predictions)
+        if not self.enable_ergonomic_check:
+            return overlay
+
+        people = ergonomic_payload.get("people") or []
+        if not people:
+            return overlay
+
+        return draw_skeleton_overlay(
+            overlay,
+            people,
+            min_conf=self.ergonomic_min_keypoint_conf,
+        )
 
     def _resolve_class_indices(self, runtime) -> Optional[List[int]]:
         """Resolve the optional `classes` filter into a list of class indices.
@@ -252,6 +397,7 @@ class MainVisionModelProcessor(BasicProcessor):
         inference_interval = 1.0 / max(float(self.inference_fps), 1.0)
         last_inference_at = 0.0
         last_predictions: Dict[str, Any] = {}
+        last_ergonomic_payload: Dict[str, Any] = {"enabled": False}
 
         # Prime initial summary so output JSON already contains useful detections
         # for conditional-state / python-code right after run.
@@ -270,8 +416,11 @@ class MainVisionModelProcessor(BasicProcessor):
                 last_predictions = {}
                 last_inference_at = 0.0
 
+            if self.enable_ergonomic_check:
+                last_ergonomic_payload = self._run_ergonomic_inference(source_frame, runtime)
+
         def _transform(frame):
-            nonlocal last_inference_at, last_predictions
+            nonlocal last_inference_at, last_predictions, last_ergonomic_payload
             now = time.monotonic()
 
             # Run heavy model inference at a controlled rate, while still pushing
@@ -287,10 +436,12 @@ class MainVisionModelProcessor(BasicProcessor):
                 )
                 last_predictions = predictions or {}
                 last_inference_at = now
+                if self.enable_ergonomic_check:
+                    last_ergonomic_payload = self._run_ergonomic_inference(frame, runtime)
             else:
                 predictions = last_predictions
 
-            overlay = draw_boxes_overlay(frame, predictions)
+            overlay = self._compose_overlay(frame, predictions, last_ergonomic_payload)
             return overlay, predictions
 
         overlay_stream_id = manager.create_transform_stream(
@@ -309,6 +460,7 @@ class MainVisionModelProcessor(BasicProcessor):
                 "predictions_url": predictions_url,
                 "stream_id": overlay_stream_id,
             },
+            ergonomic=last_ergonomic_payload,
         )
 
         return [
@@ -342,14 +494,19 @@ class MainVisionModelProcessor(BasicProcessor):
             classes=class_indices,
             imgsz=self.imgsz,
         )
-        overlay = draw_boxes_overlay(image, predictions)
+        ergonomic_payload = self._run_ergonomic_inference(image, runtime)
+        overlay = self._compose_overlay(image, predictions, ergonomic_payload)
         ok, encoded = cv2.imencode(".jpg", overlay)
         if not ok:
             raise RuntimeError("Could not encode overlay image")
 
         filename = f"{self.name}-overlay-{uuid.uuid4().hex[:10]}.jpg"
         overlay_url = self.get_storage().save(filename, encoded.tobytes())
-        payload = self._build_detection_payload(predictions, mode="image")
+        payload = self._build_detection_payload(
+            predictions,
+            mode="image",
+            ergonomic=ergonomic_payload,
+        )
         return [json.dumps(payload), overlay_url]
 
     def _process_video_bytes(self, content: bytes, runtime):
@@ -378,6 +535,7 @@ class MainVisionModelProcessor(BasicProcessor):
             raise RuntimeError("Could not initialize output video writer")
 
         last_predictions = {}
+        last_ergonomic_payload: Dict[str, Any] = {"enabled": False}
         frame_count = 0
         class_indices = self._resolve_class_indices(runtime)
         while True:
@@ -391,9 +549,11 @@ class MainVisionModelProcessor(BasicProcessor):
                 classes=class_indices,
                 imgsz=self.imgsz,
             )
-            frame_overlay = draw_boxes_overlay(frame, preds)
+            ergonomic_payload = self._run_ergonomic_inference(frame, runtime)
+            frame_overlay = self._compose_overlay(frame, preds, ergonomic_payload)
             writer.write(frame_overlay)
             last_predictions = preds
+            last_ergonomic_payload = ergonomic_payload
             frame_count += 1
 
         cap.release()
@@ -413,6 +573,7 @@ class MainVisionModelProcessor(BasicProcessor):
             last_predictions,
             mode="video",
             extra={"frame_count": frame_count},
+            ergonomic=last_ergonomic_payload,
         )
         return [json.dumps(payload), overlay_url]
 

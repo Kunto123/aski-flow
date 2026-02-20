@@ -231,6 +231,11 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
             stream_fps: data.stream_fps ?? 12,
             inference_fps: data.inference_fps ?? 6,
             imgsz: data.imgsz ?? 512,
+            enable_ergonomic_check: data.enable_ergonomic_check ?? false,
+            ergonomic_pose_model_path:
+              data.ergonomic_pose_model_path ?? "models/yolov8n-pose.pt",
+            ergonomic_min_keypoint_conf:
+              data.ergonomic_min_keypoint_conf ?? 0.35,
           });
 
       const key = `${data.processorType}|${data.name}|${upstreamSignature}|${processingParams}`;
@@ -262,6 +267,9 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
       data.stream_fps,
       data.inference_fps,
       data.imgsz,
+      data.enable_ergonomic_check,
+      data.ergonomic_pose_model_path,
+      data.ergonomic_min_keypoint_conf,
       data.outputData,
       id,
       getIncomingEdges,
