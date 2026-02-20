@@ -6,7 +6,7 @@
 
 ## Last Updated
 - Date: 2026-02-20
-- Scope: ROI erase-output UX fix (hide ROI preview until rerun).
+- Scope: UI output-dot deduplication (hide duplicate equivalent outputs).
 
 ## User Goal
 - Use `ai-flow-main.zip` as reference base.
@@ -29,6 +29,8 @@
 - ROI seamless live-update patch (stable ROI stream + runtime params API) is implemented and awaiting runtime confirmation.
 - Erase-output reliability patch + no-auto-run-on-connect guard is implemented and awaiting runtime confirmation.
 - ROI node erase-output visibility fix is implemented and awaiting runtime confirmation.
+- Stream duplicate-output simplification patch is implemented and awaiting runtime confirmation.
+- Output indicator dedup patch is implemented and awaiting runtime confirmation.
 
 ## Reference Check
 - `d:/ProjectMagang/aiflow/ai-flow-main.zip` extracted to `d:/ProjectMagang/aiflow/ai-flow-main/ai-flow-main`.
@@ -77,6 +79,12 @@
   - Display node also prioritizes upstream connected output, so clearing Display's own output alone did not blank the view.
 - Surprise auto-run root cause (latest):
   - Auto-run logic on ROI / stream-reactive generic nodes still triggered on input wiring/upstream signature change even before users intentionally ran the node.
+- Duplicate stream output root cause (latest):
+  - Several stream processors emitted both `stream://<id>` and `/stream/<id>.mjpg` as separate outputs.
+  - This created unnecessary multi-output handles and UX confusion because both values referenced the same underlying stream.
+- Output indicator duplication root cause (latest):
+  - Some nodes/legacy states still exposed duplicate-equivalent values in `outputData`.
+  - UI output selector dots counted raw array length, so duplicate-equivalent outputs still appeared as 2 dots.
 
 ## Changes Implemented
 1. Backend stream manager:
@@ -266,6 +274,32 @@
    - This removes confusion where ROI looked like it still had output because source preview stayed visible.
    - File:
      - `packages/ui/src/components/nodes/RoiNode.tsx`
+27. Stream output simplification (latest request):
+   - Stream processors now emit a single canonical output (`stream://<id>`) instead of duplicate URL pair.
+   - Applied to:
+     - `camera-input`
+     - `image-processing` (stream mode)
+     - `roi` (stream mode)
+     - `face-recognition` (stream mode; now `[stream_ref, json_payload]`)
+     - `ocr-reader` (stream mode; now `[stream_ref, json_payload]`)
+     - `qr-code-reader` (stream mode; now `[stream_ref, json_payload]`)
+   - Added backward compatibility for old flows that still reference removed output indexes:
+     - old `index=1` on single-stream nodes maps to `index=0`
+     - old `index=2` on `(stream_ref, json)` nodes maps to `index=1`
+   - Files:
+     - `packages/backend/app/processors/components/core/camera_input_processor.py`
+     - `packages/backend/app/processors/components/extension/image_processing_processor.py`
+     - `packages/backend/app/processors/components/extension/roi_processor.py`
+     - `packages/backend/app/processors/components/extension/face_recognition_processor.py`
+     - `packages/backend/app/processors/components/extension/ocr_reader_processor.py`
+     - `packages/backend/app/processors/components/extension/qr_code_reader_processor.py`
+     - `packages/backend/app/processors/components/processor.py`
+28. UI output-dot deduplication (latest request):
+   - Output selector dots are now computed from normalized + deduplicated outputs.
+   - Equivalent stream outputs (e.g. `stream://id` and `/stream/id.mjpg`) collapse into one dot/view entry.
+   - Applied in output renderer so legacy duplicated outputs no longer show multiple dots if content is effectively the same.
+   - File:
+     - `packages/ui/src/components/nodes/node-output/OutputDisplay.tsx`
 
 ## Current Behavior After Patch
 - When a camera node is removed/cleared (including keyboard delete path), UI now attempts:
@@ -321,6 +355,13 @@
 - ROI erase-output expectation after patch (latest):
   - After `erase output` on ROI node, ROI preview panel is blank.
   - ROI preview appears again only after node is run and produces fresh output.
+- Stream output expectation after patch (latest):
+  - Camera Input, Image Processing (stream), and ROI (stream) expose only one output handle/value.
+  - Nodes with stream+JSON outputs no longer include duplicate MJPEG URL output.
+  - Display/downstream rendering still works because `stream://<id>` is normalized to stream URL in UI.
+- Output-dot expectation after patch (latest):
+  - If multiple raw outputs resolve to the same effective value, only one yellow selector dot is shown.
+  - Dot count now reflects unique rendered outputs, not raw duplicated array entries.
 
 ## Validation Status
 - Static code update completed.
@@ -380,6 +421,15 @@
 - ROI erase-output visibility fix validation:
   - Static code update completed.
   - Frontend build remains blocked only by pre-existing unrelated error:
+    - `packages/ui/src/nodes-configuration/lampControlNode.ts:21`
+- Stream output simplification validation:
+  - Python syntax check passed:
+    - `python -m py_compile packages/backend/app/processors/components/core/camera_input_processor.py packages/backend/app/processors/components/extension/image_processing_processor.py packages/backend/app/processors/components/extension/roi_processor.py packages/backend/app/processors/components/extension/face_recognition_processor.py packages/backend/app/processors/components/extension/ocr_reader_processor.py packages/backend/app/processors/components/extension/qr_code_reader_processor.py packages/backend/app/processors/components/processor.py`
+  - Frontend build status unchanged (same unrelated error):
+    - `packages/ui/src/nodes-configuration/lampControlNode.ts:21`
+- Output-dot dedup validation:
+  - Static code update completed.
+  - Frontend build status unchanged (same unrelated error):
     - `packages/ui/src/nodes-configuration/lampControlNode.ts:21`
 
 ## Worktree Notes
@@ -473,6 +523,17 @@
    - Expected: ROI preview panel becomes blank with erase message.
    - Run ROI again.
    - Expected: ROI preview appears again.
+22. Verify single-output stream nodes:
+   - Run Camera Input node.
+   - Expected: only one output handle/value shown (`stream://...` equivalent render path).
+   - Chain Camera -> ROI -> Image Processing -> Display.
+   - Expected: ROI and Image Processing stream nodes each show one output only; pipeline remains functional.
+23. Verify backward compatibility on old flows:
+   - Load flow that previously connected to removed duplicate output index (camera/image-processing/roi index 1, or face/ocr/qr index 2).
+   - Expected: data still flows due backend key fallback mapping.
+24. Verify output-dot dedup:
+   - Open nodes that previously showed 2 identical-equivalent outputs.
+   - Expected: only 1 yellow output selector dot shown when outputs are effectively the same.
 
 ## New Chat Bootstrap Prompt
 - Use this prompt in a new chat to restore context quickly:

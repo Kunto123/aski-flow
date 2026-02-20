@@ -134,7 +134,8 @@ class ImageProcessingProcessor(BasicProcessor):
             _transform,
             owner_name=self.name,
         )
-        return [f"stream://{out_stream_id}", manager.build_mjpeg_url(out_stream_id)]
+        # Single canonical output: downstream and UI can render from stream ref directly.
+        return [f"stream://{out_stream_id}"]
 
     def _process_file(self, input_url: str):
         filename = _extract_asset_filename(input_url)

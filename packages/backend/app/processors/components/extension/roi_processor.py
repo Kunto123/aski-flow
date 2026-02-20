@@ -63,7 +63,7 @@ class RoiProcessor(BasicProcessor):
     - stream refs (stream:// or /stream/<id>.mjpg) via transform stream
 
     Output:
-    - image_url / video_url (file mode) OR mjpeg_url (stream mode)
+    - image_url / video_url (file mode) OR stream ref (stream mode)
     """
 
     processor_type = ProcessorType.ROI
@@ -193,8 +193,8 @@ class RoiProcessor(BasicProcessor):
             runtime_params=initial_params,
         )
         stream_id_ref["value"] = out_stream_id
-        # Return canonical stream ref + convenience MJPEG URL.
-        return [f"stream://{out_stream_id}", manager.build_mjpeg_url(out_stream_id)]
+        # Single canonical output: downstream and UI can render from stream ref directly.
+        return [f"stream://{out_stream_id}"]
 
     def _process_file(self, input_url: str):
         filename = _extract_asset_filename(input_url)

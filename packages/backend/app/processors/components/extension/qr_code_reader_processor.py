@@ -64,7 +64,6 @@ class QrCodeReaderProcessor(BasicProcessor):
         }
         return [
             f"stream://{out_stream_id}",
-            manager.build_mjpeg_url(out_stream_id),
             json.dumps(payload),
         ]
 
