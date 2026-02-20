@@ -65,7 +65,7 @@ Desktop mode behavior:
 
 Example for many clients to one central server:
 ```powershell
-powershell -ExecutionPolicy Bypass -File client-side/run-client.ps1 -ServerHost 192.168.1.10 -ServerPort 8000
+powershell -ExecutionPolicy Bypass -File client-side/run-client.ps1 -ServerHost 192.168.137.103 -ServerPort 8000
 ```
 
 Optional web debug mode (if needed only):

@@ -6,6 +6,7 @@ from injector import singleton
 from werkzeug.utils import secure_filename
 
 from app.env_config import get_local_storage_folder_path
+from app.utils.runtime_url import resolve_public_base_url
 
 from ..storage.storage_strategy import StorageStrategy
 
@@ -32,11 +33,8 @@ class LocalStorageStrategy(StorageStrategy):
         return self.get_url(secure_name)
 
     def get_url(self, filename: str) -> str:
-        host = os.getenv("BACKEND_HOST") or os.getenv("HOST") or "localhost"
-        port = os.getenv("BACKEND_PORT") or os.getenv("PORT") or "8000"
-        use_https = (os.getenv("USE_HTTPS") or "false").strip().lower() == "true"
-        protocol = "https" if use_https else "http"
-        return f"{protocol}://{host}:{port}/asset/{filename}"
+        base_url = resolve_public_base_url()
+        return f"{base_url}/asset/{filename}"
 
     def get_file(self, filename: str) -> bytes:
         secure_name = secure_filename(filename)

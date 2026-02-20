@@ -20,7 +20,7 @@ def run() -> None:
       - HOST / PORT (legacy)
     """
 
-    host = os.getenv("BACKEND_HOST") or os.getenv("HOST") or "127.0.0.1"
+    host = os.getenv("BACKEND_HOST") or os.getenv("HOST") or "0.0.0.0"
     port_raw = os.getenv("BACKEND_PORT") or os.getenv("PORT") or "8000"
     port = int(port_raw)
 
