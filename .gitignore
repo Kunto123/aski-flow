@@ -1,6 +1,10 @@
-packages/backend/.env
+server-side/backend/.env
+server-side/backend/.venv/
+client-side/ui/.env
+client-side/ui/node_modules/
+client-side/ui/build/
+server-side/data/app.db
 node_modules/
 **/node_modules/
-packages/ui/node_modules/
-packages/backend/.venv/
+**/__pycache__/
 *.zip
