@@ -6,7 +6,7 @@
 
 ## Last Updated
 - Date: 2026-02-20
-- Scope: UI output-dot deduplication (hide duplicate equivalent outputs).
+- Scope: Main Vision display fix (prevent JSON being misclassified as stream URL / Expired URL).
 
 ## User Goal
 - Use `ai-flow-main.zip` as reference base.
@@ -31,6 +31,8 @@
 - ROI node erase-output visibility fix is implemented and awaiting runtime confirmation.
 - Stream duplicate-output simplification patch is implemented and awaiting runtime confirmation.
 - Output indicator dedup patch is implemented and awaiting runtime confirmation.
+- Main Vision JSON summary/output-view patch is implemented and awaiting runtime confirmation.
+- Main Vision JSON render classification fix is implemented and awaiting runtime confirmation.
 
 ## Reference Check
 - `d:/ProjectMagang/aiflow/ai-flow-main.zip` extracted to `d:/ProjectMagang/aiflow/ai-flow-main/ai-flow-main`.
@@ -85,6 +87,12 @@
 - Output indicator duplication root cause (latest):
   - Some nodes/legacy states still exposed duplicate-equivalent values in `outputData`.
   - UI output selector dots counted raw array length, so duplicate-equivalent outputs still appeared as 2 dots.
+- Main Vision output utility root cause (latest):
+  - Main Vision stream JSON output previously focused on runtime metadata (`live`, `predictions_url`, `stream_id`) and was less usable directly for `conditional-state` / `python-code`.
+  - Multi-output selector dots for Main Vision were noisy for users who wanted a single output-view entry with multiline content.
+- Main Vision display error root cause (latest):
+  - Output type detection treated any string containing `/stream/` as stream image URL.
+  - Main Vision JSON payload contains `predictions_url` with `/stream/...`, so JSON was wrongly rendered as image and showed `Expired URL`.
 
 ## Changes Implemented
 1. Backend stream manager:
@@ -300,6 +308,24 @@
    - Applied in output renderer so legacy duplicated outputs no longer show multiple dots if content is effectively the same.
    - File:
      - `packages/ui/src/components/nodes/node-output/OutputDisplay.tsx`
+29. Main Vision output redesign (latest request):
+   - Main Vision output remains 2 types:
+     - output[0]: JSON code with detection summary + detections list (usable by `conditional-state` and `python-code`)
+     - output[1]: scene condition output (existing overlay image/stream)
+   - Stream mode JSON now includes:
+     - `detection_summary` (`total_detections`, `counts_by_label`, `labels_detected`)
+     - `detections` list (`label`, `confidence`, `position`)
+     - runtime metadata (`live`, `predictions_url`, `stream_id`)
+   - Added initial inference priming in stream mode so first JSON is meaningful right after run.
+   - Main Vision output panel now uses one yellow selector-dot visual while showing combined content (JSON + scene output) in one view.
+   - Files:
+     - `packages/backend/app/processors/components/extension/main_vision_model_processor.py`
+     - `packages/ui/src/components/nodes/node-output/OutputDisplay.tsx`
+30. Main Vision JSON classification fix (latest):
+   - Tightened `isStreamUrl` detection to only accept true stream refs/endpoints (`stream://...` or `/stream/<id>.mjpg|.mjpeg` URLs).
+   - Prevents JSON text containing `/stream/` substring from being treated as image output.
+   - File:
+     - `packages/ui/src/components/nodes/node-output/outputUtils.ts`
 
 ## Current Behavior After Patch
 - When a camera node is removed/cleared (including keyboard delete path), UI now attempts:
@@ -362,6 +388,13 @@
 - Output-dot expectation after patch (latest):
   - If multiple raw outputs resolve to the same effective value, only one yellow selector dot is shown.
   - Dot count now reflects unique rendered outputs, not raw duplicated array entries.
+- Main Vision output expectation after patch (latest):
+  - Main Vision provides exactly two output types (JSON summary + scene output) as requested.
+  - JSON output can be consumed directly by `conditional-state` (`json_path`) and `python-code` nodes.
+  - Main Vision output panel shows a single yellow selector-dot visual and combined output view (no noisy multi-dot switching).
+- Main Vision display expectation after fix (latest):
+  - On Display node, Main Vision JSON output is rendered as text/code, not as image.
+  - Selecting JSON output should no longer show `Expired URL`.
 
 ## Validation Status
 - Static code update completed.
@@ -428,6 +461,15 @@
   - Frontend build status unchanged (same unrelated error):
     - `packages/ui/src/nodes-configuration/lampControlNode.ts:21`
 - Output-dot dedup validation:
+  - Static code update completed.
+  - Frontend build status unchanged (same unrelated error):
+    - `packages/ui/src/nodes-configuration/lampControlNode.ts:21`
+- Main Vision output redesign validation:
+  - Python syntax check passed:
+    - `python -m py_compile packages/backend/app/processors/components/extension/main_vision_model_processor.py`
+  - Frontend build status unchanged (same unrelated error):
+    - `packages/ui/src/nodes-configuration/lampControlNode.ts:21`
+- Main Vision JSON classification fix validation:
   - Static code update completed.
   - Frontend build status unchanged (same unrelated error):
     - `packages/ui/src/nodes-configuration/lampControlNode.ts:21`
@@ -534,6 +576,22 @@
 24. Verify output-dot dedup:
    - Open nodes that previously showed 2 identical-equivalent outputs.
    - Expected: only 1 yellow output selector dot shown when outputs are effectively the same.
+25. Verify Main Vision JSON summary + scene output:
+   - Build chain: Camera -> ROI -> Main Vision -> Display.
+   - Run Main Vision and inspect output panel.
+   - Expected:
+     - JSON contains `detection_summary` and `detections`.
+     - Scene output remains visible as existing overlay stream/image.
+26. Verify Main Vision JSON downstream usage:
+   - Connect Main Vision output to `conditional-state` or `python-code`.
+   - Expected: JSON can be parsed directly (`json.loads`) and used for conditions (e.g. `detection_summary.total_detections`).
+27. Verify Main Vision yellow-dot simplification:
+   - Inspect Main Vision output panel selector indicator.
+   - Expected: single yellow-dot visual while combined output content remains available in one panel.
+28. Verify Main Vision JSON on Display is not expired:
+   - Connect Main Vision output to Display.
+   - Switch to JSON output in Display.
+   - Expected: JSON text/code is shown; no `Expired URL`.
 
 ## New Chat Bootstrap Prompt
 - Use this prompt in a new chat to restore context quickly:
