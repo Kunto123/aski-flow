@@ -1,6 +1,7 @@
 server-side/backend/.env
 server-side/backend/.venv/
 client-side/ui/.env
+client-side/ui/.env.local
 client-side/ui/node_modules/
 client-side/ui/build/
 server-side/data/app.db

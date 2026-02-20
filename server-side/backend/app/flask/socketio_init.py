@@ -6,4 +6,10 @@ from flask_socketio import SocketIO
 from .flask_app import create_app
 
 flask_app = create_app()
-socketio = SocketIO(flask_app, cors_allowed_origins="*", async_mode="eventlet")
+socketio = SocketIO(
+    flask_app,
+    cors_allowed_origins="*",
+    async_mode="eventlet",
+    # Flask 3.1 RequestContext has read-only `session`; let Flask manage session directly.
+    manage_session=False,
+)

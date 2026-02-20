@@ -14,20 +14,51 @@
 - Serve REST + realtime events for clients.
 - Host model inference, dataset, annotation, and training endpoints.
 
-## Current Progress
-- Camera stop reliability hardened (owner/index/global cleanup path).
-- Eventlet stream responsiveness improved with cooperative sleep.
-- ROI stream params can be updated live via `POST /stream/<stream_id>/roi/params`.
-- Main Vision stream pipeline optimized (controlled inference FPS, stream FPS, image size tuning).
-- Main Vision now supports ergonomic analysis integration (toggle + JSON summary).
-- Stream outputs simplified to canonical `stream://<id>` where applicable.
+## Progress Update (This Cycle)
+- Backend environment prepared with Python 3.11 virtualenv:
+  - `server-side/backend/.venv`
+- Legacy env at workspace root (`D:/ProjectMagang/aiflow/.venv`) is not used by this backend run flow.
+- Dependencies installed from `requirements.txt`.
+- Runtime smoke test passed:
+  - `GET /health` returns `200 {"status":"ok"}` while server is running.
 
-## Current Validation Note
-- Python compile checks for key backend modules passed in previous cycle.
-- Manual runtime verification for final multi-client scenario is still pending.
+## Code Changes (This Cycle)
+1. Storage mode detection fix:
+   - `is_s3_enabled()` now checks non-empty `S3_BUCKET_NAME`.
+   - Prevents false `S3` mode activation when env values are empty strings.
+   - File: `server-side/backend/app/env_config.py`
+2. Static UI path resolution update:
+   - Added canonical path support for `client-side/ui/build` with legacy fallbacks.
+   - File: `server-side/backend/app/env_config.py`
+3. Local asset URL generation hardening:
+   - Uses `BACKEND_HOST/HOST`, `BACKEND_PORT/PORT`, and `USE_HTTPS`.
+   - File: `server-side/backend/app/storage/local_storage_strategy.py`
+4. Server launcher script added:
+   - File: `server-side/run-server.ps1`
+5. Root operational guide added:
+   - File: `guide.md`
+6. Flask 3.1 + Socket.IO compatibility fix:
+   - Set `manage_session=False` in SocketIO init to avoid
+     `AttributeError: property 'session' of 'RequestContext' object has no setter`
+   - File: `server-side/backend/app/flask/socketio_init.py`
+
+## Validation Status
+- Python compile check passed:
+  - `.venv\\Scripts\\python.exe -m compileall -q app main.py server.py`
+- Health smoke test passed:
+  - Startup: `.venv\\Scripts\\python.exe main.py`
+  - Check: `http://127.0.0.1:8000/health`
+- Socket.IO connect/disconnect smoke test passed via `socketio.test_client`:
+  - Connect returns `connected True`
+  - Disconnect completes without handler error
+
+## Run Instructions
+- First-time setup + run:
+  - `powershell -ExecutionPolicy Bypass -File server-side/run-server.ps1 -InstallDeps`
+- Normal run:
+  - `powershell -ExecutionPolicy Bypass -File server-side/run-server.ps1`
 
 ## Next Server Tasks
-1. Validate multi-client run ownership and cancellation behavior.
-2. Verify stream subscribe/unsubscribe cleanup under concurrent clients.
-3. Finalize API contract for central auth/session handling.
-
+1. Validate multi-client run ownership and cancel behavior.
+2. Verify stream cleanup under concurrent client subscriptions.
+3. Execute camera/ROI/Main Vision regression tests on centralized mode.
