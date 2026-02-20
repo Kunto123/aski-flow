@@ -129,6 +129,39 @@ class Processor(ABC):
         if output is not None and isinstance(output, list) and len(output) > 0:
             if input_key is not None:
                 if input_key < 0 or input_key >= len(output):
+                    # Backward compatibility for older flows that targeted removed
+                    # "convenience URL" outputs on stream-capable nodes.
+                    processor_type = (
+                        self.processor_type.value
+                        if hasattr(self.processor_type, "value")
+                        else str(self.processor_type)
+                    )
+
+                    legacy_single_stream_nodes = {
+                        "camera-input",
+                        "image-processing",
+                        "roi",
+                    }
+                    legacy_stream_json_nodes = {
+                        "face-recognition",
+                        "ocr-reader",
+                        "qr-code-reader",
+                    }
+
+                    if (
+                        len(output) == 1
+                        and input_key == 1
+                        and processor_type in legacy_single_stream_nodes
+                    ):
+                        return output[0]
+
+                    if (
+                        len(output) == 2
+                        and input_key == 2
+                        and processor_type in legacy_stream_json_nodes
+                    ):
+                        return output[1]
+
                     logging.warning(
                         f"Index {input_key} out of bounds for output of size {len(output)}."
                     )

@@ -38,10 +38,8 @@ class CameraInputProcessor(ContextAwareProcessor):
             owner_name=self.name,
         )
 
-        return [
-            f"stream://{self.stream_id}",
-            manager.build_mjpeg_url(self.stream_id),
-        ]
+        # Single canonical output: downstream and UI can render from stream ref directly.
+        return [f"stream://{self.stream_id}"]
 
     def cancel(self):
         if self.stream_id:
