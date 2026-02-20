@@ -6,7 +6,7 @@
 
 ## Last Updated
 - Date: 2026-02-20
-- Scope: Main Vision display fix (prevent JSON being misclassified as stream URL / Expired URL).
+- Scope: Main Vision ergonomic-check integration (toggle ON/OFF + skeleton overlay + risk JSON).
 
 ## User Goal
 - Use `ai-flow-main.zip` as reference base.
@@ -33,6 +33,7 @@
 - Output indicator dedup patch is implemented and awaiting runtime confirmation.
 - Main Vision JSON summary/output-view patch is implemented and awaiting runtime confirmation.
 - Main Vision JSON render classification fix is implemented and awaiting runtime confirmation.
+- Main Vision ergonomic-check integration patch is implemented and awaiting runtime confirmation.
 
 ## Reference Check
 - `d:/ProjectMagang/aiflow/ai-flow-main.zip` extracted to `d:/ProjectMagang/aiflow/ai-flow-main/ai-flow-main`.
@@ -93,6 +94,9 @@
 - Main Vision display error root cause (latest):
   - Output type detection treated any string containing `/stream/` as stream image URL.
   - Main Vision JSON payload contains `predictions_url` with `/stream/...`, so JSON was wrongly rendered as image and showed `Expired URL`.
+- Main Vision ergonomic scope root cause (latest):
+  - Existing `ergonomic-check` node was still dummy placeholder and not integrated with runtime detection output.
+  - User needs ergonomic analysis attached directly to `main-vision-model` so one node can output both detection state and posture-injury risk state.
 
 ## Changes Implemented
 1. Backend stream manager:
@@ -326,6 +330,28 @@
    - Prevents JSON text containing `/stream/` substring from being treated as image output.
    - File:
      - `packages/ui/src/components/nodes/node-output/outputUtils.ts`
+31. Main Vision ergonomic-check integration (latest request):
+   - Added ergonomic posture analysis into `main-vision-model` with ON/OFF control:
+     - `enable_ergonomic_check` (switch)
+     - `ergonomic_pose_model_path` (default `models/yolov8n-pose.pt`)
+     - `ergonomic_min_keypoint_conf` (default `0.35`)
+   - Backend `main-vision-model` now, when enabled:
+     - runs pose inference (YOLO pose model),
+     - computes ergonomic risk summary per person (`risk_score`, `risk_level`, issues, pose label),
+     - overlays skeleton + ergonomic risk label on output frame,
+     - injects ergonomic JSON object into output[0] payload.
+   - Added reusable ergonomic utilities:
+     - `assess_ergonomic_risk(...)`
+     - `draw_skeleton_overlay(...)`
+   - Added Ultralytics runtime pose helper:
+     - `predict_pose(...)`
+   - Files:
+     - `packages/backend/app/processors/components/extension/main_vision_model_processor.py`
+     - `packages/backend/app/vision/ultralytics_runtime.py`
+     - `packages/backend/app/vision/ergonomic_utils.py`
+     - `packages/backend/app/vision/__init__.py`
+     - `packages/ui/src/nodes-configuration/mainVisionModelNode.ts`
+     - `packages/ui/src/components/nodes/GenericNode.tsx`
 
 ## Current Behavior After Patch
 - When a camera node is removed/cleared (including keyboard delete path), UI now attempts:
@@ -395,6 +421,11 @@
 - Main Vision display expectation after fix (latest):
   - On Display node, Main Vision JSON output is rendered as text/code, not as image.
   - Selecting JSON output should no longer show `Expired URL`.
+- Main Vision ergonomic expectation after patch (latest):
+  - Ergonomic analysis can be toggled ON/OFF directly from Main Vision node.
+  - When ON, overlay output includes person skeleton and ergonomic risk label.
+  - JSON output includes ergonomic summary + per-person risk details for downstream `conditional-state` / `python-code` usage.
+  - If pose model file is missing locally, detection still runs and ergonomic JSON includes error status instead of crashing node execution.
 
 ## Validation Status
 - Static code update completed.
@@ -471,6 +502,11 @@
     - `packages/ui/src/nodes-configuration/lampControlNode.ts:21`
 - Main Vision JSON classification fix validation:
   - Static code update completed.
+  - Frontend build status unchanged (same unrelated error):
+    - `packages/ui/src/nodes-configuration/lampControlNode.ts:21`
+- Main Vision ergonomic integration validation:
+  - Python syntax check passed:
+    - `python -m py_compile packages/backend/app/processors/components/extension/main_vision_model_processor.py packages/backend/app/vision/ultralytics_runtime.py packages/backend/app/vision/ergonomic_utils.py packages/backend/app/vision/__init__.py`
   - Frontend build status unchanged (same unrelated error):
     - `packages/ui/src/nodes-configuration/lampControlNode.ts:21`
 
@@ -592,6 +628,15 @@
    - Connect Main Vision output to Display.
    - Switch to JSON output in Display.
    - Expected: JSON text/code is shown; no `Expired URL`.
+29. Verify Main Vision ergonomic ON/OFF behavior:
+   - Build chain: Camera -> Main Vision -> Display.
+   - Run with `enable_ergonomic_check = OFF`.
+   - Expected: output behaves like regular detection (no skeleton, `ergonomic.enabled=false` in JSON).
+   - Turn `enable_ergonomic_check = ON` and rerun.
+   - Expected: skeleton + ergonomic label drawn on person; JSON contains `ergonomic.risk_summary` and `ergonomic.people[*].assessment`.
+30. Verify local pose model fallback behavior:
+   - Set `enable_ergonomic_check = ON` with missing pose model path.
+   - Expected: node still returns detection output; JSON ergonomic section has `status=error` with message about missing model (no hard crash).
 
 ## New Chat Bootstrap Prompt
 - Use this prompt in a new chat to restore context quickly:
