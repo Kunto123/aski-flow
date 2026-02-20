@@ -13,6 +13,12 @@
 - Python 3.11 available (`py -3.11`)
 - Node.js + npm installed
 
+Quick check:
+```powershell
+node -v
+npm -v
+```
+
 ## 1. Run Backend (Server)
 Open terminal at:
 - `D:\ProjectMagang\aiflow\aski-flow`
@@ -104,6 +110,9 @@ powershell -ExecutionPolicy Bypass -File server-side/run-server.ps1 -InstallDeps
 ```powershell
 powershell -ExecutionPolicy Bypass -File client-side/run-client.ps1 -InstallDeps
 ```
+- `npm` not recognized:
+  - Install Node.js LTS on client PC, then reopen PowerShell.
+  - Ensure `C:\Program Files\nodejs\` is in `PATH`.
 - Desktop window blank:
   - Fixed in latest launcher/build config.
   - If still happens on old checkout, run:
