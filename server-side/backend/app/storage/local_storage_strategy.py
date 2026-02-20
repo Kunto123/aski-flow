@@ -32,8 +32,11 @@ class LocalStorageStrategy(StorageStrategy):
         return self.get_url(secure_name)
 
     def get_url(self, filename: str) -> str:
-        port = os.getenv("PORT")
-        return f"http://localhost:{port}/asset/{filename}"
+        host = os.getenv("BACKEND_HOST") or os.getenv("HOST") or "localhost"
+        port = os.getenv("BACKEND_PORT") or os.getenv("PORT") or "8000"
+        use_https = (os.getenv("USE_HTTPS") or "false").strip().lower() == "true"
+        protocol = "https" if use_https else "http"
+        return f"{protocol}://{host}:{port}/asset/{filename}"
 
     def get_file(self, filename: str) -> bytes:
         secure_name = secure_filename(filename)

@@ -42,10 +42,28 @@ def get_static_folder() -> str:
     if getattr(sys, "frozen", False):
         base_path = sys._MEIPASS
         build_dir = os.path.join(base_path, "build")
-    else:
-        base_path = os.path.dirname(os.path.abspath(__file__))
-        build_dir = os.path.join(base_path, "..", "..", "ui", "build")
-    return build_dir
+        return build_dir
+
+    # Preferred layout after repository restructuring:
+    #   <repo>/client-side/ui/build
+    # Keep legacy fallbacks so older layouts still work.
+    current_file_dir = os.path.dirname(os.path.abspath(__file__))
+    candidate_paths = [
+        os.path.abspath(
+            os.path.join(current_file_dir, "..", "..", "..", "client-side", "ui", "build")
+        ),
+        os.path.abspath(os.path.join(current_file_dir, "..", "..", "ui", "build")),
+        os.path.abspath(
+            os.path.join(current_file_dir, "..", "..", "..", "packages", "ui", "build")
+        ),
+    ]
+
+    for candidate in candidate_paths:
+        if os.path.isdir(candidate):
+            return candidate
+
+    # Default to the new canonical path even if it does not exist yet.
+    return candidate_paths[0]
 
 
 def is_cloud_env() -> bool:
@@ -102,4 +120,6 @@ def is_cloud_features_enabled() -> bool:
 
 
 def is_s3_enabled() -> bool:
-    return os.getenv("S3_AWS_ACCESS_KEY_ID") is not None
+    # Enable S3 only if bucket is explicitly configured.
+    # This avoids false positives when env vars exist but are empty strings.
+    return bool((os.getenv("S3_BUCKET_NAME") or "").strip())

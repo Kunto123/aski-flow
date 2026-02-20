@@ -12,7 +12,7 @@ const TabHeader = ({ onToggleSidebar }: TabHeaderProps) => {
   );
 
   const logoSrc = useMemo(() => {
-    return "/img/aski_logo.png";
+    return `${import.meta.env.BASE_URL}img/aski_logo.png`;
   }, []);
 
   return (

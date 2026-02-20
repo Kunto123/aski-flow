@@ -1,4 +1,9 @@
-export type SectionType = "models" | "image-generation" | "tools" | "input";
+export type SectionType =
+  | "models"
+  | "image-generation"
+  | "tools"
+  | "input"
+  | "output";
 export type CategoryType = "input" | "processing" | "output";
 export type FieldType =
   | "input"
