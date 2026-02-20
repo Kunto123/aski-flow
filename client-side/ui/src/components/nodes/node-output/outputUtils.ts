@@ -1,6 +1,23 @@
 import { OutputType } from "../../../nodes-configuration/types";
 import { getRestApiUrl } from "../../../config/config";
 
+const isLocalOrAnyHost = (host: string) => {
+  const normalized = (host || "").toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    normalized === "0.0.0.0" ||
+    normalized === "::" ||
+    normalized === "[::]"
+  );
+};
+
+const isBackendMediaPath = (path: string) => {
+  if (!path) return false;
+  return path.startsWith("/stream/") || path.startsWith("/asset/") || path.startsWith("/image/");
+};
+
 export const getFileExtension = (url: string) => {
   const extensionMatch = url.match(/\.([0-9a-z]+)(?:[\?#]|$)/i);
   return extensionMatch ? extensionMatch[1] : "";
@@ -39,10 +56,8 @@ export const normalizeStreamOutputUrl = (url: string) => {
       if (typeof window === "undefined") return configured.origin;
 
       const browserHost = window.location.hostname;
-      const isLocalHost = (host: string) =>
-        host === "localhost" || host === "127.0.0.1" || host === "::1";
 
-      if (browserHost && !isLocalHost(browserHost) && isLocalHost(configured.hostname)) {
+      if (browserHost && !isLocalOrAnyHost(browserHost) && isLocalOrAnyHost(configured.hostname)) {
         configured.hostname = browserHost;
       }
 
@@ -52,36 +67,36 @@ export const normalizeStreamOutputUrl = (url: string) => {
     }
   };
 
-  const rewriteLocalhostStreamUrl = (rawUrl: string) => {
+  const rewriteBackendMediaUrl = (rawUrl: string) => {
     try {
       const parsed = new URL(rawUrl);
-      if (!parsed.pathname.includes("/stream/")) return rawUrl;
-      if (typeof window === "undefined") return rawUrl;
+      if (!isBackendMediaPath(parsed.pathname)) return rawUrl;
 
-      const browserHost = window.location.hostname;
-      const isLocalHost = (host: string) =>
-        host === "localhost" || host === "127.0.0.1" || host === "::1";
+      const apiOrigin = new URL(resolveApiOrigin());
+      if (!isLocalOrAnyHost(parsed.hostname)) return rawUrl;
 
-      if (
-        browserHost &&
-        !isLocalHost(browserHost) &&
-        isLocalHost(parsed.hostname)
-      ) {
-        parsed.hostname = browserHost;
-        return parsed.toString();
-      }
+      parsed.protocol = apiOrigin.protocol;
+      parsed.hostname = apiOrigin.hostname;
+      parsed.port = apiOrigin.port;
+      return parsed.toString();
     } catch {
       return rawUrl;
     }
+  };
 
-    return rawUrl;
+  const absolutizeRelativeBackendMediaUrl = (rawUrl: string) => {
+    if (!rawUrl.startsWith("/")) return rawUrl;
+    if (!isBackendMediaPath(rawUrl)) return rawUrl;
+    return `${resolveApiOrigin()}${rawUrl}`;
   };
 
   if (url.startsWith("stream://")) {
     const streamId = url.replace("stream://", "");
     return `${resolveApiOrigin()}/stream/${streamId}.mjpg`;
   }
-  return rewriteLocalhostStreamUrl(url);
+  const rewritten = rewriteBackendMediaUrl(url);
+  if (rewritten !== url) return rewritten;
+  return absolutizeRelativeBackendMediaUrl(url);
 };
 
 const extensionToTypeMap: { [key: string]: OutputType } = {

@@ -17,6 +17,8 @@ try:
 except Exception:
     eventlet = None
 
+from app.utils.runtime_url import resolve_public_base_url
+
 
 TransformFn = Callable[[Any], Any]
 
@@ -227,10 +229,12 @@ class StreamManager:
         return os.getenv("BACKEND_PORT") or os.getenv("PORT") or "8000"
 
     def build_mjpeg_url(self, stream_id: str) -> str:
-        return f"http://localhost:{self._get_port()}/stream/{stream_id}.mjpg"
+        base_url = resolve_public_base_url(default_port=self._get_port())
+        return f"{base_url}/stream/{stream_id}.mjpg"
 
     def build_predictions_url(self, stream_id: str) -> str:
-        return f"http://localhost:{self._get_port()}/stream/{stream_id}/predictions.json"
+        base_url = resolve_public_base_url(default_port=self._get_port())
+        return f"{base_url}/stream/{stream_id}/predictions.json"
 
 
     def create_camera_stream(
