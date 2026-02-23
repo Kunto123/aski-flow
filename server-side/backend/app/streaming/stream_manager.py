@@ -13,6 +13,11 @@ except Exception:
     cv2 = None
 
 try:
+    import numpy as np
+except Exception:
+    np = None
+
+try:
     import eventlet
 except Exception:
     eventlet = None
@@ -46,6 +51,8 @@ class StreamState:
     camera_height: Optional[int] = None
     camera_fps: Optional[float] = None
     camera_backend: Optional[str] = None
+    camera_transport: Optional[str] = None
+    client_session_id: Optional[str] = None
     latest_frame: Optional[Any] = None
     latest_jpeg: Optional[bytes] = None
     latest_predictions: Dict[str, Any] = field(default_factory=dict)
@@ -136,6 +143,8 @@ class StreamManager:
                         "has_latest_frame": state.latest_frame is not None,
                         "has_latest_jpeg": state.latest_jpeg is not None,
                         "last_error": state.last_error,
+                        "camera_transport": state.camera_transport,
+                        "client_session_id": state.client_session_id,
                         "runtime_param_keys": sorted(list((state.runtime_params or {}).keys())),
                     }
                 )
@@ -211,12 +220,26 @@ class StreamManager:
 
         return True
 
-    def _find_camera_streams_by_index(self, camera_index: int) -> List[StreamState]:
+    def _find_camera_streams_by_index(
+        self,
+        camera_index: int,
+        *,
+        camera_transport: Optional[str] = None,
+        client_session_id: Optional[str] = None,
+    ) -> List[StreamState]:
         with self._registry_lock:
             states = [
                 st
                 for st in self._streams.values()
-                if st.source_type == "camera" and st.camera_index == int(camera_index)
+                if st.source_type == "camera"
+                and st.camera_index == int(camera_index)
+                and (
+                    camera_transport is None
+                    or (st.camera_transport or "server") == camera_transport
+                )
+                and (
+                    client_session_id is None or st.client_session_id == client_session_id
+                )
             ]
         states.sort(key=lambda s: s.created_at, reverse=True)
         return states
@@ -261,7 +284,10 @@ class StreamManager:
         # That previously caused old camera streams to stay alive (and keep the device locked)
         # until idle timeouts kicked in. To avoid camera "mati/nyala" loops, we reuse the
         # existing active camera stream for the same camera_index whenever possible.
-        candidates = self._find_camera_streams_by_index(int(camera_index))
+        candidates = self._find_camera_streams_by_index(
+            int(camera_index),
+            camera_transport="server",
+        )
 
         reusable: Optional[StreamState] = None
         for st in candidates:
@@ -332,6 +358,7 @@ class StreamManager:
             camera_height=int(height) if height is not None else None,
             camera_fps=float(fps) if fps is not None else None,
             camera_backend=backend_name or "default",
+            camera_transport="server",
             # Stop camera if nobody is consuming frames anymore.
             # Default is intentionally NOT too aggressive because a browser refresh
             # briefly disconnects MJPEG clients and can otherwise cause visible
@@ -361,6 +388,156 @@ class StreamManager:
             backend=backend_name or "default",
         )
         thread.start()
+        return stream_id
+
+    def create_client_camera_stream(
+        self,
+        client_session_id: str,
+        camera_index: int = 0,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        fps: Optional[float] = None,
+        owner_name: Optional[str] = None,
+    ) -> str:
+        client_session_id = str(client_session_id or "").strip()
+        if not client_session_id:
+            raise ValueError("client_session_id is required for client camera streams")
+
+        candidates = self._find_camera_streams_by_index(
+            int(camera_index),
+            camera_transport="client",
+            client_session_id=client_session_id,
+        )
+
+        reusable: Optional[StreamState] = None
+        for st in candidates:
+            if not st.active or st.stop_event.is_set():
+                continue
+            if self._camera_config_matches(st, width, height, fps, "client"):
+                reusable = st
+                break
+
+        if reusable is not None:
+            for st in candidates:
+                if st.stream_id == reusable.stream_id:
+                    continue
+                try:
+                    self.stop_stream(st.stream_id, reason="dedupe_client_camera")
+                except Exception:
+                    pass
+
+            with reusable.lock:
+                if owner_name:
+                    reusable.owner_name = owner_name
+                    reusable.owner_names = set([owner_name])
+                reusable.last_access_at = time.time()
+
+            self._debug_event(
+                "reuse_client_camera_stream",
+                stream_id=reusable.stream_id,
+                owner_name=owner_name,
+                client_session_id=client_session_id,
+                camera_index=camera_index,
+                width=width,
+                height=height,
+                fps=fps,
+            )
+            return reusable.stream_id
+
+        for st in candidates:
+            try:
+                self.stop_stream(st.stream_id, reason="replace_client_camera")
+            except Exception:
+                pass
+
+        stream_id = self._new_stream_id("cam")
+        state = StreamState(
+            stream_id=stream_id,
+            source_type="camera",
+            owner_name=owner_name,
+            owner_names=set([owner_name]) if owner_name else set(),
+            camera_index=int(camera_index),
+            camera_width=int(width) if width is not None else None,
+            camera_height=int(height) if height is not None else None,
+            camera_fps=float(fps) if fps is not None else None,
+            camera_backend="client",
+            camera_transport="client",
+            client_session_id=client_session_id,
+            idle_timeout_sec=float(os.getenv("ASKI_CLIENT_CAMERA_IDLE_TIMEOUT_SEC", "30")),
+        )
+
+        with self._registry_lock:
+            self._streams[stream_id] = state
+
+        self._debug_event(
+            "create_client_camera_stream",
+            stream_id=stream_id,
+            owner_name=owner_name,
+            client_session_id=client_session_id,
+            camera_index=camera_index,
+            width=width,
+            height=height,
+            fps=fps,
+        )
+        return stream_id
+
+    def ingest_client_camera_frame(
+        self,
+        *,
+        client_session_id: str,
+        camera_index: int,
+        jpeg_bytes: bytes,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        fps: Optional[float] = None,
+        owner_name: Optional[str] = None,
+    ) -> str:
+        if cv2 is None or np is None:
+            raise RuntimeError(
+                "opencv-python and numpy are required for client camera frame ingestion"
+            )
+
+        if not jpeg_bytes:
+            raise ValueError("jpeg_bytes is required")
+
+        stream_id = self.create_client_camera_stream(
+            client_session_id=client_session_id,
+            camera_index=int(camera_index),
+            width=width,
+            height=height,
+            fps=fps,
+            owner_name=owner_name,
+        )
+        state = self.get_stream(stream_id)
+        if state is None:
+            raise RuntimeError("Client camera stream not found after creation")
+
+        frame_buffer = np.frombuffer(jpeg_bytes, dtype=np.uint8)
+        frame = cv2.imdecode(frame_buffer, cv2.IMREAD_COLOR)
+        if frame is None:
+            raise ValueError("Invalid JPEG frame")
+
+        now = time.time()
+        with state.lock:
+            if width is not None:
+                state.camera_width = int(width)
+            if height is not None:
+                state.camera_height = int(height)
+            if fps is not None:
+                state.camera_fps = float(fps)
+            state.latest_frame = frame
+            state.latest_jpeg = bytes(jpeg_bytes)
+            state.frames_produced += 1
+            state.last_frame_at = now
+            state.last_access_at = now
+
+        self._debug_event(
+            "ingest_client_camera_frame",
+            stream_id=stream_id,
+            client_session_id=client_session_id,
+            camera_index=int(camera_index),
+            bytes_len=len(jpeg_bytes),
+        )
         return stream_id
 
     def create_transform_stream(
@@ -899,12 +1076,16 @@ class StreamManager:
         )
         return stopped
 
-    def stop_camera_streams(self) -> int:
+    def stop_camera_streams(self, client_session_id: Optional[str] = None) -> int:
         with self._registry_lock:
             camera_stream_ids = [
                 stream_id
                 for stream_id, state in self._streams.items()
                 if state.source_type == "camera"
+                and (
+                    client_session_id is None
+                    or state.client_session_id == client_session_id
+                )
             ]
 
         stopped = 0
@@ -913,18 +1094,28 @@ class StreamManager:
                 stopped += 1
         self._debug_event(
             "stop_camera_streams",
+            client_session_id=client_session_id,
             target_ids=camera_stream_ids,
             stopped=stopped,
         )
         return stopped
 
-    def stop_camera_streams_by_index(self, camera_index: int) -> int:
+    def stop_camera_streams_by_index(
+        self,
+        camera_index: int,
+        client_session_id: Optional[str] = None,
+    ) -> int:
         camera_index = int(camera_index)
         with self._registry_lock:
             camera_stream_ids = [
                 stream_id
                 for stream_id, state in self._streams.items()
-                if state.source_type == "camera" and state.camera_index == camera_index
+                if state.source_type == "camera"
+                and state.camera_index == camera_index
+                and (
+                    client_session_id is None
+                    or state.client_session_id == client_session_id
+                )
             ]
 
         stopped = 0
@@ -934,6 +1125,7 @@ class StreamManager:
         self._debug_event(
             "stop_camera_streams_by_index",
             camera_index=camera_index,
+            client_session_id=client_session_id,
             target_ids=camera_stream_ids,
             stopped=stopped,
         )

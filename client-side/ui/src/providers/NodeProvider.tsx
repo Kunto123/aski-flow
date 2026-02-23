@@ -19,6 +19,11 @@ import {
   stopStream,
   stopStreamsByOwner,
 } from "../api/stream";
+import {
+  prewarmClientCameraPublishers,
+  stopAllClientCameraPublishers,
+  stopClientCameraPublisherByIndex,
+} from "../services/clientCameraPublishers";
 
 function extractStreamIdsFromValue(value: any): string[] {
   const streamIds = new Set<string>();
@@ -159,7 +164,7 @@ export const NodeProvider = ({
   children: ReactNode;
 }) => {
   const { t } = useTranslation("flow");
-  const { emitEvent } = useContext(SocketContext);
+  const { emitEvent, socket, connect } = useContext(SocketContext);
   const [currentNodeIdSelected, setCurrentNodeIdSelected] =
     useState<string>("");
 
@@ -186,7 +191,18 @@ export const NodeProvider = ({
         metadata: metadata,
       },
     };
-    return emitEvent(event);
+    void (async () => {
+      try {
+        await prewarmClientCameraPublishers({
+          nodes: nodesSorted,
+          socket,
+          connect,
+        });
+      } finally {
+        emitEvent(event);
+      }
+    })();
+    return true;
   };
 
   const runAllNodes = () => {
@@ -215,7 +231,17 @@ export const NodeProvider = ({
         metadata: metadata,
       },
     };
-    emitEvent(event);
+    void (async () => {
+      try {
+        await prewarmClientCameraPublishers({
+          nodes: nodesSorted,
+          socket,
+          connect,
+        });
+      } finally {
+        emitEvent(event);
+      }
+    })();
   };
 
   const hasParent = (id: string) => {
@@ -351,20 +377,27 @@ export const NodeProvider = ({
       // Clearing output should actively stop running streams instead of waiting
       // for browser refresh/idle timeout.
       void (async () => {
+        const clientSessionId = socket?.getId();
+        if (isCameraNode) {
+          stopClientCameraPublisherByIndex(nodeToUpdate.data?.camera_index, socket);
+        }
         await stopStreamsByOwner(nodeToUpdate.data?.name);
         const streamStopResults = await Promise.all(
           streamIds.map((streamId) => stopStream(streamId)),
         );
         const anyByIdStopped = streamStopResults.some(Boolean);
         const byCameraIndexStopped = isCameraNode
-          ? await stopCameraStreamsByIndex(nodeToUpdate.data?.camera_index)
+          ? await stopCameraStreamsByIndex(
+              nodeToUpdate.data?.camera_index,
+              clientSessionId,
+            )
           : false;
 
         // Only use the global camera stop as a fallback.
         // Stopping everything on every clear/remove makes webcam usage feel
         // "flaky" (stop/start loops) when the UI re-runs nodes.
         if (isCameraNode && !byCameraIndexStopped && !anyByIdStopped) {
-          await stopAllCameraStreams();
+          await stopAllCameraStreams(clientSessionId);
         }
       })();
 
@@ -392,6 +425,8 @@ export const NodeProvider = ({
     // Stop any running streams (camera + transforms) so devices/resources aren't left active
     // when users clear outputs or reset the canvas.
     void (async () => {
+      const clientSessionId = socket?.getId();
+      stopAllClientCameraPublishers(socket);
       await Promise.all(nodes.map((node) => stopStreamsByOwner(node.data?.name)));
 
       await Promise.all(
@@ -405,7 +440,7 @@ export const NodeProvider = ({
 
       // Safety-net: ensure webcam is fully released, even if tracking failed.
       // If no camera streams are active, this is a cheap no-op on the backend.
-      await stopAllCameraStreams();
+      await stopAllCameraStreams(clientSessionId);
     })();
 
     const nodesCleared = nodes.map((node) => ({
@@ -430,6 +465,10 @@ export const NodeProvider = ({
 
       // Fire-and-forget cleanup so UI deletion stays responsive.
       void (async () => {
+        const clientSessionId = socket?.getId();
+        if (isCameraNode) {
+          stopClientCameraPublisherByIndex(nodeToRemove.data?.camera_index, socket);
+        }
         // Always try owner-based stop (covers transform streams owned by the node).
         await stopStreamsByOwner(nodeToRemove.data?.name);
 
@@ -439,13 +478,16 @@ export const NodeProvider = ({
         );
         const anyByIdStopped = streamStopResults.some(Boolean);
         const byCameraIndexStopped = isCameraNode
-          ? await stopCameraStreamsByIndex(nodeToRemove.data?.camera_index)
+          ? await stopCameraStreamsByIndex(
+              nodeToRemove.data?.camera_index,
+              clientSessionId,
+            )
           : false;
 
         // For camera nodes, use the global stop as a safety-net to ensure the webcam is released.
         // Only use the global camera stop as a fallback.
         if (isCameraNode && !byCameraIndexStopped && !anyByIdStopped) {
-          await stopAllCameraStreams();
+          await stopAllCameraStreams(clientSessionId);
         }
       })();
     }
@@ -459,6 +501,8 @@ export const NodeProvider = ({
 
   const removeAll = () => {
     void (async () => {
+      const clientSessionId = socket?.getId();
+      stopAllClientCameraPublishers(socket);
       await Promise.all(nodes.map((node) => stopStreamsByOwner(node.data?.name)));
 
       await Promise.all(
@@ -470,7 +514,7 @@ export const NodeProvider = ({
         }),
       );
 
-      await stopAllCameraStreams();
+      await stopAllCameraStreams(clientSessionId);
     })();
     onUpdateNodes([], []);
   };
