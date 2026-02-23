@@ -1,8 +1,8 @@
 # Client Side Context
 
 ## Last Updated
-- Date: 2026-02-20
-- Scope: Thin desktop client for central server.
+- Date: 2026-02-23
+- Scope: Thin desktop client for central server + Main Vision model picker UX.
 
 ## Canonical Path
 - `client-side/ui`: client UI source code.
@@ -19,6 +19,8 @@
 - Frontend preview smoke test passed:
   - `http://127.0.0.1:5173` returns `200`.
 - Desktop runtime added using Electron (Windows app style client).
+- Main Vision model fields now support searchable recommendations from server-side local model files.
+- Legacy standalone `Ergonomic Check` node removed from UI node palette/registry.
 
 ## Code Changes (This Cycle)
 1. Build blocker fix:
@@ -48,11 +50,32 @@
    - `run-client.ps1` now rebuilds automatically when source files are newer than build output.
 6. Root operational guide updated:
    - File: `guide.md`
+7. Legacy ergonomic node cleanup (UI):
+   - Removed `ergonomic-check` node registration from `nodeConfig.ts`
+   - Deleted `client-side/ui/src/nodes-configuration/ergonomicCheckNode.ts`
+8. Main Vision model search dropdown (server-backed):
+   - `model_path` and `ergonomic_pose_model_path` now use autocomplete suggestions
+   - Suggestions fetched from server local model-file endpoint
+   - Files:
+     - `client-side/ui/src/hooks/useFormFields.tsx`
+     - `client-side/ui/src/api/models.ts`
+9. Canvas-scale dropdown sizing fix:
+   - Model autocomplete dropdown now renders inside node/canvas (`withinPortal: false`)
+   - Prevents oversized dropdown when node is visually scaled in flow canvas
+   - File: `client-side/ui/src/hooks/useFormFields.tsx`
+10. Model autocomplete option click fix in React Flow:
+   - Wrapped autocomplete in `nodrag/nopan` container and stopped pointer/mouse propagation
+   - Fixes suggestion list visible but not selectable due to canvas drag/pan interception
+   - File: `client-side/ui/src/hooks/useFormFields.tsx`
 
 ## Validation Status
 - Prior blocker is resolved:
   - Old issue at `lampControlNode.ts:21` (`"output"` not assignable to `SectionType`) no longer blocks build.
 - Latest build command result:
+  - `npm run build` -> success.
+- Post-model-picker update build result:
+  - `npm run build` -> success.
+- Post-clickability fix build result:
   - `npm run build` -> success.
 
 ## Run Instructions
@@ -69,6 +92,7 @@
 - ROI live param update behavior remains available.
 - Display fit/contain and no-stretch behavior remains available.
 - Main Vision 2-output UX and ergonomic toggle remain available.
+- Main Vision model path remains manually editable (autocomplete is assistive, not mandatory).
 - Output indicator dedup remains available.
 
 ## Next Client Tasks

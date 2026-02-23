@@ -13,7 +13,6 @@ import { triggerNodeConfig } from "./triggerNode";
 import { faceRecognitionNodeConfig } from "./faceRecognitionNode";
 import { qrCodeReaderNodeConfig } from "./qrCodeReaderNode";
 import { ocrReaderNodeConfig } from "./ocrReaderNode";
-import { ergonomicCheckNodeConfig } from "./ergonomicCheckNode";
 import { lampControlNodeConfig } from "./lampControlNode";
 
 export const nodeConfigs: { [key: string]: NodeConfig | undefined } = {
@@ -30,7 +29,6 @@ export const nodeConfigs: { [key: string]: NodeConfig | undefined } = {
   "face-recognition": faceRecognitionNodeConfig,
   "qr-code-reader": qrCodeReaderNodeConfig,
   "ocr-reader": ocrReaderNodeConfig,
-  "ergonomic-check": ergonomicCheckNodeConfig,
   "lamp-control": lampControlNodeConfig,
   // add other configs here...
 };

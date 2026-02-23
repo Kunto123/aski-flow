@@ -1,8 +1,8 @@
 # AI Flow Context Log
 
 ## Last Updated
-- Date: 2026-02-20
-- Focus: Runtime restored for central server + many clients layout.
+- Date: 2026-02-23
+- Focus: Main Vision model picker UX from server + legacy ergonomic node cleanup.
 
 ## Current Goal
 - Keep architecture mode `Central Server + Many Clients`.
@@ -73,6 +73,34 @@
 - Root run guide added:
   - `guide.md`
   - Includes env clarification (`server-side/backend/.venv` is canonical for backend runtime).
+- Legacy standalone ergonomic node removed (already integrated into Main Vision):
+  - UI node config deleted: `client-side/ui/src/nodes-configuration/ergonomicCheckNode.ts`
+  - Legacy backend dummy processor deleted: `server-side/backend/app/processors/components/extension/ergonomic_check_processor.py`
+  - Node registry cleanup: `client-side/ui/src/nodes-configuration/nodeConfig.ts`
+- Main Vision model path fields now use searchable server-backed recommendations:
+  - `model_path` and `ergonomic_pose_model_path` fetch local model files from server
+  - UI implementation: `client-side/ui/src/hooks/useFormFields.tsx`
+  - Client API helper: `client-side/ui/src/api/models.ts`
+- Backend local model-file discovery endpoint added (for UI recommendations):
+  - Always-available route: `GET /node/local-model-files`
+  - Compatibility route: `GET /models/local-files`
+  - Shared scanner utility: `server-side/backend/app/utils/local_model_files.py`
+- Main Vision model autocomplete dropdown now renders inside canvas (not portal):
+  - Fixes dropdown sizing/zoom mismatch when node is scaled in React Flow
+  - File: `client-side/ui/src/hooks/useFormFields.tsx`
+- Main Vision model autocomplete options made clickable inside React Flow nodes:
+  - Added `nodrag/nopan` wrapper + stopped pointer/mouse propagation on autocomplete container
+  - Prevents React Flow drag/pan from swallowing option-click selection
+  - File: `client-side/ui/src/hooks/useFormFields.tsx`
+- `ppe.pt` capability check (server local model):
+  - Embedded class names found in checkpoint metadata: `glasses`, `gloves`, `helmet`, `mask`, `safety-shoes`, `vest`
+  - Indicates PPE detection intent matches helmet/gloves/safety gear use case
+  - Current backend `ultralytics` runtime cannot load it directly (legacy checkpoint requires module `models.yolo`, YOLOv5-style custom pickle)
+- `ppe.pt` re-export attempt to Ultralytics-compatible `.pt`:
+  - Legacy YOLOv5 checkpoint successfully loaded using YOLOv5 repo code (with `weights_only=False`)
+  - Class map confirmed: `{glasses, gloves, helmet, mask, safety-shoes, vest}`
+  - Conversion to current `ultralytics` `DetectionModel` failed due parser/head incompatibility (`Detect` args mismatch; YOLOv5 anchor head vs current Ultralytics model parser)
+  - Practical conclusion: no safe direct `.pt` forward-conversion with current runtime stack; use legacy YOLOv5 runtime support or export to another supported format (e.g. ONNX/TorchScript) instead
 
 ## Run Commands
 1. Server:
@@ -90,6 +118,7 @@
 - ROI live runtime params update via `POST /stream/<id>/roi/params`.
 - Main Vision output simplified to 2 outputs (`json` + `image`) and default `models/yolov5mu.pt`.
 - Ergonomic check integrated into Main Vision.
+- Main Vision ergonomic toggle preserved while legacy standalone node is removed.
 - Display fit/aspect and output dedup behavior preserved.
 - Reactive auto-run guard and erase-output reliability preserved.
 
