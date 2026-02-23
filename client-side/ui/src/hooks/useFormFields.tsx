@@ -2,9 +2,9 @@ import { useTranslation } from "react-i18next";
 import { OptionSelector, OptionButton } from "../components/nodes/Node.styles";
 import InputNameBar from "../components/nodes/node-button/InputNameBar";
 import { Field } from "../nodes-configuration/types";
-import React, { useCallback, useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { generateIdForHandle } from "../utils/flowUtils";
-import { Autocomplete, Pill, PillsInput, Select, Slider } from "@mantine/core";
+import { Autocomplete, Pill, PillsInput, Slider } from "@mantine/core";
 import { Switch } from "@mantine/core";
 import NodeField from "../components/nodes/node-input/NodeField";
 import SelectAutocomplete from "../components/selectors/SelectAutocomplete";
@@ -16,6 +16,7 @@ import { KeyValueInputList } from "../components/nodes/node-input/KeyValueInputL
 import ImageMaskCreatorFieldFlowAware from "../components/nodes/node-input/ImageMaskCreatorFieldFlowAware";
 import { evaluateCondition } from "../utils/evaluateConditions";
 import FileUploadField from "../components/nodes/node-input/FileUploadField";
+import { getServerModelFiles, ServerModelFile } from "../api/models";
 export interface DisplayParams {
   showHandles?: boolean;
   showLabels?: boolean;
@@ -36,6 +37,9 @@ export function useFormFields(
   const isTouchDevice = useIsTouchDevice();
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [serverModelFiles, setServerModelFiles] = useState<ServerModelFile[]>([]);
+  const [isLoadingServerModelFiles, setIsLoadingServerModelFiles] =
+    useState(false);
 
   const getFields = () => {
     let fields;
@@ -47,10 +51,39 @@ export function useFormFields(
     return fields;
   };
 
+  const fields = getFields();
+  const isMainVisionModelNode = data?.processorType === "main-vision-model";
+
   useEffect(() => {
     if (!setDefaultOptions) return;
     setDefaultOptions();
   }, []);
+
+  useEffect(() => {
+    if (!isMainVisionModelNode) return;
+
+    let isCancelled = false;
+    setIsLoadingServerModelFiles(true);
+
+    getServerModelFiles()
+      .then((response) => {
+        if (isCancelled) return;
+        setServerModelFiles(Array.isArray(response?.files) ? response.files : []);
+      })
+      .catch((error) => {
+        if (isCancelled) return;
+        console.error("Error fetching server model files:", error);
+        setServerModelFiles([]);
+      })
+      .finally(() => {
+        if (isCancelled) return;
+        setIsLoadingServerModelFiles(false);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isMainVisionModelNode]);
 
   const handleEventNodeDataChange = (
     event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
@@ -122,10 +155,82 @@ export function useFormFields(
     );
   }
 
+  function getServerModelAutocompleteOptions(fieldName: string): string[] {
+    const preferPose = fieldName === "ergonomic_pose_model_path";
+
+    const rankKind = (kind?: string) => {
+      const normalized = (kind ?? "").toLowerCase();
+      if (preferPose) {
+        return normalized === "pose" ? 0 : 1;
+      }
+      return normalized === "pose" ? 1 : 0;
+    };
+
+    const rankExt = (ext?: string) => ((ext ?? "").toLowerCase() === ".pt" ? 0 : 1);
+
+    const sorted = [...serverModelFiles].sort((a, b) => {
+      const kindDelta = rankKind(a.kind) - rankKind(b.kind);
+      if (kindDelta !== 0) return kindDelta;
+
+      const extDelta = rankExt(a.extension) - rankExt(b.extension);
+      if (extDelta !== 0) return extDelta;
+
+      const nameDelta = (a.basename ?? "").localeCompare(b.basename ?? "");
+      if (nameDelta !== 0) return nameDelta;
+
+      return (a.path ?? "").localeCompare(b.path ?? "");
+    });
+
+    return sorted.map((item) => item.path);
+  }
+
   const renderField = (field: Field, isLoopField?: boolean) => {
     if (isLoopField) {
       return renderList(data, field);
     }
+
+    const isServerModelAutocompleteField =
+      isMainVisionModelNode &&
+      (field.name === "model_path" || field.name === "ergonomic_pose_model_path");
+
+    if (isServerModelAutocompleteField) {
+      const options = getServerModelAutocompleteOptions(field.name);
+      const basePlaceholder = field.placeholder
+        ? String(t(field.placeholder))
+        : "";
+      const placeholder =
+        isLoadingServerModelFiles && options.length === 0
+          ? "Loading model list from server..."
+          : basePlaceholder;
+
+      return (
+        <div
+          className="nowheel nodrag nopan w-full"
+          onMouseDown={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <Autocomplete
+            className={`nowheel ${!isTouchDevice ? "nodrag" : ""}`}
+            value={String(data[field.name] ?? "")}
+            onChange={(value) => handleNodeFieldChange(field.name, value)}
+            data={options}
+            placeholder={placeholder}
+            limit={50}
+            maxDropdownHeight={280}
+            comboboxProps={{
+              withinPortal: false,
+              zIndex: 50,
+            }}
+          />
+          <p className="mt-1 px-1 text-xs text-slate-300">
+            {isLoadingServerModelFiles
+              ? "Loading model list from server..."
+              : `Server models: ${serverModelFiles.length} found`}
+          </p>
+        </div>
+      );
+    }
+
     switch (field.type) {
       case "textToDisplay":
         return <p>{field.defaultValue}</p>;
@@ -373,8 +478,6 @@ export function useFormFields(
         );
     }
   };
-
-  const fields = getFields();
 
   if (!data || !data.config || !fields) {
     return null;
