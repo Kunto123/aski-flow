@@ -6,6 +6,33 @@ from app.streaming import get_stream_manager
 stream_blueprint = Blueprint("stream_blueprint", __name__)
 
 
+def _get_client_session_id_from_request():
+    body = request.json if request.is_json else {}
+    return (
+        request.headers.get("X-Aski-Client-Session-Id")
+        or request.args.get("client_session_id")
+        or (body or {}).get("client_session_id")
+    )
+
+
+def _parse_optional_int(raw, field_name: str):
+    if raw is None or raw == "":
+        return None
+    try:
+        return int(raw)
+    except Exception:
+        raise ValueError(f"{field_name} must be an integer")
+
+
+def _parse_optional_float(raw, field_name: str):
+    if raw is None or raw == "":
+        return None
+    try:
+        return float(raw)
+    except Exception:
+        raise ValueError(f"{field_name} must be a number")
+
+
 @stream_blueprint.route("/stream/<stream_id>.mjpg", methods=["GET"])
 def stream_mjpeg(stream_id: str):
     manager = get_stream_manager()
@@ -119,10 +146,67 @@ def create_camera_stream():
     }
 
 
+@stream_blueprint.route("/stream/client-camera/frame", methods=["POST"])
+def ingest_client_camera_frame():
+    client_session_id = str(_get_client_session_id_from_request() or "").strip()
+    if not client_session_id:
+        return {"ingested": False, "error": "client_session_id is required"}, 400
+
+    try:
+        camera_index = _parse_optional_int(
+            request.args.get("camera_index") or request.headers.get("X-Aski-Camera-Index"),
+            "camera_index",
+        )
+        if camera_index is None:
+            camera_index = 0
+        width = _parse_optional_int(
+            request.args.get("width") or request.headers.get("X-Aski-Camera-Width"),
+            "width",
+        )
+        height = _parse_optional_int(
+            request.args.get("height") or request.headers.get("X-Aski-Camera-Height"),
+            "height",
+        )
+        fps = _parse_optional_float(
+            request.args.get("fps") or request.headers.get("X-Aski-Camera-Fps"),
+            "fps",
+        )
+    except ValueError as e:
+        return {"ingested": False, "error": str(e)}, 400
+
+    frame_bytes = request.get_data(cache=False)
+    if not frame_bytes:
+        return {"ingested": False, "error": "JPEG body is required"}, 400
+
+    manager = get_stream_manager()
+    try:
+        stream_id = manager.ingest_client_camera_frame(
+            client_session_id=client_session_id,
+            camera_index=int(camera_index),
+            jpeg_bytes=frame_bytes,
+            width=width,
+            height=height,
+            fps=fps,
+        )
+    except ValueError as e:
+        return {"ingested": False, "error": str(e)}, 400
+    except RuntimeError as e:
+        return {"ingested": False, "error": str(e)}, 500
+
+    return {
+        "ingested": True,
+        "stream_id": stream_id,
+        "stream_ref": f"stream://{stream_id}",
+        "mjpeg_url": manager.build_mjpeg_url(stream_id),
+        "predictions_url": manager.build_predictions_url(stream_id),
+    }
+
+
 @stream_blueprint.route("/stream/camera/stop", methods=["POST"])
 def stop_all_camera_streams():
     manager = get_stream_manager()
-    stopped_count = manager.stop_camera_streams()
+    client_session_id = _get_client_session_id_from_request()
+    stopped_count = manager.stop_camera_streams(client_session_id=client_session_id)
     return {"stopped": stopped_count > 0, "stopped_count": stopped_count}
 
 
@@ -138,11 +222,16 @@ def stop_camera_streams_by_index():
         return {"stopped": False, "error": "camera_index must be an integer"}, 400
 
     manager = get_stream_manager()
-    stopped_count = manager.stop_camera_streams_by_index(camera_index)
+    client_session_id = _get_client_session_id_from_request()
+    stopped_count = manager.stop_camera_streams_by_index(
+        camera_index,
+        client_session_id=client_session_id,
+    )
     return {
         "stopped": stopped_count > 0,
         "stopped_count": stopped_count,
         "camera_index": camera_index,
+        "client_session_id": client_session_id,
     }
 
 

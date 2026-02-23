@@ -23,9 +23,13 @@ export async function stopStreamsByOwner(nodeName: string): Promise<boolean> {
   }
 }
 
-export async function stopAllCameraStreams(): Promise<boolean> {
+export async function stopAllCameraStreams(
+  clientSessionId?: string,
+): Promise<boolean> {
   try {
-    const response = await client.post("/stream/camera/stop");
+    const response = await client.post("/stream/camera/stop", {
+      client_session_id: clientSessionId,
+    });
     return !!response?.data?.stopped;
   } catch (error) {
     console.error("Failed to stop all camera streams:", error);
@@ -35,6 +39,7 @@ export async function stopAllCameraStreams(): Promise<boolean> {
 
 export async function stopCameraStreamsByIndex(
   cameraIndex: number | string,
+  clientSessionId?: string,
 ): Promise<boolean> {
   if (cameraIndex === undefined || cameraIndex === null || cameraIndex === "") {
     return false;
@@ -42,6 +47,7 @@ export async function stopCameraStreamsByIndex(
   try {
     const response = await client.post("/stream/camera/by-index/stop", {
       camera_index: Number(cameraIndex),
+      client_session_id: clientSessionId,
     });
     return !!response?.data?.stopped;
   } catch (error) {

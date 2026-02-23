@@ -7,6 +7,7 @@ import {
   useImperativeHandle,
   Ref,
   forwardRef,
+  useContext,
 } from "react";
 import {
   Node,
@@ -41,12 +42,16 @@ import {
 } from "../sockets/flowEventTypes";
 import { useVisibility } from "../providers/VisibilityProvider";
 import { FlowMetadata } from "../layout/main-layout/AppLayout";
+import { SocketContext } from "../providers/SocketProvider";
 import {
   stopAllCameraStreams,
   stopCameraStreamsByIndex,
   stopStream,
   stopStreamsByOwner,
 } from "../api/stream";
+import {
+  stopClientCameraPublisherByIndex,
+} from "../services/clientCameraPublishers";
 
 function extractStreamIdsFromValue(value: any): string[] {
   const streamIds = new Set<string>();
@@ -125,6 +130,7 @@ const Flow = forwardRef((props: FlowProps, ref) => {
   const [errorCount, setErrorCount] = useState<number>(0);
 
   const { getElement } = useVisibility();
+  const { socket } = useContext(SocketContext);
   const minimap = getElement("minimap");
 
   useEffect(() => {
@@ -316,6 +322,7 @@ const Flow = forwardRef((props: FlowProps, ref) => {
   const onNodesDelete: OnNodesDelete = useCallback((removedNodes) => {
     if (!removedNodes?.length) return;
     void (async () => {
+      const clientSessionId = socket?.getId();
       await Promise.all(
         removedNodes.map(async (node) => {
           const outputStreamIds = extractStreamIdsFromValue(node.data?.outputData);
@@ -323,22 +330,28 @@ const Flow = forwardRef((props: FlowProps, ref) => {
           const streamIds = [...new Set([...outputStreamIds, ...configStreamIds])];
           const isCameraNode = isLikelyCameraNode(node);
 
+          if (isCameraNode) {
+            stopClientCameraPublisherByIndex(node.data?.camera_index, socket);
+          }
           await stopStreamsByOwner(node.data?.name);
           const streamStopResults = await Promise.all(
             streamIds.map((streamId) => stopStream(streamId)),
           );
           const anyByIdStopped = streamStopResults.some(Boolean);
           const byCameraIndexStopped = isCameraNode
-            ? await stopCameraStreamsByIndex(node.data?.camera_index)
+            ? await stopCameraStreamsByIndex(
+                node.data?.camera_index,
+                clientSessionId,
+              )
             : false;
 
           if (isCameraNode && !byCameraIndexStopped && !anyByIdStopped) {
-            await stopAllCameraStreams();
+            await stopAllCameraStreams(clientSessionId);
           }
         }),
       );
     })();
-  }, []);
+  }, [socket]);
   const onEdgesChange: OnEdgesChange = useCallback(
     (changes) => setEdges((eds) => applyEdgeChanges(changes, eds)),
     [setEdges],

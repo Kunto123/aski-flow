@@ -2,7 +2,7 @@
 
 ## Last Updated
 - Date: 2026-02-23
-- Focus: Main Vision model picker UX from server + legacy ergonomic node cleanup.
+- Focus: Multi-client camera source fix (client-side camera capture -> central server ingest) + scoped camera stop cleanup.
 
 ## Current Goal
 - Keep architecture mode `Central Server + Many Clients`.
@@ -101,6 +101,22 @@
   - Class map confirmed: `{glasses, gloves, helmet, mask, safety-shoes, vest}`
   - Conversion to current `ultralytics` `DetectionModel` failed due parser/head incompatibility (`Detect` args mismatch; YOLOv5 anchor head vs current Ultralytics model parser)
   - Practical conclusion: no safe direct `.pt` forward-conversion with current runtime stack; use legacy YOLOv5 runtime support or export to another supported format (e.g. ONNX/TorchScript) instead
+- Multi-client camera source fix (central server topology):
+  - `camera-input` now prefers client-scoped camera streams when flow runs from UI/desktop client (uses Socket.IO `session_id`)
+  - Backend can ingest JPEG frames from client via `POST /stream/client-camera/frame` and expose them as normal `stream://...` streams
+  - Stream manager now tracks camera transport (`server` vs `client`) and `client_session_id` for camera streams
+  - Frontend prewarms browser/Electron camera publishers before `run_node` / `process_file` so server receives client frames
+  - Camera stop endpoints now support optional `client_session_id` scoping; frontend cleanup passes socket session to avoid stopping other clients' camera streams on central server
+  - Manual test symptom reported after patch (desktop client): pressing Run gives no output and no camera permission prompt appears on client laptop
+  - Web debug fallback test symptom reported: `run-client.ps1 -Mode Web` opened `http://127.0.0.1:5173/` with `404 Not Found` (likely wrong port opened or port 5173 occupied by another process)
+  - Follow-up web-mode logs confirm Vite actually starts on `http://127.0.0.1:5173/`; launcher currently emits npm warnings because `--host/--port` args are partially parsed by npm, but Vite still binds successfully
+  - Root cause of web-mode `404`: npm strips forwarded `--host/--port` flags, leaving positional `5173`; resulting command becomes `vite --host 127.0.0.1 5173`, so Vite treats `5173` as project root path (not port), starts dev server but serves no `index.html` at `/`
+  - Browser console diagnosis in web mode: `Failed to start client camera publisher ... Browser camera API (getUserMedia) is not available` while UI is loaded from `http://192.168.137.103:3000` (HTTP LAN origin, non-secure context)
+- Confirmed workaround: web mode from `http://localhost:3000` successfully shows client camera (secure-context localhost exception works); remaining failure is isolated to desktop app/Electron runtime permissions/permission-handling path
+- Desktop app camera fix applied:
+  - Electron now installs explicit `media` permission check/request handlers for trusted local origins (`file://`, `localhost`, `127.0.0.1`)
+  - Desktop mode no longer loads built UI via `file://`; it serves `client-side/ui/build` through an internal loopback HTTP server (`127.0.0.1:<ephemeral>`) and loads that URL, ensuring secure-context camera APIs (`getUserMedia`) are available in renderer
+  - File: `client-side/ui/desktop/main.cjs`
 
 ## Run Commands
 1. Server:
@@ -124,8 +140,9 @@
 
 ## Next Focus
 1. Run integrated manual test: `Client -> Server` flow execution and live stream display.
-2. Validate multi-client concurrency (two clients connected to one central server).
-3. Continue tracking detailed side-specific updates in `server-side/CONTEXT.md` and `client-side/CONTEXT.md`.
+2. Validate multi-client concurrency (two clients connected to one central server) with both using `camera_index=0` simultaneously.
+3. Verify camera permission / device-index mapping behavior on different client laptops (browser/Electron + Windows camera permissions).
+4. Continue tracking detailed side-specific updates in `server-side/CONTEXT.md` and `client-side/CONTEXT.md`.
 
 ## New Chat Bootstrap Prompt
 - "Baca `d:/ProjectMagang/aiflow/aski-flow/CONTEXT.md`, lanjutkan task terbaru, dan pertahankan struktur `server-side` + `client-side` saja."

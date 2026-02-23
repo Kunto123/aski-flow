@@ -36,6 +36,14 @@ export class FlowSocket {
     }
   }
 
+  public isConnected(): boolean {
+    return this.socket.connected;
+  }
+
+  public getId(): string | undefined {
+    return this.socket.id;
+  }
+
   public disconnect(): void {
     if (this.socket.connected) {
       this.socket.disconnect();

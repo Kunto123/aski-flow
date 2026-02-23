@@ -17,6 +17,13 @@ class CameraInputProcessor(ContextAwareProcessor):
 
     def process(self):
         manager = get_stream_manager()
+        session_id = None
+        try:
+            context = self.get_context()
+            session_id = context.get_session_id() if context else None
+        except Exception:
+            session_id = None
+
         # IMPORTANT:
         # Do NOT stop streams by owner here.
         #
@@ -30,13 +37,24 @@ class CameraInputProcessor(ContextAwareProcessor):
         # - reuse by camera_index when possible
         # - deduplication of duplicates bound to the same device
         # So we rely on that logic for correctness and to avoid camera "mati/nyala" loops.
-        self.stream_id = manager.create_camera_stream(
+        common_kwargs = dict(
             camera_index=self.camera_index,
             width=int(self.width) if self.width else None,
             height=int(self.height) if self.height else None,
             fps=float(self.fps) if self.fps else None,
             owner_name=self.name,
         )
+
+        # When running from a connected desktop/web client, prefer a browser-captured
+        # camera stream scoped to that client's Socket.IO session instead of opening
+        # the physical camera on the central server machine.
+        if session_id:
+            self.stream_id = manager.create_client_camera_stream(
+                client_session_id=session_id,
+                **common_kwargs,
+            )
+        else:
+            self.stream_id = manager.create_camera_stream(**common_kwargs)
 
         # Single canonical output: downstream and UI can render from stream ref directly.
         return [f"stream://{self.stream_id}"]

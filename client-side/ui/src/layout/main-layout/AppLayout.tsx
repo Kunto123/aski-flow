@@ -31,6 +31,7 @@ import {
 import { useLoading } from "../../hooks/useLoading";
 import DnDSidebar from "../../components/bars/dnd-sidebar/DnDSidebar";
 import Tab from "./header/Tab";
+import { prewarmClientCameraPublishers } from "../../services/clientCameraPublishers";
 
 export interface FlowTab {
   nodes: Node[];
@@ -68,7 +69,7 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
   const [currentTab, setCurrentTab] = useState(0);
   const [refresh, setRefresh] = useState(false);
   const [showOnlyOutput, setShowOnlyOutput] = useState(false);
-  const { emitEvent, connect } = useContext(SocketContext);
+  const { emitEvent, connect, socket } = useContext(SocketContext);
   const [isRunning, setIsRunning] = useState(false);
   const [mode, setMode] = useState<ApplicationMode>("flow");
   const [selectedEdgeType, setSelectedEdgeType] = useState("default");
@@ -201,9 +202,18 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
         metadata: flowTabs.tabs[currentTab].metadata,
       },
     };
-    const success = emitEvent(event);
-
-    setIsRunning(success);
+    void (async () => {
+      try {
+        await prewarmClientCameraPublishers({
+          nodes: nodesSorted,
+          socket,
+          connect,
+        });
+      } finally {
+        const success = emitEvent(event);
+        setIsRunning(success);
+      }
+    })();
   };
 
   const handleChangeRun = (runStatus: boolean) => {
