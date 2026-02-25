@@ -88,7 +88,7 @@ class DisplayProcessor(BasicProcessor):
             outputs = []
         if len(outputs) < 2:
             if isinstance(current_value, str) and _looks_like_media_reference(current_value):
-                return "OCR text output is not available yet. Run the OCR node again."
+                return "Text output is not available yet. Run the node again."
             return None
 
         if isinstance(current_value, str):

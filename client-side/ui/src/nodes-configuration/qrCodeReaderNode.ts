@@ -19,5 +19,6 @@ export const qrCodeReaderNodeConfig: NodeConfig = {
   outputType: "markdown",
   section: "tools",
   category: "processing",
-  helpMessage: "(Dummy) passthrough for Week 5 – implementation Week 6",
+  helpMessage:
+    "Reads QR codes from image/stream. Output 1 = decoded text, Output 2 = media/stream passthrough.",
 };
