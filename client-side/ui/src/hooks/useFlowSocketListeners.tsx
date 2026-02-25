@@ -13,6 +13,7 @@ export const useSocketListeners = <
   onRunEnd: () => void,
   onCurrentNodeRunning: (data: CurrentNodeRunningData) => void,
   onDisconnect?: (reason: string) => void,
+  onConnect?: () => void,
 ) => {
   const { t } = useTranslation("flow");
   const { socket } = useContext(SocketContext);
@@ -23,6 +24,9 @@ export const useSocketListeners = <
       socket.on("error", onError);
       socket.on("run_end", onRunEnd);
       socket.on("current_node_running", onCurrentNodeRunning);
+      if (onConnect) {
+        socket.on("connect", onConnect);
+      }
       socket.on(
         "disconnect",
         onDisconnect ? onDisconnect : defaultOnDisconnect,
@@ -35,13 +39,24 @@ export const useSocketListeners = <
         socket.off("error", onError);
         socket.off("run_end", onRunEnd);
         socket.off("current_node_running", onCurrentNodeRunning);
+        if (onConnect) {
+          socket.off("connect", onConnect);
+        }
         socket.off(
           "disconnect",
           onDisconnect ? onDisconnect : defaultOnDisconnect,
         );
       }
     };
-  }, [socket]);
+  }, [
+    socket,
+    onProgress,
+    onError,
+    onRunEnd,
+    onCurrentNodeRunning,
+    onDisconnect,
+    onConnect,
+  ]);
 
   function defaultOnDisconnect(reason: string) {
     if (reason === "transport close") {

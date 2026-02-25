@@ -191,6 +191,9 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
 
             start_time = time.time()
             output = processor.process_and_update()
+            latest_output = processor.get_output()
+            if latest_output is None:
+                latest_output = output
 
             # Persist last output so downstream nodes can be executed later
             # without requiring upstream re-run simultaneously.
@@ -203,7 +206,7 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
 
             end_time = time.time()
             duration = end_time - start_time
-            self.notify_progress(processor, output, duration=duration, isDone=True)
+            self.notify_progress(processor, latest_output, duration=duration, isDone=True)
         except Exception as e:
             self.notify_error(processor, e)
             # IMPORTANT:
@@ -220,6 +223,9 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
 
             start_time = time.time()
             output = node.run()
+            latest_output = processor.get_output()
+            if latest_output is None:
+                latest_output = output
 
             session_id = None
             try:
@@ -234,7 +240,12 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
             duration = end_time - start_time
             # Mark completion so the UI can reliably stop spinners and allow re-runs.
             # (Streaming processors can still emit intermediate updates via STREAMING.)
-            self.notify_progress(node.get_processor(), output, duration=duration, isDone=True)
+            self.notify_progress(
+                node.get_processor(),
+                latest_output,
+                duration=duration,
+                isDone=True,
+            )
         except Exception as e:
             node.state = AsyncProcessorLauncher.NodeState.ERROR
             self.notify_error(node.get_processor(), e)

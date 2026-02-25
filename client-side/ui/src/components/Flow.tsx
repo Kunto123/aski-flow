@@ -51,6 +51,7 @@ import {
 } from "../api/stream";
 import {
   stopClientCameraPublisherByIndex,
+  stopAllClientCameraPublishers,
 } from "../services/clientCameraPublishers";
 
 function extractStreamIdsFromValue(value: any): string[] {
@@ -198,6 +199,15 @@ const Flow = forwardRef((props: FlowProps, ref) => {
       setCurrentNodesRunning([]);
     },
     onCurrentNodeRunning,
+    () => {
+      // Socket drops (e.g. WinError 10054 on server side) can leave node
+      // running indicators stuck because final events never arrive.
+      stopAllClientCameraPublishers();
+      setCurrentNodesRunning([]);
+    },
+    () => {
+      setCurrentNodesRunning([]);
+    },
   );
 
   // NOTE:
@@ -213,9 +223,11 @@ const Flow = forwardRef((props: FlowProps, ref) => {
     const output = data.output;
     const isDone = data.isDone ?? true;
 
-    setCurrentNodesRunning((previous) => {
-      return previous.filter((node) => node != nodeToUpdate);
-    });
+    if (isDone) {
+      setCurrentNodesRunning((previous) => {
+        return previous.filter((node) => node != nodeToUpdate);
+      });
+    }
 
     if (nodeToUpdate) {
       setNodes((prevNodes) => {

@@ -1,8 +1,8 @@
 # Server Side Context
 
 ## Last Updated
-- Date: 2026-02-23
-- Scope: Central server runtime for many clients + local model recommendation support.
+- Date: 2026-02-25
+- Scope: Central server runtime for many clients + OCR/QR display semantics/readability support.
 
 ## Canonical Paths
 - `server-side/backend`: backend source code.
@@ -22,6 +22,14 @@
 - Runtime smoke test passed:
   - `GET /health` returns `200 {"status":"ok"}` while server is running.
 - Local model-file scan helper now enumerates server-side YOLO weights for UI recommendation dropdown.
+- Display processor + QR reader semantics refined for QR/OCR dual outputs:
+  - Explicit display handle selection is now respected (`output 1` text vs `output 2` preview)
+  - QR preview overlay text default changed to OFF (box-only preview clearer by default)
+- Streaming processor completion event now emits latest processor output (prevents stale final output overwriting newer streaming text updates)
+- QR/OCR stream startup output race fixed:
+  - If transform stream emits text immediately during startup, processor now returns the fresher output for the same stream id instead of stale initial payload (`No ... detected`)
+- Frontend now also uses existing server stream predictions endpoint as fallback for QR/OCR text visibility when socket updates drop:
+  - `GET /stream/<stream_id>/predictions.json` remains the canonical polling endpoint used by UI fallback
 
 ## Code Changes (This Cycle)
 1. Storage mode detection fix:
@@ -53,6 +61,21 @@
    - File: `server-side/backend/app/flask/app_routes/model_routes.py`
 10. Legacy standalone ergonomic dummy processor removed:
    - File deleted: `server-side/backend/app/processors/components/extension/ergonomic_check_processor.py`
+11. OCR/QR Display semantic output handling fix:
+   - `display` processor now honors explicit selected output index for OCR/QR readers and defaults to text output only when handle is missing/stale
+   - File: `server-side/backend/app/processors/components/core/display_processor.py`
+12. QR reader preview readability default:
+   - `draw_text` overlay default changed from `True` to `False` (still overrideable via node config/env)
+   - File: `server-side/backend/app/processors/components/extension/qr_code_reader_processor.py`
+13. Async launcher streaming output race fix:
+   - Final `progress` event now sends `processor.get_output()` (latest output) instead of stale local return value
+   - Prevents QR/OCR stream nodes from reverting to initial `No ... detected` text after a valid streaming decode event
+   - File: `server-side/backend/app/processors/launcher/async_processor_launcher.py`
+14. QR/OCR stream startup race hardening:
+   - `_process_stream()` returns fresher `self.get_output()` when transform thread already produced a newer result for the same stream
+   - Files:
+     - `server-side/backend/app/processors/components/extension/qr_code_reader_processor.py`
+     - `server-side/backend/app/processors/components/extension/ocr_reader_processor.py`
 
 ## Validation Status
 - Python compile check passed:
@@ -82,6 +105,14 @@
     `TypeError: Detect.__init__() ... but 6 were given`
     (legacy YAML `Detect[nc, anchors]` is not forward-compatible with current Ultralytics parser/head)
   - No reliable direct re-export to current Ultralytics `.pt` achieved in this cycle
+- Python compile checks passed for OCR/QR display/readability patch:
+  - `py -3.11 -m py_compile server-side/backend/app/processors/components/core/display_processor.py`
+  - `py -3.11 -m py_compile server-side/backend/app/processors/components/extension/qr_code_reader_processor.py`
+- Python compile checks passed for async launcher race fix:
+  - `py -3.11 -m py_compile server-side/backend/app/processors/launcher/async_processor_launcher.py`
+- Python compile checks passed for QR/OCR startup race hardening:
+  - `py -3.11 -m py_compile server-side/backend/app/processors/components/extension/qr_code_reader_processor.py`
+  - `py -3.11 -m py_compile server-side/backend/app/processors/components/extension/ocr_reader_processor.py`
 
 ## Run Instructions
 - First-time setup + run:

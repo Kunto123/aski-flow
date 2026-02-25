@@ -2,7 +2,7 @@
 
 ## Last Updated
 - Date: 2026-02-25
-- Focus: OCR Reader node activation (OpenCV + pytesseract + Tesseract runtime validation) while preserving central-server flow architecture.
+- Focus: OCR/QR reader usability (decoded text visibility + output semantics) while preserving central-server flow architecture.
 
 ## Current Goal
 - Keep architecture mode `Central Server + Many Clients`.
@@ -135,6 +135,40 @@
 - OCR backend smoke test (local synthetic image) passed:
   - Test text `TES OCR 123` detected successfully
   - Default resolved language observed as `eng+ind` in current environment
+- QR Reader readability/output UX hardening:
+  - QR stream preview now defaults to box-only overlay (`draw_text` default OFF) so preview stays readable
+  - QR node UI now exposes advanced preview toggles (`Draw Boxes`, `Draw Decoded Text`)
+  - Display/output rendering now treats OCR/QR output #1 as text even when payload looks like a URL (e.g. QR content)
+  - Display processor now honors explicit output handle selection for OCR/QR (`output 1 = text`, `output 2 = preview`)
+  - Fixed stream-output race where final node completion event could overwrite newer QR/OCR streaming text with stale initial payload (`No QR code detected`)
+    - Async launcher final `progress` now emits latest `processor.get_output()` instead of stale local return value
+  - Fixed stream startup race in QR/OCR readers where immediate transform updates could be overwritten by `process_and_update()` startup payload
+    - `_process_stream()` now returns fresher `self.get_output()` when already updated for the same stream id
+  - Frontend flow progress handler now keeps node in running state for `isDone=false` streaming updates
+  - OCR/QR text-first output default font size bumped slightly for readability (`OutputDisplay`)
+  - Frontend socket disconnect/reconnect now clears `currentNodesRunning` to prevent stuck loading/start indicators after connection drop (e.g. WinError 10054 disconnects)
+  - Added QR/OCR live text fallback in UI via `/stream/<id>/predictions.json` polling when node has mixed outputs (text + stream)
+    - Keeps text output visible even if realtime socket progress updates are missed after disconnect/reconnect
+  - Client camera publisher cleanup hardened against socket session-id changes after reconnect
+    - Stale publishers from previous session ids are now stopped during prewarm/stop paths to release webcam correctly
+  - Files:
+    - `server-side/backend/app/processors/components/extension/qr_code_reader_processor.py`
+    - `server-side/backend/app/processors/components/core/display_processor.py`
+    - `client-side/ui/src/nodes-configuration/qrCodeReaderNode.ts`
+    - `client-side/ui/src/components/nodes/DisplayNode.tsx`
+    - `client-side/ui/src/components/nodes/node-output/OutputDisplay.tsx`
+    - `server-side/backend/app/processors/launcher/async_processor_launcher.py`
+    - `server-side/backend/app/processors/components/extension/ocr_reader_processor.py`
+    - `client-side/ui/src/components/Flow.tsx`
+    - `client-side/ui/src/hooks/useFlowSocketListeners.tsx`
+    - `client-side/ui/src/components/nodes/node-output/OutputDisplay.tsx`
+    - `client-side/ui/src/services/clientCameraPublishers.ts`
+  - Validation:
+    - `py -3.11 -m py_compile ...display_processor.py ...qr_code_reader_processor.py` -> passed
+    - `client-side/ui`: `npm run build` -> passed
+    - `py -3.11 -m py_compile ...async_processor_launcher.py` -> passed
+    - `py -3.11 -m py_compile ...ocr_reader_processor.py ...qr_code_reader_processor.py` -> passed
+    - `client-side/ui`: `npm run build` (predictions polling + camera cleanup patch) -> passed
 
 ## Run Commands
 1. Server:
