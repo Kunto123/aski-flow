@@ -253,3 +253,31 @@
   - camera stop/release cleanup semantics (no aggressive lifecycle refactor)
   - ROI live runtime param update path
   - final node completion events are not throttled
+
+## Follow-up Q&A Note (2026-02-25)
+- User asked whether choppy `Camera Input` preview could be caused by the recent optimization pass (no code changes requested).
+- Assessment:
+  - Yes, it is possible and even likely in some cases, mainly due to two intentional tradeoff optimizations:
+    - frontend intermediate `progress` throttling in `Flow.tsx` (~120ms) can make UI preview updates look less smooth (roughly capped visual refresh for node output previews)
+    - client camera adaptive upload pacing/backpressure in `clientCameraPublishers.ts` can lower effective FPS when upload/network/CPU is slow
+  - Backend lazy JPEG/MJPEG optimizations are less likely to cause local `Camera Input` node preview stutter directly, but can affect perceived smoothness in MJPEG display paths
+  - Scheduler/QR variant optimizations are unlikely to be the primary cause of camera preview choppiness
+
+## Follow-up Q&A Note (2026-02-25, UI Throttle Tuning)
+- User asked whether UI throttle can be raised to ~15 FPS for smoother preview, without code changes yet.
+- Assessment:
+  - Yes, feasible and low-risk if only adjusting intermediate UI progress throttle interval.
+  - Current throttle is `120ms` (~8.3 FPS visual cap for intermediate preview updates).
+  - Recommended tuning candidates:
+    - `66ms` (~15 FPS target, smoother, more UI work)
+    - `80ms` (~12.5 FPS, safer compromise)
+  - Final completion events (`isDone=true`) should remain unthrottled.
+  - Actual observed FPS may still be lower due to adaptive camera upload pacing/backpressure under CPU/network load.
+
+## Follow-up Change Applied (2026-02-25, UI Throttle ~15 FPS)
+- User approved applying the UI throttle tuning.
+- Implemented change in `client-side/ui/src/components/Flow.tsx`:
+  - `STREAM_PROGRESS_UI_MIN_INTERVAL_MS` changed from `120` to `66` (target ~15 FPS for intermediate preview updates)
+  - final completion events remain unthrottled
+- Validation:
+  - `client-side/ui`: `npm run build` success

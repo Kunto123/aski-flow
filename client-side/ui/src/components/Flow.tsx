@@ -54,7 +54,8 @@ import {
   stopAllClientCameraPublishers,
 } from "../services/clientCameraPublishers";
 
-const STREAM_PROGRESS_UI_MIN_INTERVAL_MS = 120;
+// ~15 FPS cap for intermediate stream preview updates (final completion is not throttled)
+const STREAM_PROGRESS_UI_MIN_INTERVAL_MS = 66;
 
 function extractStreamIdsFromValue(value: any): string[] {
   const streamIds = new Set<string>();

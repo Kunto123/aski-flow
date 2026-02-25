@@ -174,3 +174,25 @@
   - slower send cadence when tab is hidden
 - Build validation:
   - `npm run build` -> success
+
+## Follow-up Note (2026-02-25)
+- Choppy `Camera Input` preview after optimization pass can be an expected side-effect of:
+  - intermediate `progress` throttling in `Flow.tsx` (UI preview redraw rate reduced)
+  - adaptive camera upload pacing/backpressure in `clientCameraPublishers.ts` (effective send FPS reduced under load)
+- This is a tradeoff optimization signal, not automatically a functional bug in camera lifecycle/release logic.
+
+## Follow-up Note (2026-02-25, UI Throttle Tuning)
+- UI throttle can be increased from current `120ms` (~8.3 FPS) to improve preview smoothness.
+- Candidate values (no code change applied yet):
+  - `66ms` for ~15 FPS target
+  - `80ms` for ~12.5 FPS compromise
+- This affects intermediate preview refresh only; final node completion events should stay immediate.
+- Effective FPS can still be limited by adaptive camera upload pacing under load.
+
+## Follow-up Change Applied (2026-02-25, UI Throttle ~15 FPS)
+- Applied UI throttle tuning in `client-side/ui/src/components/Flow.tsx`:
+  - `STREAM_PROGRESS_UI_MIN_INTERVAL_MS = 66` (was `120`)
+  - target visual refresh for intermediate stream previews is now ~15 FPS
+  - final completion updates remain immediate (not throttled)
+- Build validation:
+  - `npm run build` -> success
