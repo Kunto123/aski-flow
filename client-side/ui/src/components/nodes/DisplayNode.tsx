@@ -242,8 +242,9 @@ const DisplayNode: React.FC<DisplayNodeProps> = React.memo(
       () => ({
         ...data,
         outputData: normalizedOutput ?? undefined,
+        upstreamProcessorTypeForDisplay: upstreamNode?.data?.processorType,
       }),
-      [data, normalizedOutput],
+      [data, normalizedOutput, upstreamNode?.data?.processorType],
     );
 
     const handlePlayClick = () => {

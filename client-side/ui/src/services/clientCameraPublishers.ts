@@ -440,7 +440,13 @@ export async function prewarmClientCameraPublishers({
   );
 
   for (const [key, publisher] of Array.from(publishers.entries())) {
-    if (publisher.sessionId !== sessionId) continue;
+    // Socket reconnect can change session id; old local publishers must be
+    // stopped or the camera remains locked on the client.
+    if (publisher.sessionId !== sessionId) {
+      stopPublisherInternal(publisher);
+      publishers.delete(key);
+      continue;
+    }
     if (desiredKeys.has(key)) continue;
     stopPublisherInternal(publisher);
     publishers.delete(key);
@@ -453,22 +459,44 @@ export function stopClientCameraPublisherByIndex(
 ) {
   const normalizedIndex = toCameraIndex(cameraIndex);
   const sessionId = socket?.getId();
+  let stoppedCount = 0;
 
   for (const [key, publisher] of Array.from(publishers.entries())) {
     if (publisher.config.cameraIndex !== normalizedIndex) continue;
     if (sessionId && publisher.sessionId !== sessionId) continue;
     stopPublisherInternal(publisher);
     publishers.delete(key);
+    stoppedCount += 1;
+  }
+
+  // Fallback for socket reconnects: current socket id may differ from the
+  // publisher session id that originally opened the camera.
+  if (sessionId && stoppedCount === 0) {
+    for (const [key, publisher] of Array.from(publishers.entries())) {
+      if (publisher.config.cameraIndex !== normalizedIndex) continue;
+      stopPublisherInternal(publisher);
+      publishers.delete(key);
+      stoppedCount += 1;
+    }
   }
 }
 
 export function stopAllClientCameraPublishers(socket?: FlowSocket | null) {
   const sessionId = socket?.getId();
+  let stoppedCount = 0;
 
   for (const [key, publisher] of Array.from(publishers.entries())) {
     if (sessionId && publisher.sessionId !== sessionId) continue;
     stopPublisherInternal(publisher);
     publishers.delete(key);
+    stoppedCount += 1;
+  }
+
+  // Fallback after reconnect: release stale publishers from previous socket id.
+  if (sessionId && stoppedCount === 0) {
+    for (const [key, publisher] of Array.from(publishers.entries())) {
+      stopPublisherInternal(publisher);
+      publishers.delete(key);
+    }
   }
 }
-

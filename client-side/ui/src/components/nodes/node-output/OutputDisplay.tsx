@@ -6,7 +6,11 @@ import ImageUrlOutput from "./ImageUrlOutput";
 import ImageBase64Output from "./ImageBase64Output";
 import VideoUrlOutput from "./VideoUrlOutput";
 import AudioUrlOutput from "./AudioUrlOutput";
-import { getOutputExtension, normalizeStreamOutputUrl } from "./outputUtils";
+import {
+  getOutputExtension,
+  isStreamUrl,
+  normalizeStreamOutputUrl,
+} from "./outputUtils";
 import PdfUrlOutput from "./PdfUrlOutput";
 import { OutputType } from "../../../nodes-configuration/types";
 import { useEffect, useMemo, useState } from "react";
@@ -29,11 +33,16 @@ export default function OutputDisplay({
   getOutputComponentOverride,
 }: OutputDisplayProps) {
   const { t } = useTranslation("flow");
+  const upstreamProcessorTypeForDisplay = (data as any)?.upstreamProcessorTypeForDisplay;
+  const effectiveTextFirstProcessorType =
+    upstreamProcessorTypeForDisplay ?? data.processorType;
   const isMainVisionModel = data.processorType === "main-vision-model";
   const preferTextFirst =
-    data.processorType === "ocr-reader" || data.processorType === "qr-code-reader";
+    effectiveTextFirstProcessorType === "ocr-reader" ||
+    effectiveTextFirstProcessorType === "qr-code-reader";
 
   const [indexDisplayed, setIndexDisplayed] = useState(0);
+  const [liveTextOverride, setLiveTextOverride] = useState<string | null>(null);
 
   const normalizedOutputs = useMemo(() => {
     if (!data.outputData) return [] as string[];
@@ -66,6 +75,93 @@ export default function OutputDisplay({
     return deduped;
   }, [data.outputData]);
 
+  const streamPredictionsUrl = useMemo(() => {
+    if (!preferTextFirst) return null;
+    if (normalizedOutputs.length < 2) return null;
+
+    const streamOutput = normalizedOutputs.find((value) => isStreamUrl(value));
+    if (!streamOutput) return null;
+
+    const normalized = normalizeStreamOutputUrl(streamOutput);
+
+    try {
+      const parsed = new URL(
+        normalized,
+        typeof window !== "undefined" ? window.location.origin : "http://127.0.0.1",
+      );
+      const match = parsed.pathname.match(/^\/stream\/([^/.?]+)\.(mjpg|mjpeg)$/i);
+      if (!match?.[1]) return null;
+      return `${parsed.origin}/stream/${match[1]}/predictions.json`;
+    } catch {
+      const match = normalized.match(/\/stream\/([^/.?]+)\.(mjpg|mjpeg)(\?.*)?$/i);
+      if (!match?.[1]) return null;
+      return normalized.replace(
+        /\/stream\/([^/.?]+)\.(mjpg|mjpeg)(\?.*)?$/i,
+        `/stream/${match[1]}/predictions.json`,
+      );
+    }
+  }, [preferTextFirst, normalizedOutputs]);
+
+  useEffect(() => {
+    setLiveTextOverride(null);
+  }, [streamPredictionsUrl, effectiveTextFirstProcessorType]);
+
+  useEffect(() => {
+    if (!streamPredictionsUrl || !preferTextFirst) return;
+    if (typeof window === "undefined" || typeof fetch === "undefined") return;
+
+    let cancelled = false;
+
+    const extractLiveText = (payload: any): string | null => {
+      if (!payload || typeof payload !== "object") return null;
+
+      if (effectiveTextFirstProcessorType === "qr-code-reader") {
+        const text = String(payload.qr_text ?? "").trim();
+        if (text) return text;
+        const msg = String(payload.error ?? payload.message ?? "").trim();
+        return msg || null;
+      }
+
+      if (effectiveTextFirstProcessorType === "ocr-reader") {
+        const text = String(payload.text ?? "").trim();
+        if (text) return text;
+        const msg = String(payload.error ?? payload.message ?? "").trim();
+        return msg || null;
+      }
+
+      return null;
+    };
+
+    const poll = async () => {
+      try {
+        const response = await fetch(streamPredictionsUrl, {
+          cache: "no-store",
+          headers: {
+            Accept: "application/json",
+          },
+        });
+        if (!response.ok) return;
+        const payload = await response.json();
+        if (cancelled) return;
+        const liveText = extractLiveText(payload);
+        if (!liveText) return;
+        setLiveTextOverride((prev) => (prev === liveText ? prev : liveText));
+      } catch {
+        // Ignore transient fetch/socket/network errors; regular output remains visible.
+      }
+    };
+
+    void poll();
+    const timerId = window.setInterval(() => {
+      void poll();
+    }, 500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timerId);
+    };
+  }, [streamPredictionsUrl, preferTextFirst, effectiveTextFirstProcessorType]);
+
   const selectorOutputs = useMemo(() => {
     if (isMainVisionModel && normalizedOutputs.length > 1) {
       return [normalizedOutputs[0]];
@@ -73,10 +169,16 @@ export default function OutputDisplay({
     if (preferTextFirst && normalizedOutputs.length > 1) {
       const rank = (value: string) =>
         getOutputExtension(value) === "markdown" ? 0 : 1;
-      return [...normalizedOutputs].sort((a, b) => rank(a) - rank(b));
+      const sorted = [...normalizedOutputs].sort((a, b) => rank(a) - rank(b));
+      if (liveTextOverride) {
+        const next = [...sorted];
+        next[0] = liveTextOverride;
+        return next;
+      }
+      return sorted;
     }
     return normalizedOutputs;
-  }, [isMainVisionModel, normalizedOutputs, preferTextFirst]);
+  }, [isMainVisionModel, normalizedOutputs, preferTextFirst, liveTextOverride]);
 
   useEffect(() => {
     if (indexDisplayed < selectorOutputs.length) return;
@@ -180,6 +282,16 @@ export default function OutputDisplay({
     if (normalizedOutputs.length === 0) return <></>;
 
     const output = getCurrentOutput();
+    const isReadableOcrQrTextOutput =
+      preferTextFirst &&
+      selectorOutputs.length > 1 &&
+      indexDisplayed === 0;
+    const readableTextAppearance = isReadableOcrQrTextOutput
+      ? {
+          ...data.appearance,
+          fontSize: Math.max(Number(data.appearance?.fontSize ?? 0), 1.5),
+        }
+      : data.appearance;
 
     switch (getOutputType()) {
       case "imageUrl":
@@ -230,7 +342,7 @@ export default function OutputDisplay({
           <MarkdownOutput
             data={output}
             name={data.name}
-            appearance={data.appearance}
+            appearance={readableTextAppearance}
             fitInContainer={fitInContainer}
           />
         );
@@ -240,6 +352,17 @@ export default function OutputDisplay({
   function getOutputType(): OutputType {
     const output = getCurrentOutput();
     if (!output) {
+      return "markdown";
+    }
+
+    // OCR/QR readers reserve output #1 for decoded text (which may look like a
+    // URL, e.g. QR payload). Keep it rendered as text in both node preview and
+    // Display nodes connected downstream.
+    if (
+      preferTextFirst &&
+      selectorOutputs.length > 1 &&
+      indexDisplayed === 0
+    ) {
       return "markdown";
     }
 

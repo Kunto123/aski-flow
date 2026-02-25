@@ -56,6 +56,7 @@ class DisplayProcessor(BasicProcessor):
                     input_processor,
                     current_value=None,
                     outputs=outputs,
+                    requested_key=requested_key,
                 )
                 if preferred is not None:
                     return preferred
@@ -71,13 +72,20 @@ class DisplayProcessor(BasicProcessor):
         preferred = self._prefer_text_for_ocr_like_outputs(
             input_processor,
             current_value=input_data,
+            requested_key=requested_key,
         )
         if preferred is not None:
             return preferred
 
         return input_data
 
-    def _prefer_text_for_ocr_like_outputs(self, input_processor, current_value, outputs=None):
+    def _prefer_text_for_ocr_like_outputs(
+        self,
+        input_processor,
+        current_value,
+        outputs=None,
+        requested_key=None,
+    ):
         processor_type = _processor_type_name(getattr(input_processor, "processor_type", ""))
         if processor_type not in ("ocr-reader", "qr-code-reader"):
             return None
@@ -86,6 +94,25 @@ class DisplayProcessor(BasicProcessor):
             outputs = input_processor.get_output()
         if not isinstance(outputs, list):
             outputs = []
+
+        # OCR/QR readers use a stable semantic output order:
+        # output 1 = decoded text, output 2 = preview media/stream.
+        # Honor explicit handle selection when valid so users can choose which
+        # output a Display node shows, while still defaulting to text when no
+        # specific handle is selected or the handle became stale.
+        try:
+            requested_index = None if requested_key in (None, "") else int(requested_key)
+        except Exception:
+            requested_index = None
+
+        if len(outputs) >= 2:
+            if requested_index is not None and 0 <= requested_index < len(outputs):
+                return outputs[requested_index]
+
+            text_first = outputs[0]
+            if not (isinstance(text_first, str) and text_first.strip() == ""):
+                return text_first
+
         if len(outputs) < 2:
             if isinstance(current_value, str) and _looks_like_media_reference(current_value):
                 return "Text output is not available yet. Run the node again."

@@ -15,10 +15,40 @@ export const qrCodeReaderNodeConfig: NodeConfig = {
       required: true,
       placeholder: "/asset/<image>.jpg or stream://<id>",
     },
+    {
+      name: "show_advanced",
+      label: "Advanced Settings",
+      type: "switch",
+      defaultValue: false,
+    },
+    {
+      name: "draw_boxes",
+      label: "Draw Boxes (stream preview)",
+      type: "switch",
+      defaultValue: true,
+      condition: {
+        field: "show_advanced",
+        operator: "equals",
+        value: true,
+      },
+    },
+    {
+      name: "draw_text",
+      label: "Draw Decoded Text (preview)",
+      type: "switch",
+      defaultValue: false,
+      description:
+        "Keep OFF for clearer preview. Read/copy decoded QR text from Output 1.",
+      condition: {
+        field: "show_advanced",
+        operator: "equals",
+        value: true,
+      },
+    },
   ],
   outputType: "markdown",
   section: "tools",
   category: "processing",
   helpMessage:
-    "Reads QR codes from image/stream. Output 1 = decoded text, Output 2 = media/stream passthrough.",
+    "Reads QR codes from image/stream. Output 1 = decoded text (recommended for readability), Output 2 = preview media/stream.",
 };

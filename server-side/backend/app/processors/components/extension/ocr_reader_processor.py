@@ -414,10 +414,25 @@ class OcrReaderProcessor(BasicProcessor):
         initial_payload = _payload_from_result(last_result)
         manager.set_predictions(out_stream_id, initial_payload)
 
-        return [
+        default_output = [
             self._payload_to_text_output(initial_payload),
             f"stream://{out_stream_id}",
         ]
+
+        # Preserve fresher stream text if _transform already emitted before
+        # process_and_update() finalizes the processor output.
+        try:
+            current_output = self.get_output()
+            if (
+                isinstance(current_output, list)
+                and len(current_output) >= 2
+                and str(current_output[1] or "").strip() == f"stream://{out_stream_id}"
+            ):
+                return current_output
+        except Exception:
+            pass
+
+        return default_output
 
     def _ensure_dependencies(self):
         if cv2 is None or np is None:

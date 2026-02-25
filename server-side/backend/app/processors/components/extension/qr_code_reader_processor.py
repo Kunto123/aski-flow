@@ -92,7 +92,7 @@ class QrCodeReaderProcessor(BasicProcessor):
         )
         self.draw_text = _to_bool(
             config.get("draw_text"),
-            _to_bool(os.getenv("ASKI_QR_DRAW_TEXT"), True),
+            _to_bool(os.getenv("ASKI_QR_DRAW_TEXT"), False),
         )
         self.max_codes = max(
             1,
@@ -243,10 +243,27 @@ class QrCodeReaderProcessor(BasicProcessor):
         except Exception:
             pass
 
-        return [
+        default_output = [
             self._payload_to_text_output(initial_payload),
             f"stream://{out_stream_id}",
         ]
+
+        # Transform streaming can start immediately and emit a fresher text
+        # output before process_and_update() performs its final set_output(...).
+        # If that happened, return the fresher output to avoid reverting to the
+        # stale startup payload ("No QR code detected").
+        try:
+            current_output = self.get_output()
+            if (
+                isinstance(current_output, list)
+                and len(current_output) >= 2
+                and str(current_output[1] or "").strip() == f"stream://{out_stream_id}"
+            ):
+                return current_output
+        except Exception:
+            pass
+
+        return default_output
 
     def _maybe_emit_stream_text_update(
         self,
