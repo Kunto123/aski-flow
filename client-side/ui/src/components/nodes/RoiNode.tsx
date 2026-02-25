@@ -15,7 +15,7 @@ import {
 } from "reactflow";
 import HandleWrapper from "../handles/HandleWrapper";
 import { generateIdForHandle, getTargetHandleKey } from "../../utils/flowUtils";
-import { NodeContext } from "../../providers/NodeProvider";
+import { NodeContext, NodeRuntimeContext } from "../../providers/NodeProvider";
 import { useIsPlaying } from "../../hooks/useIsPlaying";
 import NodePlayButton from "./node-button/NodePlayButton";
 import { useTranslation } from "react-i18next";
@@ -122,7 +122,8 @@ const isVideoPreviewUrl = (url: string): boolean => {
 
 const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
   const { t } = useTranslation("flow");
-  const { onUpdateNodeData, getIncomingEdges, getOutgoingEdges, findNode, runNode, currentNodesRunning } = useContext(NodeContext);
+  const { onUpdateNodeData, getIncomingEdges, getOutgoingEdges, findNode, runNode } = useContext(NodeContext);
+  const { currentNodesRunning } = useContext(NodeRuntimeContext);
   const { getViewport } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
   const [isPlaying, setIsPlaying] = useIsPlaying();

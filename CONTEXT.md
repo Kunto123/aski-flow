@@ -199,5 +199,57 @@
 5. Verify camera permission / device-index mapping behavior on different client laptops (browser/Electron + Windows camera permissions).
 6. Continue tracking detailed side-specific updates in `server-side/CONTEXT.md` and `client-side/CONTEXT.md`.
 
+## Review Notes (2026-02-25, No Code Changes)
+- Static performance review requested (no source edits) focused on realtime flow paths: camera upload, stream transforms, socket progress updates, and React Flow rendering.
+- Key suspected bottlenecks identified:
+  - Frontend per-progress updates map all nodes and trigger upstream `onFlowChange` on every stream event (`Flow.tsx`)
+  - Broad `NodeContext` value causes many node components to re-render on each state tick (`NodeProvider.tsx`, `GenericNode.tsx`, `DisplayNode.tsx`)
+  - `OutputDisplay` fallback polling (`predictions.json`) can create repeated requests per visible OCR/QR output panel
+  - Client camera publisher uses main-thread canvas JPEG encode + HTTP POST per frame (high CPU/network at 720p/20fps)
+  - Backend stream manager copies frames (`latest_frame.copy()`), re-encodes JPEG in camera/transform loops, and MJPEG clients poll in 30ms loops
+  - Async processor launcher uses fixed `eventlet.sleep(0.5)` scheduler tick (adds latency between dependent nodes)
+  - QR reader stream inference can build multiple preprocess variants and attempt multi+single decode per variant per inference cycle
+- Recommended next action (before more feature work):
+  - Run lightweight profiling/telemetry on `progress` event rate, React render count, frame upload throughput, and per-node stream CPU time to confirm highest-impact bottleneck first.
+- Follow-up risk question reviewed (no code changes):
+  - Performance optimizations can cause regressions if applied naively (camera release, ROI live update, stale outputs), but risk is manageable with staged rollout and guardrails:
+    - never change camera stop/release thread semantics without integration tests
+    - throttle only intermediate UI updates (`isDone=false`), never final completion events
+    - preserve ROI live param path (`/stream/<id>/roi/params`) and stream-id propagation behavior
+
 ## New Chat Bootstrap Prompt
 - "Baca `d:/ProjectMagang/aiflow/aski-flow/CONTEXT.md`, lanjutkan task terbaru, dan pertahankan struktur `server-side` + `client-side` saja."
+
+## Optimization Implementation Notes (2026-02-25, 8-Point Pass)
+- User requested implementation of the 8 performance optimization recommendations (with caution around regressions like camera release and ROI live updates).
+- Frontend (`Flow.tsx`) realtime progress handling updated:
+  - intermediate stream progress (`isDone=false`) is throttled per-node (~120ms)
+  - final progress (`isDone=true`) is applied immediately
+  - `lastRun` no longer updates on every intermediate stream tick
+  - `onFlowChange` callback is skipped for throttled intermediate progress updates to reduce parent churn
+- Frontend socket listeners (`useFlowSocketListeners.tsx`) now use stable wrapper listeners + refs to avoid repeated attach/detach on rerenders.
+- Frontend node runtime context split (`NodeProvider.tsx`):
+  - `NodeRuntimeContext` introduced for `currentNodesRunning`, `errorCount`, `isRunning`
+  - broad `NodeContext` no longer carries runtime counters or raw `nodes/edges`
+  - memoized graph indexes/helpers added to reduce repeated scans
+  - updated consumers (`NodePlayButton`, `GenericNode`, `RoiNode`, `useIsPlaying`) to read runtime state from `NodeRuntimeContext`
+- Frontend `OutputDisplay.tsx` OCR/QR fallback polling optimized:
+  - polling is shared per `predictions.json` URL across components
+  - polling only runs when socket is disconnected or text still shows placeholder / no-detection text
+  - polling is limited to text output tab (`outputIndex=0`) for OCR/QR preferred-text views
+- Client camera publisher (`clientCameraPublishers.ts`) optimized with adaptive pacing/backpressure:
+  - upload loop interval now adapts based on EWMA upload duration
+  - hidden tab reduces send rate further
+  - upload failures increase backoff
+- Backend stream manager (`stream_manager.py`) optimized:
+  - lazy JPEG encoding only when MJPEG clients are subscribed
+  - MJPEG generator uses frame-version checks to avoid busy resend loops and unnecessary wake-ups
+- Backend QR reader (`qr_code_reader_processor.py`) stream mode now limits preprocessing variants per frame (configurable env-based budget, safe default).
+- Backend async launcher (`async_processor_launcher.py`) scheduler loop changed from fixed 0.5s polling to adaptive active/idle tick timing (lower latency, lower idle overhead).
+- Validation after optimization pass:
+  - `client-side/ui`: `npm run build` success
+  - backend `py_compile` success for modified stream/launcher/QR files
+- Regression-sensitive behaviors intentionally preserved:
+  - camera stop/release cleanup semantics (no aggressive lifecycle refactor)
+  - ROI live runtime param update path
+  - final node completion events are not throttled

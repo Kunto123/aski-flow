@@ -1,7 +1,7 @@
 import React, { useContext, useState } from "react";
 import styled, { css, keyframes } from "styled-components";
 import { FaCheck, FaPlay, FaStop } from "react-icons/fa";
-import { NodeContext } from "../../../providers/NodeProvider";
+import { NodeContext, NodeRuntimeContext } from "../../../providers/NodeProvider";
 import TapScale from "../../shared/motions/TapScale";
 import * as NodeStyles from "../Node.styles";
 
@@ -20,7 +20,8 @@ const NodePlayButton: React.FC<NodePlayButtonProps> = ({
   nodeName,
   size,
 }) => {
-  const { runNode, isRunning, currentNodesRunning } = useContext(NodeContext);
+  const { runNode } = useContext(NodeContext);
+  const { currentNodesRunning } = useContext(NodeRuntimeContext);
   const [isHovered, setHovered] = useState(false);
 
   const handleClick = () => {

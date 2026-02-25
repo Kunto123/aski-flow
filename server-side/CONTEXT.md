@@ -124,3 +124,21 @@
 1. Validate multi-client run ownership and cancel behavior.
 2. Verify stream cleanup under concurrent client subscriptions.
 3. Execute camera/ROI/Main Vision regression tests on centralized mode.
+
+## Optimization Pass (2026-02-25)
+- Implemented backend-side portions of requested 8-point performance optimization pass.
+- `server-side/backend/app/streaming/stream_manager.py`
+  - lazy JPEG encode only when `mjpeg_clients > 0` (camera and transform loops)
+  - MJPEG generator now tracks frame version and avoids redundant resend/poll churn
+  - reduces idle wake-ups when no new frame is available
+- `server-side/backend/app/processors/components/extension/qr_code_reader_processor.py`
+  - stream-mode QR decode limits preprocessing variants per frame (`stream_variant_limit`, env-tunable, safe default)
+  - keeps broader variant search for non-stream/single-shot path
+- `server-side/backend/app/processors/launcher/async_processor_launcher.py`
+  - replaced fixed 0.5s scheduler polling tick with adaptive active/idle sleep intervals
+  - lower dependency-chain latency while avoiding hot idle loop
+- Validation:
+  - `py_compile` passed for modified backend files (`stream_manager.py`, `async_processor_launcher.py`, `qr_code_reader_processor.py`)
+- Regression-sensitive behavior intentionally preserved:
+  - camera stop/release lifecycle logic not aggressively refactored in this pass
+  - stream final output/`isDone` signaling semantics kept intact

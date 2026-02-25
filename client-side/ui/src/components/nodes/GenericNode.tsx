@@ -21,7 +21,7 @@ import {
   NodeConfig,
   NodeSubConfig,
 } from "../../nodes-configuration/types";
-import { NodeContext } from "../../providers/NodeProvider";
+import { NodeContext, NodeRuntimeContext } from "../../providers/NodeProvider";
 import NodePlayButton from "./node-button/NodePlayButton";
 import { useTranslation } from "react-i18next";
 import { useIsPlaying } from "../../hooks/useIsPlaying";
@@ -61,8 +61,8 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
       findNode,
       removeEdgesByIds,
       runNode,
-      currentNodesRunning,
     } = useContext(NodeContext);
+    const { currentNodesRunning } = useContext(NodeRuntimeContext);
 
     const updateNodeInternals = useUpdateNodeInternals();
 

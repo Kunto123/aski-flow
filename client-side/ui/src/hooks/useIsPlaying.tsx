@@ -1,5 +1,5 @@
 import { useContext, useEffect, useState } from "react";
-import { NodeContext } from "../providers/NodeProvider";
+import { NodeRuntimeContext } from "../providers/NodeProvider";
 
 /**
  * This hook stop playing animation whenever an error is raised globaly.
@@ -8,7 +8,7 @@ export const useIsPlaying = (): [
   boolean,
   React.Dispatch<React.SetStateAction<boolean>>,
 ] => {
-  const { errorCount } = useContext(NodeContext);
+  const { errorCount } = useContext(NodeRuntimeContext);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
 
   useEffect(() => {

@@ -114,6 +114,16 @@ class QrCodeReaderProcessor(BasicProcessor):
                 or 4000
             ),
         )
+        self.stream_variant_limit = max(
+            1,
+            int(
+                _safe_int(
+                    config.get("stream_variant_limit"),
+                    _safe_int(os.getenv("ASKI_QR_STREAM_VARIANT_LIMIT"), 4),
+                )
+                or 4
+            ),
+        )
         self._detector = None
 
     def process(self):
@@ -164,7 +174,7 @@ class QrCodeReaderProcessor(BasicProcessor):
         source_frame = manager.get_latest_frame(source_stream_id)
         if source_frame is not None:
             try:
-                last_result = self._run_qr(source_frame)
+                last_result = self._run_qr(source_frame, stream_mode=True)
                 last_inference_at = time.monotonic()
             except Exception as e:
                 last_result = self._build_error_result(str(e))
@@ -215,7 +225,7 @@ class QrCodeReaderProcessor(BasicProcessor):
 
             if should_infer:
                 try:
-                    last_result = self._run_qr(frame)
+                    last_result = self._run_qr(frame, stream_mode=True)
                 except Exception as e:
                     last_result = self._build_error_result(str(e))
                 last_inference_at = now
@@ -384,7 +394,7 @@ class QrCodeReaderProcessor(BasicProcessor):
             self._detector = cv2.QRCodeDetector()
         return self._detector
 
-    def _run_qr(self, frame: Any) -> Dict[str, Any]:
+    def _run_qr(self, frame: Any, *, stream_mode: bool = False) -> Dict[str, Any]:
         if frame is None:
             raise ValueError("QR frame is empty")
 
@@ -392,6 +402,8 @@ class QrCodeReaderProcessor(BasicProcessor):
         h = int(getattr(frame, "shape", [0, 0])[0] or 0)
         w = int(getattr(frame, "shape", [0, 0])[1] or 0)
         variants = self._build_variants(frame)
+        if stream_mode and self.stream_variant_limit > 0:
+            variants = variants[: self.stream_variant_limit]
 
         attempts: List[Dict[str, Any]] = []
         for variant_name, variant_frame, scale_x, scale_y in variants:
