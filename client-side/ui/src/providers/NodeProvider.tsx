@@ -1,4 +1,11 @@
-import { ReactNode, createContext, useContext, useState } from "react";
+import {
+  ReactNode,
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+} from "react";
 import { Node, Edge } from "reactflow";
 import { nodesTopologicalSort, convertFlowToJson } from "../utils/flowUtils";
 import { FlowEvent, SocketContext } from "./SocketProvider";
@@ -82,9 +89,6 @@ interface NodeContextType {
   removeEdgesByIds: (id: string[]) => void;
   getEdgeIndex: (id: string) => Edge | undefined;
   showOnlyOutput?: boolean;
-  isRunning: boolean;
-  currentNodesRunning: string[];
-  errorCount: number;
   onUpdateNodeData: (nodeId: string, data: any) => void;
   onUpdateNodes: (nodesUpdated: Node[], edgesUpdated: Edge[]) => void;
   getNodeDimensions: (nodeId: string) => NodeDimensions | undefined;
@@ -101,10 +105,14 @@ interface NodeContextType {
   removeNode: (nodeId: string) => void;
   removeAll: () => void;
   findNode: (nodeId: string) => Node | undefined;
-  nodes: Node[];
-  edges: Edge[];
   currentNodeIdSelected: string;
   setCurrentNodeIdSelected: (id: string) => void;
+}
+
+interface NodeRuntimeContextType {
+  isRunning: boolean;
+  currentNodesRunning: string[];
+  errorCount: number;
 }
 
 const DUPLICATED_NODE_OFFSET = 100;
@@ -119,9 +127,6 @@ export const NodeContext = createContext<NodeContextType>({
   removeEdgesByIds: () => undefined,
   getEdgeIndex: () => undefined,
   showOnlyOutput: false,
-  isRunning: false,
-  currentNodesRunning: [],
-  errorCount: 0,
   onUpdateNodeData: () => undefined,
   onUpdateNodes: () => undefined,
   getNodeDimensions: () => undefined,
@@ -134,10 +139,14 @@ export const NodeContext = createContext<NodeContextType>({
   removeNode: () => undefined,
   removeAll: () => undefined,
   findNode: () => undefined,
-  nodes: [],
-  edges: [],
   currentNodeIdSelected: "",
   setCurrentNodeIdSelected: () => undefined,
+});
+
+export const NodeRuntimeContext = createContext<NodeRuntimeContextType>({
+  isRunning: false,
+  currentNodesRunning: [],
+  errorCount: 0,
 });
 
 export const NodeProvider = ({
@@ -168,7 +177,53 @@ export const NodeProvider = ({
   const [currentNodeIdSelected, setCurrentNodeIdSelected] =
     useState<string>("");
 
-  const runNode = (name: string) => {
+  const nodesById = useMemo(() => {
+    const map = new Map<string, Node>();
+    nodes.forEach((node) => {
+      map.set(node.id, node);
+    });
+    return map;
+  }, [nodes]);
+
+  const incomingEdgesByTarget = useMemo(() => {
+    const map = new Map<string, Edge[]>();
+    edges.forEach((edge) => {
+      const key = String(edge.target || "");
+      const existing = map.get(key);
+      if (existing) {
+        existing.push(edge);
+      } else {
+        map.set(key, [edge]);
+      }
+    });
+    return map;
+  }, [edges]);
+
+  const outgoingEdgesBySource = useMemo(() => {
+    const map = new Map<string, Edge[]>();
+    edges.forEach((edge) => {
+      const key = String(edge.source || "");
+      const existing = map.get(key);
+      if (existing) {
+        existing.push(edge);
+      } else {
+        map.set(key, [edge]);
+      }
+    });
+    return map;
+  }, [edges]);
+
+  const edgeByTarget = useMemo(() => {
+    const map = new Map<string, Edge>();
+    edges.forEach((edge) => {
+      if (!map.has(edge.target)) {
+        map.set(edge.target, edge);
+      }
+    });
+    return map;
+  }, [edges]);
+
+  const runNode = useCallback((name: string) => {
     const nodesSorted = nodesTopologicalSort(nodes, edges);
     // Runtime execution should not include canvas coordinates.
     // Some processors legitimately use fields named `x` / `y` (e.g. ROI),
@@ -203,9 +258,9 @@ export const NodeProvider = ({
       }
     })();
     return true;
-  };
+  }, [nodes, edges, t, metadata, socket, connect, emitEvent]);
 
-  const runAllNodes = () => {
+  const runAllNodes = useCallback(() => {
     if (nodes.length === 0) {
       toastFastInfoMessage(t("NoNodesToRun"));
       return;
@@ -242,19 +297,21 @@ export const NodeProvider = ({
         emitEvent(event);
       }
     })();
-  };
+  }, [nodes, edges, t, metadata, socket, connect, emitEvent]);
 
-  const hasParent = (id: string) => {
-    return !!edges.find((edge) => edge.target === id);
-  };
+  const hasParent = useCallback((id: string) => {
+    return !!incomingEdgesByTarget.get(id)?.length;
+  }, [incomingEdgesByTarget]);
 
-  const getIncomingEdges = (id: string) => {
-    return edges.filter((edge) => edge.target === id);
-  };
+  const getIncomingEdges = useCallback((id: string) => {
+    const found = incomingEdgesByTarget.get(id);
+    return found ? [...found] : [];
+  }, [incomingEdgesByTarget]);
 
-  const getOutgoingEdges = (id: string) => {
-    return edges.filter((edge) => edge.source === id);
-  };
+  const getOutgoingEdges = useCallback((id: string) => {
+    const found = outgoingEdgesBySource.get(id);
+    return found ? [...found] : [];
+  }, [outgoingEdgesBySource]);
 
   const removeNodeIncomingEdges = (id: string) => {
     const edgesUpdated = edges.filter((edge) => edge.target !== id);
@@ -294,19 +351,19 @@ export const NodeProvider = ({
     onUpdateNodes(nodesUpdated, edgesUpdated);
   };
 
-  const getEdgeIndex = (id: string) => {
-    return edges.find((edge) => edge.target === id);
-  };
+  const getEdgeIndex = useCallback((id: string) => {
+    return edgeByTarget.get(id);
+  }, [edgeByTarget]);
 
-  const getNodeDimensions = (id: string) => {
-    const node = nodes.find((node) => node.id === id);
+  const getNodeDimensions = useCallback((id: string) => {
+    const node = nodesById.get(id);
     let dimensions: NodeDimensions = { width: undefined, height: undefined };
     if (!!node) {
       dimensions = { width: node.width, height: node.height };
     }
 
     return dimensions;
-  };
+  }, [nodesById]);
 
   const createNodeRef = (nodeId: string) => {
     const nodeToDuplicate = nodes.find((node) => node.id === nodeId);
@@ -519,9 +576,9 @@ export const NodeProvider = ({
     onUpdateNodes([], []);
   };
 
-  const findNode = (nodeId: string) => {
-    return nodes.find((node) => node.id === nodeId);
-  };
+  const findNode = useCallback((nodeId: string) => {
+    return nodesById.get(nodeId);
+  }, [nodesById]);
 
   const updateNodeAppearance = (nodeId: string, appearance: NodeAppearance) => {
     const nodeToUpdate = nodes.find((node) => node.id === nodeId);
@@ -545,40 +602,73 @@ export const NodeProvider = ({
     }
   };
 
+  const nodeRuntimeValue = useMemo(
+    () => ({
+      isRunning,
+      currentNodesRunning,
+      errorCount,
+    }),
+    [isRunning, currentNodesRunning, errorCount],
+  );
+
+  const nodeContextValue = useMemo(
+    () => ({
+      runNode,
+      runAllNodes,
+      hasParent,
+      getIncomingEdges,
+      getOutgoingEdges,
+      removeNodeIncomingEdges,
+      removeEdgesByIds,
+      getEdgeIndex,
+      showOnlyOutput,
+      onUpdateNodeData,
+      onUpdateNodes,
+      getNodeDimensions,
+      duplicateNode,
+      createNodeRef,
+      clearNodeOutput,
+      clearAllOutput,
+      updateNodeAppearance,
+      overrideConfigForNode,
+      removeNode,
+      removeAll,
+      findNode,
+      currentNodeIdSelected,
+      setCurrentNodeIdSelected,
+    }),
+    [
+      runNode,
+      runAllNodes,
+      hasParent,
+      getIncomingEdges,
+      getOutgoingEdges,
+      removeNodeIncomingEdges,
+      removeEdgesByIds,
+      getEdgeIndex,
+      showOnlyOutput,
+      onUpdateNodeData,
+      onUpdateNodes,
+      getNodeDimensions,
+      duplicateNode,
+      createNodeRef,
+      clearNodeOutput,
+      clearAllOutput,
+      updateNodeAppearance,
+      overrideConfigForNode,
+      removeNode,
+      removeAll,
+      findNode,
+      currentNodeIdSelected,
+      setCurrentNodeIdSelected,
+    ],
+  );
+
   return (
-    <NodeContext.Provider
-      value={{
-        runNode,
-        runAllNodes,
-        hasParent,
-        getIncomingEdges,
-        getOutgoingEdges,
-        removeNodeIncomingEdges,
-        removeEdgesByIds,
-        getEdgeIndex,
-        showOnlyOutput,
-        isRunning,
-        currentNodesRunning,
-        errorCount,
-        onUpdateNodeData,
-        onUpdateNodes,
-        getNodeDimensions,
-        duplicateNode,
-        createNodeRef,
-        clearNodeOutput,
-        clearAllOutput,
-        updateNodeAppearance,
-        overrideConfigForNode,
-        removeNode,
-        removeAll,
-        findNode,
-        nodes,
-        edges,
-        currentNodeIdSelected: currentNodeIdSelected,
-        setCurrentNodeIdSelected: setCurrentNodeIdSelected,
-      }}
-    >
-      {children}
-    </NodeContext.Provider>
+    <NodeRuntimeContext.Provider value={nodeRuntimeValue}>
+      <NodeContext.Provider value={nodeContextValue}>
+        {children}
+      </NodeContext.Provider>
+    </NodeRuntimeContext.Provider>
   );
 };

@@ -145,3 +145,32 @@
 1. Run manual flow regression with backend live (`camera -> ROI -> main vision -> display`).
 2. Validate realtime behavior with two clients connected simultaneously.
 3. Continue all UI changes only in `client-side/ui`.
+
+## Optimization Pass (2026-02-25)
+- Implemented frontend-side portions of requested 8-point performance optimization pass.
+- `client-side/ui/src/components/Flow.tsx`
+  - throttles intermediate stream `progress` updates per node (~120ms)
+  - applies final progress immediately (no throttle on completion)
+  - avoids updating `lastRun` for intermediate stream ticks
+  - skips parent `onFlowChange` propagation for throttled intermediate stream updates
+  - clears pending throttled progress timers on socket disconnect
+- `client-side/ui/src/hooks/useFlowSocketListeners.tsx`
+  - stable socket listeners using refs/wrapper callbacks to reduce re-registration churn
+- `client-side/ui/src/providers/NodeProvider.tsx`
+  - added `NodeRuntimeContext` for runtime counters/status (`currentNodesRunning`, `errorCount`, `isRunning`)
+  - removed runtime counters and raw `nodes/edges` from main `NodeContext`
+  - memoized graph indexes/helpers to reduce repeated scans and context churn
+- Updated runtime-context consumers:
+  - `client-side/ui/src/components/nodes/node-button/NodePlayButton.tsx`
+  - `client-side/ui/src/components/nodes/GenericNode.tsx`
+  - `client-side/ui/src/components/nodes/RoiNode.tsx`
+  - `client-side/ui/src/hooks/useIsPlaying.tsx`
+- `client-side/ui/src/components/nodes/node-output/OutputDisplay.tsx`
+  - shared `predictions.json` polling per URL
+  - selective polling only when socket disconnected or placeholder text persists
+  - polling limited to OCR/QR text output path
+- `client-side/ui/src/services/clientCameraPublishers.ts`
+  - adaptive upload pacing/backpressure using measured upload duration EWMA
+  - slower send cadence when tab is hidden
+- Build validation:
+  - `npm run build` -> success

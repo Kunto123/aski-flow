@@ -1,6 +1,7 @@
 import gc
 import threading
 import time
+import os
 import eventlet
 from eventlet.semaphore import Semaphore
 import logging
@@ -111,6 +112,27 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
         initialized_nodes = set()
 
         stagnant_ticks = 0
+        try:
+            active_tick_sec = max(
+                0.005,
+                float(os.getenv("ASKI_LAUNCHER_ACTIVE_TICK_SEC", "0.02")),
+            )
+        except Exception:
+            active_tick_sec = 0.02
+        try:
+            idle_tick_min_sec = max(
+                active_tick_sec,
+                float(os.getenv("ASKI_LAUNCHER_IDLE_TICK_MIN_SEC", "0.05")),
+            )
+        except Exception:
+            idle_tick_min_sec = 0.05
+        try:
+            idle_tick_max_sec = max(
+                idle_tick_min_sec,
+                float(os.getenv("ASKI_LAUNCHER_IDLE_TICK_MAX_SEC", "0.2")),
+            )
+        except Exception:
+            idle_tick_max_sec = 0.2
 
         while nodes:
             error_detected = any(
@@ -135,7 +157,12 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
                     pool.spawn(self.run_node, node)
                     spawned_any = True
 
-            eventlet.sleep(0.5)
+            if spawned_any:
+                eventlet.sleep(active_tick_sec)
+            else:
+                backoff = min(stagnant_ticks, 5)
+                idle_sleep = min(idle_tick_max_sec, idle_tick_min_sec * (2 ** backoff))
+                eventlet.sleep(idle_sleep)
 
             before = set(nodes.keys())
             nodes = self.remove_completed_nodes(nodes)

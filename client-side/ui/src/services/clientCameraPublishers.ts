@@ -21,6 +21,7 @@ type Publisher = {
   video: HTMLVideoElement | null;
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D | null;
+  avgUploadMs: number;
 };
 
 type PrewarmArgs = {
@@ -296,7 +297,16 @@ function startPublisherLoop(publisher: Publisher) {
   const tick = async (ts: number) => {
     if (!publisher.running) return;
 
-    const intervalMs = 1000 / Math.max(1, publisher.config.fps || 10);
+    const baseIntervalMs = 1000 / Math.max(1, publisher.config.fps || 10);
+    const adaptiveIntervalMs = Math.max(
+      baseIntervalMs,
+      publisher.avgUploadMs > 0 ? Math.min(300, publisher.avgUploadMs * 0.9) : 0,
+    );
+    const hiddenMultiplier =
+      typeof document !== "undefined" && document.visibilityState === "hidden"
+        ? 4
+        : 1;
+    const intervalMs = adaptiveIntervalMs * hiddenMultiplier;
     if (publisher.inFlight || ts - publisher.lastTickAt < intervalMs) {
       publisher.rafId = requestAnimationFrame(tick);
       return;
@@ -312,6 +322,8 @@ function startPublisherLoop(publisher: Publisher) {
     publisher.inFlight = true;
 
     try {
+      const startedAt =
+        typeof performance !== "undefined" ? performance.now() : Date.now();
       const targetWidth = publisher.config.width || video.videoWidth;
       const targetHeight = publisher.config.height || video.videoHeight;
 
@@ -325,11 +337,20 @@ function startPublisherLoop(publisher: Publisher) {
       if (blob) {
         await uploadFrame(publisher, blob);
       }
+      const endedAt =
+        typeof performance !== "undefined" ? performance.now() : Date.now();
+      const uploadMs = Math.max(0, endedAt - startedAt);
+      publisher.avgUploadMs =
+        publisher.avgUploadMs > 0
+          ? publisher.avgUploadMs * 0.8 + uploadMs * 0.2
+          : uploadMs;
     } catch (error) {
       console.warn(
         `Client camera upload failed (camera_index=${publisher.config.cameraIndex}):`,
         error,
       );
+      // Back off quickly when the network/backend is struggling.
+      publisher.avgUploadMs = Math.max(publisher.avgUploadMs, 250);
     } finally {
       publisher.inFlight = false;
       if (publisher.running) {
@@ -375,6 +396,7 @@ async function startPublisher(sessionId: string, config: CameraConfig): Promise<
     video: null,
     canvas,
     ctx,
+    avgUploadMs: 0,
   };
   publishers.set(key, publisher);
 

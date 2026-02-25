@@ -705,14 +705,23 @@ class StreamManager:
                     time.sleep(0.05)
                     continue
 
-                encoded_ok, encoded = self._encode_jpeg(frame)
-                if not encoded_ok:
-                    time.sleep(0.01)
-                    continue
+                encoded_bytes: Optional[bytes] = None
+                try:
+                    with state.lock:
+                        should_encode_jpeg = state.mjpeg_clients > 0
+                except Exception:
+                    should_encode_jpeg = True
+
+                if should_encode_jpeg:
+                    encoded_ok, encoded = self._encode_jpeg(frame)
+                    if not encoded_ok:
+                        time.sleep(0.01)
+                        continue
+                    encoded_bytes = encoded.tobytes()
 
                 with state.lock:
                     state.latest_frame = frame
-                    state.latest_jpeg = encoded.tobytes()
+                    state.latest_jpeg = encoded_bytes
                     state.frames_produced += 1
                     state.last_frame_at = time.time()
         finally:
@@ -794,14 +803,23 @@ class StreamManager:
                 if isinstance(transformed, tuple) and len(transformed) == 2:
                     frame, predictions = transformed
 
-                encoded_ok, encoded = self._encode_jpeg(frame)
-                if not encoded_ok:
-                    self._cooperative_sleep(min(delay, 0.01))
-                    continue
+                encoded_bytes: Optional[bytes] = None
+                try:
+                    with state.lock:
+                        should_encode_jpeg = state.mjpeg_clients > 0
+                except Exception:
+                    should_encode_jpeg = True
+
+                if should_encode_jpeg:
+                    encoded_ok, encoded = self._encode_jpeg(frame)
+                    if not encoded_ok:
+                        self._cooperative_sleep(min(delay, 0.01))
+                        continue
+                    encoded_bytes = encoded.tobytes()
 
                 with state.lock:
                     state.latest_frame = frame
-                    state.latest_jpeg = encoded.tobytes()
+                    state.latest_jpeg = encoded_bytes
                     state.frames_produced += 1
                     state.last_frame_at = time.time()
                     if predictions:
@@ -1134,6 +1152,7 @@ class StreamManager:
     def mjpeg_generator(self, stream_id: str) -> Generator[bytes, None, None]:
         boundary = b"--frame\r\n"
         opened = False
+        last_sent_frame_version = -1
         try:
             while True:
                 state = self.get_stream(stream_id)
@@ -1154,17 +1173,25 @@ class StreamManager:
                     )
                     opened = True
 
-                frame = self.get_latest_jpeg(stream_id)
-                if frame is None:
-                    self._cooperative_sleep(0.03)
-                    continue
-
-                # Mark as accessed to prevent idle reaper stopping an active viewer.
-                try:
-                    with state.lock:
+                frame = None
+                frame_version = last_sent_frame_version
+                target_fps = None
+                with state.lock:
+                    frame = state.latest_jpeg
+                    frame_version = int(state.frames_produced or 0)
+                    target_fps = state.camera_fps
+                    if frame is not None and frame_version != last_sent_frame_version:
                         state.last_access_at = time.time()
-                except Exception:
-                    pass
+
+                if frame is None or frame_version == last_sent_frame_version:
+                    wait_sec = 0.03
+                    try:
+                        if target_fps and float(target_fps) > 0:
+                            wait_sec = min(0.1, max(0.005, 1.0 / float(target_fps)))
+                    except Exception:
+                        pass
+                    self._cooperative_sleep(wait_sec)
+                    continue
 
                 yield (
                     boundary
@@ -1173,7 +1200,7 @@ class StreamManager:
                     + frame
                     + b"\r\n"
                 )
-                self._cooperative_sleep(0.03)
+                last_sent_frame_version = frame_version
         finally:
             state = self.get_stream(stream_id)
             if state is not None and opened:

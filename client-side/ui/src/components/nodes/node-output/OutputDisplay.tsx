@@ -13,8 +13,9 @@ import {
 } from "./outputUtils";
 import PdfUrlOutput from "./PdfUrlOutput";
 import { OutputType } from "../../../nodes-configuration/types";
-import { useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import ThreeDimensionalUrlOutput from "./ThreeDimensionalUrlOutput";
+import { SocketContext } from "../../../providers/SocketProvider";
 
 interface OutputDisplayProps {
   data: NodeData;
@@ -26,6 +27,95 @@ interface OutputDisplayProps {
   ) => JSX.Element | null;
 }
 
+type PredictionsSubscriber = (payload: any) => void;
+type PredictionsPoller = {
+  url: string;
+  listeners: Set<PredictionsSubscriber>;
+  intervalId: number | null;
+  inFlight: boolean;
+};
+
+const SHARED_PREDICTIONS_POLL_INTERVAL_MS = 700;
+const sharedPredictionsPollers = new Map<string, PredictionsPoller>();
+
+function subscribeSharedPredictions(
+  url: string,
+  listener: PredictionsSubscriber,
+): () => void {
+  if (!url) return () => undefined;
+
+  let poller = sharedPredictionsPollers.get(url);
+
+  if (!poller) {
+    poller = {
+      url,
+      listeners: new Set(),
+      intervalId: null,
+      inFlight: false,
+    };
+
+    const poll = async () => {
+      if (!poller || poller.inFlight) return;
+      poller.inFlight = true;
+      try {
+        const response = await fetch(url, {
+          cache: "no-store",
+          headers: {
+            Accept: "application/json",
+          },
+        });
+        if (!response.ok) return;
+        const payload = await response.json();
+        for (const cb of Array.from(poller.listeners)) {
+          try {
+            cb(payload);
+          } catch {
+            // ignore listener errors
+          }
+        }
+      } catch {
+        // Ignore transient network/socket issues.
+      } finally {
+        if (poller) {
+          poller.inFlight = false;
+        }
+      }
+    };
+
+    poller.intervalId = window.setInterval(() => {
+      void poll();
+    }, SHARED_PREDICTIONS_POLL_INTERVAL_MS);
+    void poll();
+    sharedPredictionsPollers.set(url, poller);
+  }
+
+  poller.listeners.add(listener);
+
+  return () => {
+    const current = sharedPredictionsPollers.get(url);
+    if (!current) return;
+    current.listeners.delete(listener);
+    if (current.listeners.size > 0) return;
+    if (current.intervalId != null) {
+      window.clearInterval(current.intervalId);
+    }
+    sharedPredictionsPollers.delete(url);
+  };
+}
+
+function isPlaceholderDetectionText(text: string): boolean {
+  const normalized = String(text || "").trim().toLowerCase();
+  if (!normalized) return true;
+  return (
+    normalized.includes("no qr code detected") ||
+    normalized.includes("no text detected") ||
+    normalized.includes("waiting for source frames") ||
+    normalized.includes("warming up") ||
+    normalized.includes("qr decoding failed") ||
+    normalized.includes("ocr failed")
+  );
+}
+
 export default function OutputDisplay({
   data,
   fitInContainer = false,
@@ -33,6 +123,7 @@ export default function OutputDisplay({
   getOutputComponentOverride,
 }: OutputDisplayProps) {
   const { t } = useTranslation("flow");
+  const { socket } = useContext(SocketContext);
   const upstreamProcessorTypeForDisplay = (data as any)?.upstreamProcessorTypeForDisplay;
   const effectiveTextFirstProcessorType =
     upstreamProcessorTypeForDisplay ?? data.processorType;
@@ -43,6 +134,38 @@ export default function OutputDisplay({
 
   const [indexDisplayed, setIndexDisplayed] = useState(0);
   const [liveTextOverride, setLiveTextOverride] = useState<string | null>(null);
+  const [socketConnected, setSocketConnected] = useState<boolean>(() => {
+    try {
+      return !!socket?.isConnected?.();
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    if (!socket) {
+      setSocketConnected(false);
+      return;
+    }
+
+    const syncState = () => {
+      try {
+        setSocketConnected(!!socket.isConnected());
+      } catch {
+        setSocketConnected(false);
+      }
+    };
+    const onConnect = () => setSocketConnected(true);
+    const onDisconnect = () => setSocketConnected(false);
+
+    syncState();
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    return () => {
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+    };
+  }, [socket]);
 
   const normalizedOutputs = useMemo(() => {
     if (!data.outputData) return [] as string[];
@@ -106,11 +229,46 @@ export default function OutputDisplay({
     setLiveTextOverride(null);
   }, [streamPredictionsUrl, effectiveTextFirstProcessorType]);
 
-  useEffect(() => {
-    if (!streamPredictionsUrl || !preferTextFirst) return;
-    if (typeof window === "undefined" || typeof fetch === "undefined") return;
+  const baseSelectorOutputs = useMemo(() => {
+    if (isMainVisionModel && normalizedOutputs.length > 1) {
+      return [normalizedOutputs[0]];
+    }
+    if (preferTextFirst && normalizedOutputs.length > 1) {
+      const rank = (value: string) =>
+        getOutputExtension(value) === "markdown" ? 0 : 1;
+      return [...normalizedOutputs].sort((a, b) => rank(a) - rank(b));
+    }
+    return normalizedOutputs;
+  }, [isMainVisionModel, normalizedOutputs, preferTextFirst]);
 
-    let cancelled = false;
+  const primaryTextCandidate = useMemo(() => {
+    if (!preferTextFirst) return "";
+    if (baseSelectorOutputs.length === 0) return "";
+    return String(baseSelectorOutputs[0] ?? "").trim();
+  }, [preferTextFirst, baseSelectorOutputs]);
+
+  const shouldPollPredictions = useMemo(() => {
+    if (!streamPredictionsUrl || !preferTextFirst) return false;
+    if (indexDisplayed !== 0) return false;
+    if (!socketConnected) return true;
+    return isPlaceholderDetectionText(primaryTextCandidate);
+  }, [
+    streamPredictionsUrl,
+    preferTextFirst,
+    indexDisplayed,
+    socketConnected,
+    primaryTextCandidate,
+  ]);
+
+  useEffect(() => {
+    if (shouldPollPredictions) return;
+    // Prefer canonical socket-driven output when fallback polling is not needed.
+    setLiveTextOverride(null);
+  }, [shouldPollPredictions, primaryTextCandidate, socketConnected]);
+
+  useEffect(() => {
+    if (!streamPredictionsUrl || !shouldPollPredictions) return;
+    if (typeof window === "undefined" || typeof fetch === "undefined") return;
 
     const extractLiveText = (payload: any): string | null => {
       if (!payload || typeof payload !== "object") return null;
@@ -132,44 +290,16 @@ export default function OutputDisplay({
       return null;
     };
 
-    const poll = async () => {
-      try {
-        const response = await fetch(streamPredictionsUrl, {
-          cache: "no-store",
-          headers: {
-            Accept: "application/json",
-          },
-        });
-        if (!response.ok) return;
-        const payload = await response.json();
-        if (cancelled) return;
-        const liveText = extractLiveText(payload);
-        if (!liveText) return;
-        setLiveTextOverride((prev) => (prev === liveText ? prev : liveText));
-      } catch {
-        // Ignore transient fetch/socket/network errors; regular output remains visible.
-      }
-    };
-
-    void poll();
-    const timerId = window.setInterval(() => {
-      void poll();
-    }, 500);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(timerId);
-    };
-  }, [streamPredictionsUrl, preferTextFirst, effectiveTextFirstProcessorType]);
+    return subscribeSharedPredictions(streamPredictionsUrl, (payload) => {
+      const liveText = extractLiveText(payload);
+      if (!liveText) return;
+      setLiveTextOverride((prev) => (prev === liveText ? prev : liveText));
+    });
+  }, [streamPredictionsUrl, shouldPollPredictions, effectiveTextFirstProcessorType]);
 
   const selectorOutputs = useMemo(() => {
-    if (isMainVisionModel && normalizedOutputs.length > 1) {
-      return [normalizedOutputs[0]];
-    }
-    if (preferTextFirst && normalizedOutputs.length > 1) {
-      const rank = (value: string) =>
-        getOutputExtension(value) === "markdown" ? 0 : 1;
-      const sorted = [...normalizedOutputs].sort((a, b) => rank(a) - rank(b));
+    if (preferTextFirst && baseSelectorOutputs.length > 1) {
+      const sorted = [...baseSelectorOutputs];
       if (liveTextOverride) {
         const next = [...sorted];
         next[0] = liveTextOverride;
@@ -177,8 +307,8 @@ export default function OutputDisplay({
       }
       return sorted;
     }
-    return normalizedOutputs;
-  }, [isMainVisionModel, normalizedOutputs, preferTextFirst, liveTextOverride]);
+    return baseSelectorOutputs;
+  }, [preferTextFirst, baseSelectorOutputs, liveTextOverride]);
 
   useEffect(() => {
     if (indexDisplayed < selectorOutputs.length) return;

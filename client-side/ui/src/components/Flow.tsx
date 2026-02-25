@@ -54,6 +54,8 @@ import {
   stopAllClientCameraPublishers,
 } from "../services/clientCameraPublishers";
 
+const STREAM_PROGRESS_UI_MIN_INTERVAL_MS = 120;
+
 function extractStreamIdsFromValue(value: any): string[] {
   const streamIds = new Set<string>();
 
@@ -129,6 +131,11 @@ const Flow = forwardRef((props: FlowProps, ref) => {
   });
   const [currentNodesRunning, setCurrentNodesRunning] = useState<string[]>([]);
   const [errorCount, setErrorCount] = useState<number>(0);
+  const streamProgressLastCommitAtRef = useRef<Map<string, number>>(new Map());
+  const streamProgressPendingTimersRef = useRef<Map<string, number>>(new Map());
+  const streamProgressPendingDataRef =
+    useRef<Map<string, FlowOnProgressEventData>>(new Map());
+  const skipNextOnFlowChangeRef = useRef(false);
 
   const { getElement } = useVisibility();
   const { socket } = useContext(SocketContext);
@@ -139,7 +146,56 @@ const Flow = forwardRef((props: FlowProps, ref) => {
     if (props.isRunning !== areNodesRunning) {
       props.onRunChange(areNodesRunning);
     }
-  }, [currentNodesRunning]);
+  }, [currentNodesRunning, props.isRunning, props.onRunChange]);
+
+  const clearPendingProgressTimer = useCallback((nodeName?: string) => {
+    if (!nodeName) return;
+    const timerId = streamProgressPendingTimersRef.current.get(nodeName);
+    if (timerId == null) return;
+    window.clearTimeout(timerId);
+    streamProgressPendingTimersRef.current.delete(nodeName);
+  }, []);
+
+  const applyProgressToNodes = useCallback((data: FlowOnProgressEventData) => {
+    const nodeToUpdate = data.instanceName;
+    const output = data.output;
+    const isDone = data.isDone ?? true;
+    if (!nodeToUpdate) return;
+
+    if (isDone) {
+      setCurrentNodesRunning((previous) => {
+        return previous.filter((node) => node != nodeToUpdate);
+      });
+    }
+
+    streamProgressLastCommitAtRef.current.set(nodeToUpdate, Date.now());
+    if (!isDone) {
+      // Intermediate stream updates are transient UI state; avoid syncing the full
+      // flow model to parent storage on every frame.
+      skipNextOnFlowChangeRef.current = true;
+    }
+
+    setNodes((prevNodes) => {
+      const index = prevNodes.findIndex((node) => node.data.name == nodeToUpdate);
+      if (index < 0) return prevNodes;
+
+      const prevNode = prevNodes[index];
+      const nextLastRun = isDone ? new Date() : prevNode.data.lastRun;
+      const nextData = {
+        ...prevNode.data,
+        outputData: output,
+        lastRun: nextLastRun,
+        isDone,
+      };
+
+      const nextNodes = [...prevNodes];
+      nextNodes[index] = {
+        ...prevNode,
+        data: nextData,
+      };
+      return nextNodes;
+    });
+  }, []);
 
   const [{ isOver }, dropRef] = useDrop({
     accept: "NODE",
@@ -186,30 +242,6 @@ const Flow = forwardRef((props: FlowProps, ref) => {
     addNode,
   }));
 
-  useSocketListeners<
-    FlowOnProgressEventData,
-    FlowOnErrorEventData,
-    FlowOnProgressEventData
-  >(
-    onProgress,
-    onError,
-    () => {
-      // Safety: if a run completes without per-node completion flags,
-      // ensure the UI can re-run nodes without requiring a refresh.
-      setCurrentNodesRunning([]);
-    },
-    onCurrentNodeRunning,
-    () => {
-      // Socket drops (e.g. WinError 10054 on server side) can leave node
-      // running indicators stuck because final events never arrive.
-      stopAllClientCameraPublishers();
-      setCurrentNodesRunning([]);
-    },
-    () => {
-      setCurrentNodesRunning([]);
-    },
-  );
-
   // NOTE:
   // We intentionally do NOT force-stop camera streams on component unmount.
   // A browser refresh briefly unmounts the React tree and would otherwise cause
@@ -218,38 +250,47 @@ const Flow = forwardRef((props: FlowProps, ref) => {
   // - explicit node removal / clear output actions
   // - backend idle reaper (ASKI_CAMERA_IDLE_TIMEOUT_SEC)
 
-  function onProgress(data: FlowOnProgressEventData) {
+  const onProgress = useCallback((data: FlowOnProgressEventData) => {
     const nodeToUpdate = data.instanceName;
-    const output = data.output;
     const isDone = data.isDone ?? true;
+    if (!nodeToUpdate) return;
 
     if (isDone) {
-      setCurrentNodesRunning((previous) => {
-        return previous.filter((node) => node != nodeToUpdate);
-      });
+      streamProgressPendingDataRef.current.delete(nodeToUpdate);
+      clearPendingProgressTimer(nodeToUpdate);
+      applyProgressToNodes(data);
+      return;
     }
 
-    if (nodeToUpdate) {
-      setNodes((prevNodes) => {
-        return [
-          ...prevNodes.map((node: Node) => {
-            if (node.data.name == nodeToUpdate) {
-              node.data = {
-                ...node.data,
-                outputData: output,
-                lastRun: new Date(),
-                isDone,
-              };
-            }
-
-            return node;
-          }),
-        ];
-      });
+    const now = Date.now();
+    const lastCommittedAt = streamProgressLastCommitAtRef.current.get(nodeToUpdate) ?? 0;
+    const elapsedMs = now - lastCommittedAt;
+    if (elapsedMs >= STREAM_PROGRESS_UI_MIN_INTERVAL_MS) {
+      streamProgressPendingDataRef.current.delete(nodeToUpdate);
+      clearPendingProgressTimer(nodeToUpdate);
+      applyProgressToNodes(data);
+      return;
     }
-  }
 
-  function onError(data: FlowOnErrorEventData) {
+    streamProgressPendingDataRef.current.set(nodeToUpdate, data);
+    if (streamProgressPendingTimersRef.current.has(nodeToUpdate)) {
+      return;
+    }
+
+    const waitMs = Math.max(0, STREAM_PROGRESS_UI_MIN_INTERVAL_MS - elapsedMs);
+    const timerId = window.setTimeout(() => {
+      streamProgressPendingTimersRef.current.delete(nodeToUpdate);
+      const latest = streamProgressPendingDataRef.current.get(nodeToUpdate);
+      if (!latest) return;
+      streamProgressPendingDataRef.current.delete(nodeToUpdate);
+      applyProgressToNodes(latest);
+    }, waitMs);
+    streamProgressPendingTimersRef.current.set(nodeToUpdate, timerId);
+  }, [applyProgressToNodes, clearPendingProgressTimer]);
+
+  const onError = useCallback((data: FlowOnErrorEventData) => {
+    streamProgressPendingDataRef.current.delete(data.instanceName);
+    clearPendingProgressTimer(data.instanceName);
     setCurrentNodesRunning((previous) => {
       return previous.filter((node) => node != data.instanceName);
     });
@@ -280,22 +321,66 @@ const Flow = forwardRef((props: FlowProps, ref) => {
     });
     setErrorCount((prevErrorCount) => prevErrorCount + 1);
     setIsPopupOpen(true);
-  }
+  }, [clearPendingProgressTimer]);
 
-  function onCurrentNodeRunning(data: FlowOnCurrentNodeRunningEventData) {
+  const onCurrentNodeRunning = useCallback((data: FlowOnCurrentNodeRunningEventData) => {
     setCurrentNodesRunning((previous) => {
       if (!data.instanceName) return previous;
       return previous.includes(data.instanceName)
         ? previous
         : [...previous, data.instanceName];
     });
-  }
+  }, []);
+
+  useSocketListeners<
+    FlowOnProgressEventData,
+    FlowOnErrorEventData,
+    FlowOnProgressEventData
+  >(
+    onProgress,
+    onError,
+    () => {
+      // Safety: if a run completes without per-node completion flags,
+      // ensure the UI can re-run nodes without requiring a refresh.
+      setCurrentNodesRunning([]);
+    },
+    onCurrentNodeRunning,
+    () => {
+      // Socket drops (e.g. WinError 10054 on server side) can leave node
+      // running indicators stuck because final events never arrive.
+      for (const timerId of streamProgressPendingTimersRef.current.values()) {
+        window.clearTimeout(timerId);
+      }
+      streamProgressPendingTimersRef.current.clear();
+      streamProgressPendingDataRef.current.clear();
+      stopAllClientCameraPublishers();
+      setCurrentNodesRunning([]);
+    },
+    () => {
+      setCurrentNodesRunning([]);
+    },
+  );
 
   useEffect(() => {
     if (props.onFlowChange) {
+      if (skipNextOnFlowChangeRef.current) {
+        skipNextOnFlowChangeRef.current = false;
+        return;
+      }
       props.onFlowChange(nodes, edges, props.metadata);
     }
-  }, [nodes, edges]);
+  }, [nodes, edges, props.metadata, props.onFlowChange]);
+
+  useEffect(() => {
+    return () => {
+      for (const timerId of streamProgressPendingTimersRef.current.values()) {
+        window.clearTimeout(timerId);
+      }
+      streamProgressPendingTimersRef.current.clear();
+      streamProgressPendingDataRef.current.clear();
+      streamProgressLastCommitAtRef.current.clear();
+    };
+  }, []);
 
   useEffect(() => {
     if (!reactFlowInstance || !reactFlowWrapper.current) {
@@ -459,12 +544,12 @@ const Flow = forwardRef((props: FlowProps, ref) => {
     setIsPopupOpen(false);
   }, []);
 
-  function handleChangeFlow(nodes: Node[], edges: Edge[]): void {
+  const handleChangeFlow = useCallback((nodes: Node[], edges: Edge[]): void => {
     setNodes(nodes);
     setEdges(edges);
-  }
+  }, []);
 
-  const handleUpdateNodeData = (nodeId: string, data: any) => {
+  const handleUpdateNodeData = useCallback((nodeId: string, data: any) => {
     const updatedNodes = nodes.map((node) => {
       if (node.id === nodeId) {
         return { ...node, data };
@@ -472,12 +557,12 @@ const Flow = forwardRef((props: FlowProps, ref) => {
       return node;
     });
     setNodes(updatedNodes);
-  };
+  }, [nodes]);
 
-  const handleUpdateNodes = (updatedNodes: Node[], updatesEdges: Edge[]) => {
+  const handleUpdateNodes = useCallback((updatedNodes: Node[], updatesEdges: Edge[]) => {
     setNodes(updatedNodes);
     setEdges(updatesEdges);
-  };
+  }, []);
 
   return (
     <NodeProvider
