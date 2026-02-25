@@ -17,6 +17,71 @@ import ImageMaskCreatorFieldFlowAware from "../components/nodes/node-input/Image
 import { evaluateCondition } from "../utils/evaluateConditions";
 import FileUploadField from "../components/nodes/node-input/FileUploadField";
 import { getServerModelFiles, ServerModelFile } from "../api/models";
+import { getServerOcrLanguages, OcrLanguagesResponse } from "../api/ocr";
+
+const OCR_PRESET_FIELD_DEFAULTS: Record<string, Record<string, any>> = {
+  general: {
+    psm: "6",
+    oem: "3",
+    preprocess: "auto",
+    scale_factor: 1.8,
+    min_confidence: 15,
+    stream_fps: 10,
+    ocr_fps: 2,
+    draw_boxes: true,
+    draw_text: true,
+    tesseract_config: "",
+  },
+  "ui-screenshot": {
+    psm: "11",
+    oem: "3",
+    preprocess: "adaptive",
+    scale_factor: 2.5,
+    min_confidence: 8,
+    stream_fps: 10,
+    ocr_fps: 1.5,
+    draw_boxes: true,
+    draw_text: true,
+    tesseract_config: "",
+  },
+  document: {
+    psm: "6",
+    oem: "3",
+    preprocess: "auto",
+    scale_factor: 2.0,
+    min_confidence: 20,
+    stream_fps: 10,
+    ocr_fps: 2,
+    draw_boxes: true,
+    draw_text: true,
+    tesseract_config: "",
+  },
+  "single-line": {
+    psm: "7",
+    oem: "3",
+    preprocess: "auto",
+    scale_factor: 2.2,
+    min_confidence: 5,
+    stream_fps: 10,
+    ocr_fps: 2,
+    draw_boxes: true,
+    draw_text: true,
+    tesseract_config: "",
+  },
+};
+const OCR_ADVANCED_FIELD_NAMES = new Set([
+  "psm",
+  "oem",
+  "preprocess",
+  "scale_factor",
+  "min_confidence",
+  "stream_fps",
+  "ocr_fps",
+  "draw_boxes",
+  "draw_text",
+  "tesseract_config",
+]);
+
 export interface DisplayParams {
   showHandles?: boolean;
   showLabels?: boolean;
@@ -40,6 +105,10 @@ export function useFormFields(
   const [serverModelFiles, setServerModelFiles] = useState<ServerModelFile[]>([]);
   const [isLoadingServerModelFiles, setIsLoadingServerModelFiles] =
     useState(false);
+  const [serverOcrLanguages, setServerOcrLanguages] =
+    useState<OcrLanguagesResponse | null>(null);
+  const [isLoadingServerOcrLanguages, setIsLoadingServerOcrLanguages] =
+    useState(false);
 
   const getFields = () => {
     let fields;
@@ -53,6 +122,7 @@ export function useFormFields(
 
   const fields = getFields();
   const isMainVisionModelNode = data?.processorType === "main-vision-model";
+  const isOcrReaderNode = data?.processorType === "ocr-reader";
 
   useEffect(() => {
     if (!setDefaultOptions) return;
@@ -84,6 +154,32 @@ export function useFormFields(
       isCancelled = true;
     };
   }, [isMainVisionModelNode]);
+
+  useEffect(() => {
+    if (!isOcrReaderNode) return;
+
+    let isCancelled = false;
+    setIsLoadingServerOcrLanguages(true);
+
+    getServerOcrLanguages()
+      .then((response) => {
+        if (isCancelled) return;
+        setServerOcrLanguages(response ?? null);
+      })
+      .catch((error) => {
+        if (isCancelled) return;
+        console.error("Error fetching server OCR languages:", error);
+        setServerOcrLanguages(null);
+      })
+      .finally(() => {
+        if (isCancelled) return;
+        setIsLoadingServerOcrLanguages(false);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isOcrReaderNode]);
 
   const handleEventNodeDataChange = (
     event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
@@ -184,6 +280,43 @@ export function useFormFields(
     return sorted.map((item) => item.path);
   }
 
+  function getServerOcrLanguageAutocompleteOptions(): string[] {
+    const response = serverOcrLanguages;
+    if (!response) {
+      return ["eng", "ind", "eng+ind"];
+    }
+
+    const combined = [
+      ...(Array.isArray(response.recommended) ? response.recommended : []),
+      ...(Array.isArray(response.languages) ? response.languages : []),
+    ];
+    return Array.from(
+      new Set(
+        combined
+          .map((item) => String(item ?? "").trim())
+          .filter((item) => item && item.toLowerCase() !== "osd"),
+      ),
+    );
+  }
+
+  function getFieldDisplayValue(field: Field) {
+    const currentValue = data?.[field.name];
+    if (currentValue != null && currentValue !== "") {
+      return currentValue;
+    }
+
+    if (isOcrReaderNode && OCR_ADVANCED_FIELD_NAMES.has(field.name)) {
+      const profileKey = String(data?.ocr_profile ?? "general").trim() || "general";
+      const profileDefaults =
+        OCR_PRESET_FIELD_DEFAULTS[profileKey] ?? OCR_PRESET_FIELD_DEFAULTS.general;
+      if (Object.prototype.hasOwnProperty.call(profileDefaults, field.name)) {
+        return profileDefaults[field.name];
+      }
+    }
+
+    return field.defaultValue;
+  }
+
   const renderField = (field: Field, isLoopField?: boolean) => {
     if (isLoopField) {
       return renderList(data, field);
@@ -192,6 +325,8 @@ export function useFormFields(
     const isServerModelAutocompleteField =
       isMainVisionModelNode &&
       (field.name === "model_path" || field.name === "ergonomic_pose_model_path");
+    const isOcrLanguageAutocompleteField =
+      isOcrReaderNode && field.name === "lang";
 
     if (isServerModelAutocompleteField) {
       const options = getServerModelAutocompleteOptions(field.name);
@@ -231,6 +366,46 @@ export function useFormFields(
       );
     }
 
+    if (isOcrLanguageAutocompleteField) {
+      const options = getServerOcrLanguageAutocompleteOptions();
+      const basePlaceholder = field.placeholder ? String(t(field.placeholder)) : "";
+      const placeholder =
+        isLoadingServerOcrLanguages && options.length === 0
+          ? "Loading OCR languages from server..."
+          : basePlaceholder;
+      const serverCount = Number(serverOcrLanguages?.count ?? 0);
+      const hasError = !!serverOcrLanguages?.error;
+
+      return (
+        <div
+          className="nowheel nodrag nopan w-full"
+          onMouseDown={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <Autocomplete
+            className={`nowheel ${!isTouchDevice ? "nodrag" : ""}`}
+            value={String(data[field.name] ?? "")}
+            onChange={(value) => handleNodeFieldChange(field.name, value)}
+            data={options}
+            placeholder={placeholder}
+            limit={20}
+            maxDropdownHeight={240}
+            comboboxProps={{
+              withinPortal: false,
+              zIndex: 50,
+            }}
+          />
+          <p className="mt-1 px-1 text-xs text-slate-300">
+            {isLoadingServerOcrLanguages
+              ? "Loading OCR languages from server..."
+              : hasError
+                ? "Could not read server OCR languages. You can still type manually (e.g. eng+ind)."
+                : `OCR languages (server): ${serverCount} found. Suggestions available.`}
+          </p>
+        </div>
+      );
+    }
+
     switch (field.type) {
       case "textToDisplay":
         return <p>{field.defaultValue}</p>;
@@ -238,7 +413,7 @@ export function useFormFields(
       case "textfield":
         return (
           <NodeTextField
-            value={data[field.name]}
+            value={String(getFieldDisplayValue(field) ?? "")}
             placeholder={field.placeholder ? String(t(field.placeholder)) : ""}
             isTouchDevice={isTouchDevice}
             onChange={(event) => {
@@ -259,7 +434,7 @@ export function useFormFields(
       case "numericfield":
         return (
           <NodeTextField
-            value={data[field.name]}
+            value={String(getFieldDisplayValue(field) ?? "")}
             placeholder={field.placeholder ? String(t(field.placeholder)) : ""}
             isTouchDevice={isTouchDevice}
             onChange={(event) => {
@@ -305,7 +480,7 @@ export function useFormFields(
           <SelectAutocomplete
             key={`${id}-${field.name}`}
             onChange={(value) => handleNodeFieldChange(field.name, value)}
-            selectedValue={data[field.name] ?? ""}
+            selectedValue={(getFieldDisplayValue(field) ?? "") as string}
             values={
               !!field.options
                 ? field.options?.map((option) => {
@@ -382,11 +557,11 @@ export function useFormFields(
         return (
           <div className="flex w-full flex-row items-center justify-center">
             <p className="w-1/12 text-left text-sm text-blue-700 dark:text-blue-200">
-              {data[field.name]}
+              {getFieldDisplayValue(field)}
             </p>
             <Slider
               className="nodrag track w-11/12"
-              value={data[field.name]}
+              value={getFieldDisplayValue(field)}
               onChange={(value) => handleNodeFieldChange(field.name, value)}
               onChangeEnd={(value) => handleNodeFieldChange(field.name, value)}
               styles={{
@@ -425,7 +600,7 @@ export function useFormFields(
               onChange={(e) =>
                 handleNodeFieldChange(field.name, e.currentTarget.checked)
               }
-              checked={data[field.name]}
+              checked={Boolean(getFieldDisplayValue(field))}
               className={`nowheel ${!isTouchDevice ? "nodrag" : ""}`}
               size="lg"
               color="rgba(29, 193, 226, 0.95)"

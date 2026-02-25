@@ -18,6 +18,42 @@ const isBackendMediaPath = (path: string) => {
   return path.startsWith("/stream/") || path.startsWith("/asset/") || path.startsWith("/image/");
 };
 
+const hasExplicitPathPrefix = (raw: string) => {
+  if (!raw) return false;
+  const s = raw.trim();
+  if (!s) return false;
+  return (
+    s.startsWith("/") ||
+    s.startsWith("./") ||
+    s.startsWith("../") ||
+    s.startsWith("\\\\") ||
+    /^[a-zA-Z]:[\\/]/.test(s)
+  );
+};
+
+const hasUrlSchemePrefix = (raw: string) => {
+  if (!raw) return false;
+  const s = raw.trim().toLowerCase();
+  return (
+    s.startsWith("http://") ||
+    s.startsWith("https://") ||
+    s.startsWith("file://") ||
+    s.startsWith("blob:") ||
+    s.startsWith("data:")
+  );
+};
+
+export const isLikelyResourceReference = (raw: string) => {
+  if (!raw || typeof raw !== "string") return false;
+  const s = raw.trim();
+  if (!s) return false;
+
+  if (isStreamUrl(s)) return true;
+  if (hasUrlSchemePrefix(s)) return true;
+  if (hasExplicitPathPrefix(s)) return true;
+  return false;
+};
+
 export const getFileExtension = (url: string) => {
   const extensionMatch = url.match(/\.([0-9a-z]+)(?:[\?#]|$)/i);
   return extensionMatch ? extensionMatch[1] : "";
@@ -127,6 +163,12 @@ export function getOutputExtension(output: string): OutputType {
   if (typeof output !== "string") return "markdown";
   const normalizedOutput = normalizeStreamOutputUrl(output);
   if (isStreamUrl(normalizedOutput)) return "imageUrl";
+
+  // Avoid false positives on plain text values (e.g. OCR results like
+  // "Bahan Coba.png") that happen to end with a file-like extension.
+  if (!isLikelyResourceReference(output)) {
+    return "markdown";
+  }
 
   let extension = Object.keys(extensionToTypeMap).find((ext) =>
     normalizedOutput.endsWith(ext),
