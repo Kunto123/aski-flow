@@ -30,6 +30,8 @@ export default function OutputDisplay({
 }: OutputDisplayProps) {
   const { t } = useTranslation("flow");
   const isMainVisionModel = data.processorType === "main-vision-model";
+  const preferTextFirst =
+    data.processorType === "ocr-reader" || data.processorType === "qr-code-reader";
 
   const [indexDisplayed, setIndexDisplayed] = useState(0);
 
@@ -68,8 +70,13 @@ export default function OutputDisplay({
     if (isMainVisionModel && normalizedOutputs.length > 1) {
       return [normalizedOutputs[0]];
     }
+    if (preferTextFirst && normalizedOutputs.length > 1) {
+      const rank = (value: string) =>
+        getOutputExtension(value) === "markdown" ? 0 : 1;
+      return [...normalizedOutputs].sort((a, b) => rank(a) - rank(b));
+    }
     return normalizedOutputs;
-  }, [isMainVisionModel, normalizedOutputs]);
+  }, [isMainVisionModel, normalizedOutputs, preferTextFirst]);
 
   useEffect(() => {
     if (indexDisplayed < selectorOutputs.length) return;

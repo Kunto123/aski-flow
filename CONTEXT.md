@@ -1,8 +1,8 @@
 # AI Flow Context Log
 
 ## Last Updated
-- Date: 2026-02-23
-- Focus: Multi-client camera source fix (client-side camera capture -> central server ingest) + scoped camera stop cleanup.
+- Date: 2026-02-25
+- Focus: OCR Reader node activation (OpenCV + pytesseract + Tesseract runtime validation) while preserving central-server flow architecture.
 
 ## Current Goal
 - Keep architecture mode `Central Server + Many Clients`.
@@ -19,6 +19,10 @@
 - Backend smoke test passed:
   - Startup command: `.venv\\Scripts\\python.exe main.py`
   - Health endpoint: `GET http://127.0.0.1:8000/health` -> `200 {"status":"ok"}`
+- OCR runtime prerequisites validated on Windows (server-side environment target):
+  - `tesseract.exe` available in PATH (`tesseract -v` OK)
+  - Installed languages confirmed (user reported `ind` available after setup; initial check showed `eng`, `osd`)
+  - `pytesseract` installed in backend venv (`server-side/backend/.venv`) and importable
 - Frontend dependencies installed (`npm ci`) and production build passed (`npm run build`).
 - Frontend preview smoke test passed:
   - `http://127.0.0.1:5173` -> `200`
@@ -117,6 +121,20 @@
   - Electron now installs explicit `media` permission check/request handlers for trusted local origins (`file://`, `localhost`, `127.0.0.1`)
   - Desktop mode no longer loads built UI via `file://`; it serves `client-side/ui/build` through an internal loopback HTTP server (`127.0.0.1:<ephemeral>`) and loads that URL, ensuring secure-context camera APIs (`getUserMedia`) are available in renderer
   - File: `client-side/ui/desktop/main.cjs`
+- OCR Reader node backend implementation activated (replaces previous dummy passthrough):
+  - `server-side/backend/app/processors/components/extension/ocr_reader_processor.py`
+  - Supports file mode (`/asset/<image>`) and stream mode (`stream://...`)
+  - Uses `OpenCV` preprocessing + `pytesseract` (`image_to_data`) for text, word boxes, confidences
+  - Stream mode now emits overlay stream (boxes/text) and live OCR JSON payload via transform-stream predictions
+  - Keeps output compatibility pattern (`media_ref`, `json`) so existing OCR node wiring remains usable
+  - Adds auto language selection (prefers `eng+ind` when both are installed) with fallback warnings
+  - Adds OCR tuning support via processor config/env (lang/psm/oem/preprocess/fps/confidence/overlay toggles)
+  - Errors in per-frame OCR no longer kill stream immediately; stream stays alive and reports error status in payload
+- OCR Reader UI help text updated to remove dummy label:
+  - `client-side/ui/src/nodes-configuration/ocrReaderNode.ts`
+- OCR backend smoke test (local synthetic image) passed:
+  - Test text `TES OCR 123` detected successfully
+  - Default resolved language observed as `eng+ind` in current environment
 
 ## Run Commands
 1. Server:
@@ -135,14 +153,17 @@
 - Main Vision output simplified to 2 outputs (`json` + `image`) and default `models/yolov5mu.pt`.
 - Ergonomic check integrated into Main Vision.
 - Main Vision ergonomic toggle preserved while legacy standalone node is removed.
+- OCR Reader node registration path preserved (`client-side` node config + backend auto-discovery processor factory).
 - Display fit/aspect and output dedup behavior preserved.
 - Reactive auto-run guard and erase-output reliability preserved.
 
 ## Next Focus
 1. Run integrated manual test: `Client -> Server` flow execution and live stream display.
 2. Validate multi-client concurrency (two clients connected to one central server) with both using `camera_index=0` simultaneously.
-3. Verify camera permission / device-index mapping behavior on different client laptops (browser/Electron + Windows camera permissions).
-4. Continue tracking detailed side-specific updates in `server-side/CONTEXT.md` and `client-side/CONTEXT.md`.
+3. Validate OCR Reader end-to-end in UI flows (image asset + camera stream) and inspect payload/overlay behavior.
+4. Tune OCR defaults for target use cases (language mix, `psm`, `min_confidence`, stream OCR rate) based on real samples.
+5. Verify camera permission / device-index mapping behavior on different client laptops (browser/Electron + Windows camera permissions).
+6. Continue tracking detailed side-specific updates in `server-side/CONTEXT.md` and `client-side/CONTEXT.md`.
 
 ## New Chat Bootstrap Prompt
 - "Baca `d:/ProjectMagang/aiflow/aski-flow/CONTEXT.md`, lanjutkan task terbaru, dan pertahankan struktur `server-side` + `client-side` saja."

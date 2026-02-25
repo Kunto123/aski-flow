@@ -22,6 +22,7 @@ import {
   NodeTitle,
 } from "./Node.styles";
 import OutputDisplay from "./node-output/OutputDisplay";
+import { getOutputExtension } from "./node-output/outputUtils";
 import { useTranslation } from "react-i18next";
 import { FaTv } from "react-icons/fa";
 
@@ -140,6 +141,48 @@ const DisplayNode: React.FC<DisplayNodeProps> = React.memo(
         return true;
       };
 
+      const isTextLike = (value: any) => {
+        if (typeof value !== "string") return false;
+        const text = value.trim();
+        if (!text) return false;
+        return getOutputExtension(text) === "markdown";
+      };
+
+      const isMediaLike = (value: any) => {
+        if (typeof value !== "string") return false;
+        const text = value.trim();
+        if (!text) return false;
+        return getOutputExtension(text) !== "markdown";
+      };
+
+      const isMediaOnlyOutput = (value: any) => {
+        if (value == null) return false;
+        if (typeof value === "string") return isMediaLike(value);
+        if (Array.isArray(value)) {
+          const nonEmpty = value.filter(
+            (item) =>
+              item != null &&
+              (typeof item !== "string" || item.trim().length > 0),
+          );
+          if (nonEmpty.length === 0) return false;
+          return nonEmpty.every((item) =>
+            typeof item === "string" ? isMediaLike(item) : false,
+          );
+        }
+        return false;
+      };
+
+      const hasTextLikeOutput = (value: any) => {
+        if (value == null) return false;
+        if (typeof value === "string") return isTextLike(value);
+        if (Array.isArray(value)) {
+          return value.some((item) =>
+            typeof item === "string" ? isTextLike(item) : false,
+          );
+        }
+        return false;
+      };
+
       const hasIncoming = !!incomingEdge;
       const outputClearedAt = Number(data.outputClearedAt ?? 0);
       const upstreamLastRunAt = (() => {
@@ -150,10 +193,19 @@ const DisplayNode: React.FC<DisplayNodeProps> = React.memo(
       const upstreamBlockedByClear =
         outputClearedAt > 0 &&
         (upstreamLastRunAt <= 0 || upstreamLastRunAt <= outputClearedAt);
+      const isOcrLikeUpstream =
+        upstreamNode?.data?.processorType === "ocr-reader" ||
+        upstreamNode?.data?.processorType === "qr-code-reader";
+      const preferResolvedDisplayOutput =
+        isOcrLikeUpstream &&
+        hasMeaningfulOutput(data.outputData) &&
+        hasTextLikeOutput(data.outputData) &&
+        isMediaOnlyOutput(upstreamOutput);
 
       // Prefer the currently connected upstream output so Display isn't stuck showing stale data
       // after rewiring (e.g., Camera → Display then ROI → Display).
       const raw =
+        !preferResolvedDisplayOutput &&
         hasIncoming &&
         !upstreamBlockedByClear &&
         hasMeaningfulOutput(upstreamOutput)
@@ -165,11 +217,22 @@ const DisplayNode: React.FC<DisplayNodeProps> = React.memo(
 
       // Normalize to a string array so OutputDisplay is stable.
       if (Array.isArray(raw)) {
-        return raw
+        let normalized = raw
           .flatMap((item) => (item == null ? [] : [item]))
           .map((item) =>
             typeof item === "string" ? item : JSON.stringify(item, null, 2),
           );
+
+        // OCR nodes can legitimately return mixed outputs (text + media ref).
+        // Prefer text in Display so legacy/stale output order ([url, text]) doesn't
+        // show "Expired URL" when the user expects OCR text.
+        if (upstreamNode?.data?.processorType === "ocr-reader") {
+          const rank = (value: string) =>
+            getOutputExtension(value) === "markdown" ? 0 : 1;
+          normalized = [...normalized].sort((a, b) => rank(a) - rank(b));
+        }
+
+        return normalized;
       }
 
       return [typeof raw === "string" ? raw : JSON.stringify(raw, null, 2)];

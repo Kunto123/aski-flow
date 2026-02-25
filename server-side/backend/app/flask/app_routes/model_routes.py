@@ -9,6 +9,7 @@ from flask import Blueprint, jsonify, request
 
 from app.storage.db import connect, get_data_root
 from app.utils.local_model_files import list_local_model_files_payload
+from app.utils.ocr_languages import list_ocr_languages_payload
 
 models_blueprint = Blueprint("models_blueprint", __name__)
 
@@ -27,6 +28,11 @@ def list_models():
 @models_blueprint.route("/models/local-files", methods=["GET"])
 def list_local_model_files():
     return list_local_model_files_payload()
+
+
+@models_blueprint.route("/models/ocr-languages", methods=["GET"])
+def list_ocr_languages():
+    return list_ocr_languages_payload()
 
 @models_blueprint.route("/models/<model_id>", methods=["GET"])
 def get_model(model_id: str):

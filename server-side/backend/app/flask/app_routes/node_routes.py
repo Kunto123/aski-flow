@@ -4,6 +4,7 @@ from flask import Blueprint, request
 
 from ...utils.node_extension_utils import get_dynamic_extension_config, get_extensions
 from ...utils.local_model_files import list_local_model_files_payload
+from ...utils.ocr_languages import list_ocr_languages_payload
 
 # from ...utils.openapi_reader import OpenAPIReader
 
@@ -34,6 +35,11 @@ def get_dynamic_extension():
 @node_blueprint.route("/node/local-model-files", methods=["GET"])
 def get_local_model_files():
     return list_local_model_files_payload()
+
+
+@node_blueprint.route("/node/ocr-languages", methods=["GET"])
+def get_ocr_languages():
+    return list_ocr_languages_payload()
 
 
 # @node_blueprint.route("/node/openapi/<path:api_name>/models")
