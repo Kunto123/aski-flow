@@ -1,14 +1,26 @@
+# %load /kaggle/input/datasets/anuragraj03/ppe-detection-m/final_merged_dataset/dataset.yaml
+dataset_info:
+  class_distribution:
+    no-safety-glove: 6498
+    no-safety-helmet: 5438
+    no-safety-shoes: 5408
+    no-welding-glass: 4094
+    safety-glove: 7472
+    safety-helmet: 9097
+    safety-shoes: 9342
+    welding-glass: 4383
+  total_images: 15168
+names:
+- no-safety-glove
+- no-safety-helmet
+- no-safety-shoes
+- no-welding-glass
+- safety-glove
+- safety-helmet
+- safety-shoes
+- welding-glass
+nc: 8
 path: .
-
+test: test/images
 train: train/images
 val: valid/images
-test: test/images
-
-nc: 6
-names:
-  0: glasses
-  1: gloves
-  2: helmet
-  3: mask
-  4: safety-shoes
-  5: vest

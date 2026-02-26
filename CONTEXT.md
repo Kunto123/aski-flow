@@ -308,3 +308,89 @@
   - `test/images`
 - Reminder preserved:
   - legacy YOLOv5 checkpoint compatibility issue may still require conversion/legacy runtime support even with correct `data.yaml`.
+
+## PPE Compliance Function Design Idea (2026-02-26, No Code Changes)
+- User proposed combining:
+  - PPE detection bounding boxes from YOLOv5 model (`glasses/gloves/helmet/mask/safety-shoes/vest`)
+  - ergonomic/pose keypoints (skeleton dots on person)
+  into a new function to determine whether a person is wearing PPE.
+- Assessment: this is feasible and a strong approach (rule-based geometric association between person keypoints and PPE boxes).
+- Current backend context already supports the required ingredients:
+  - pose payload contains `people[].bbox_xyxy` + `people[].keypoints[]` (`x,y,conf`)
+  - main vision returns detection boxes/classes for PPE detections
+- Recommended future function behavior (design-only, not implemented yet):
+  - associate PPE boxes to each person (by center-in-person-box / IoU / distance)
+  - derive body-part ROIs from keypoints (head/face/torso/hands/feet)
+  - check class-specific PPE presence against corresponding ROI
+  - output per-person compliance status: `present / missing / unknown`
+  - apply temporal smoothing across frames to reduce flicker
+- Key risk/quality notes:
+  - occlusion and missing keypoints should produce `unknown`, not immediate `missing`
+  - multi-person scenes require robust assignment to avoid swapping PPE across people
+  - pose and PPE detections should be computed from the same frame (or time-aligned cache) for consistency
+
+## Legacy YOLOv5 `best.pt` Runtime Error Guidance (2026-02-26, No Code Changes)
+- User reported runtime error when loading `server-side/backend/models/best.pt` in current Ultralytics-based pipeline:
+  - `ModuleNotFoundError: No module named 'models.yolo'`
+  - Ultralytics AutoInstall incorrectly tries `pip install models.yolo` (expected failure; `models.yolo` is a Python module path from legacy YOLOv5 repo, not a pip package)
+- Diagnosis:
+  - `best.pt` is a legacy YOLOv5 checkpoint and is not directly loadable by the current `ultralytics.YOLO(...)` runtime used by `main_vision_model_processor`.
+  - `Client disconnected` lines are incidental and not the root cause.
+- Recommended action paths (guidance only, no code changes yet):
+  1. Immediate validation path: test the model using the bundled legacy repo `server-side/backend/_tmp_yolov5_legacy` and existing `data.yaml`
+  2. Medium-term robust path: retrain/finetune with latest `ultralytics` using `server-side/data/datasets/PPE-2/data.yaml`, then use the new compatible weights in app
+  3. Alternative path: export legacy model from YOLOv5 (e.g., ONNX) and integrate via a different runtime (requires code changes later)
+
+## Re-Check Result: Current `best.pt` + `data.yaml` (2026-02-26, No Code Changes)
+- User requested re-check of current code safety and whether `server-side/backend/models/best.pt` is usable, plus validation of `server-side/data/datasets/PPE-2/data.yaml`.
+- Runtime verification (backend venv, backend cwd):
+  - `app.vision.ultralytics_runtime.get_model('models/best.pt')` -> success
+  - dummy inference via `runtime.predict(...)` on blank frame -> success
+  - model names returned = 8 classes (`no-safety-*`, `safety-*`, `welding-glass`)
+- This indicates current `best.pt` in repository is now Ultralytics-loadable in the present backend environment (different from prior failure logs).
+- `data.yaml` checks:
+  - YAML syntax valid
+  - `nc: 8` and `names` length 8 match the current `best.pt` embedded class names
+  - contains extra `dataset_info` block (generally fine; ignored by trainers/runtimes that do not use it)
+  - dataset folder targets (`train/images`, `valid/images`, `test/images`) do not currently exist under `server-side/data/datasets/PPE-2`
+- Operational caveat:
+  - `data.yaml` is for training/validation dataset config and is not required by current app inference path (`main_vision_model_processor` -> `ultralytics_runtime`)
+  - `models/best.pt` path works when backend process cwd is `server-side/backend` (current run scripts usually do this); if backend cwd differs, model resolution may fail
+- IDE note:
+  - `server-side/data/datasets/PPE-2/data1.yaml` was not found on disk during check (likely unsaved tab or different location)
+
+## `best.pt` Feels Heavy / No Output Diagnosis (2026-02-26, No Code Changes)
+- User reported `best.pt` feels very heavy and shows no detections/output, while other models still work.
+- Additional local benchmark (backend venv, dummy 720p frame):
+  - `models/best.pt`: first load ~24s, subsequent inference ~1.05s/frame on CPU
+  - `models/yolov5mu.pt`: first load ~1s, inference ~1.35s/frame on same test
+  - `models/yolov5m.pt`: first load ~0.37s, inference ~1.03s/frame
+- Key insight:
+  - the biggest pain point for `best.pt` is startup/load latency (not per-frame inference speed)
+  - `main_vision_model_processor._process_stream()` primes an initial inference before creating the output stream, so long model load makes the node appear stuck/blank at start
+- Current `best.pt` class names (from runtime) are 8 classes:
+  - `no-safety-glove`, `no-safety-helmet`, `no-safety-shoes`, `no-welding-glass`, `safety-glove`, `safety-helmet`, `safety-shoes`, `welding-glass`
+- Likely reasons for "no detections shown" despite stream running:
+  - scene/objects do not match this 8-class dataset/domain
+  - confidence threshold too high for the camera setup
+  - `classes` filter (if set) uses labels from another model and filters everything / raises errors
+  - ergonomic check enabled at the same time adds extra load and increases perceived lag
+- Reminder:
+  - `data.yaml` is not used for inference in current app path; only `model_path` and node parameters affect runtime detection output
+
+## `best.pt` Startup Responsiveness Fix (2026-02-26)
+- User requested code fix because `server-side/backend/models/best.pt` causes very slow startup in Main Vision stream mode.
+- Root cause in code:
+  - `main_vision_model_processor._process_stream()` synchronously resolved classes and primed an initial inference before returning stream outputs, so heavy model load (e.g. `best.pt`) blocked node startup/UI.
+- Implemented backend fix in `server-side/backend/app/processors/components/extension/main_vision_model_processor.py`:
+  - moved model warmup (and optional class filter resolution) into a background thread
+  - removed synchronous prime inference from stream startup path
+  - transform stream now returns passthrough frames while model is still warming up
+  - initial stream JSON payload includes startup metadata (`startup_status: warming_up`, `startup_deferred: true`)
+  - optional ergonomic pose model warmup also runs in background when enabled (without blocking PPE detection if pose model fails)
+- Expected effect:
+  - node/start UI no longer appears stuck/blank while `best.pt` loads
+  - preview stream should appear sooner, detections start after warmup completes
+  - first detection with cold model can still be delayed (model load time remains), but responsiveness improves significantly
+- Validation:
+  - Python compile (`py_compile`) passed for modified processor file
