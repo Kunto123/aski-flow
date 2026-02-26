@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import threading
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Union
@@ -393,34 +394,79 @@ class MainVisionModelProcessor(BasicProcessor):
         # Fail fast in local-first mode if the model weights are missing.
         # Without this, the transform thread can silently loop without frames.
         _ = runtime._normalize_key(self.model_path)
-        class_indices = self._resolve_class_indices(runtime)
         inference_interval = 1.0 / max(float(self.inference_fps), 1.0)
         last_inference_at = 0.0
         last_predictions: Dict[str, Any] = {}
         last_ergonomic_payload: Dict[str, Any] = {"enabled": False}
+        startup_ready = threading.Event()
+        startup_state: Dict[str, Any] = {
+            "class_indices": None,
+            "error": None,
+            "status": "warming_up",
+            "started_at": time.monotonic(),
+        }
+        startup_state_lock = threading.Lock()
 
-        # Prime initial summary so output JSON already contains useful detections
-        # for conditional-state / python-code right after run.
-        source_frame = manager.get_latest_frame(source_stream_id)
-        if source_frame is not None:
+        def _warmup_model():
+            resolved_class_indices: Optional[List[int]] = None
+            startup_error: Optional[str] = None
             try:
-                last_predictions = runtime.predict(
-                    source_frame,
-                    model_path=self.model_path,
-                    conf=self.conf_threshold,
-                    classes=class_indices,
-                    imgsz=self.imgsz,
-                ) or {}
-                last_inference_at = time.monotonic()
-            except Exception:
-                last_predictions = {}
-                last_inference_at = 0.0
+                # Resolve class filters (loads model if label names are provided).
+                resolved_class_indices = self._resolve_class_indices(runtime)
 
-            if self.enable_ergonomic_check:
-                last_ergonomic_payload = self._run_ergonomic_inference(source_frame, runtime)
+                # Ensure the primary model is cached before the transform loop needs it.
+                if resolved_class_indices is None:
+                    runtime.get_model(self.model_path)
+
+                # Optional pose model warmup to avoid a second startup hitch when enabled.
+                if self.enable_ergonomic_check and not self._ergonomic_error_cache:
+                    try:
+                        runtime.get_model(self.ergonomic_pose_model_path)
+                    except Exception as e:
+                        # Keep detection running even if ergonomic pose model is unavailable.
+                        self._ergonomic_error_cache = str(e)
+            except Exception as e:
+                startup_error = str(e)
+            finally:
+                with startup_state_lock:
+                    startup_state["class_indices"] = resolved_class_indices
+                    startup_state["error"] = startup_error
+                    startup_state["status"] = "error" if startup_error else "ready"
+                    startup_state["ready_at"] = time.monotonic()
+                startup_ready.set()
+
+        threading.Thread(
+            target=_warmup_model,
+            name=f"main-vision-warmup-{self.name}",
+            daemon=True,
+        ).start()
+
+        startup_error_raised = False
 
         def _transform(frame):
-            nonlocal last_inference_at, last_predictions, last_ergonomic_payload
+            nonlocal last_inference_at
+            nonlocal last_predictions
+            nonlocal last_ergonomic_payload
+            nonlocal startup_error_raised
+
+            if not startup_ready.is_set():
+                # Keep the stream responsive while a heavy model loads in the background.
+                overlay = self._compose_overlay(frame, last_predictions, last_ergonomic_payload)
+                return overlay, last_predictions
+
+            with startup_state_lock:
+                class_indices = startup_state.get("class_indices")
+                startup_error = startup_state.get("error")
+
+            if startup_error:
+                if not startup_error_raised:
+                    startup_error_raised = True
+                    raise RuntimeError(
+                        f"Main Vision warm-up failed for '{self.model_path}': {startup_error}"
+                    )
+                overlay = self._compose_overlay(frame, last_predictions, last_ergonomic_payload)
+                return overlay, last_predictions
+
             now = time.monotonic()
 
             # Run heavy model inference at a controlled rate, while still pushing
@@ -459,6 +505,8 @@ class MainVisionModelProcessor(BasicProcessor):
                 "live": True,
                 "predictions_url": predictions_url,
                 "stream_id": overlay_stream_id,
+                "startup_status": "warming_up",
+                "startup_deferred": True,
             },
             ergonomic=last_ergonomic_payload,
         )
