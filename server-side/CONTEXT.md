@@ -142,3 +142,26 @@
 - Regression-sensitive behavior intentionally preserved:
   - camera stop/release lifecycle logic not aggressively refactored in this pass
   - stream final output/`isDone` signaling semantics kept intact
+
+## Model Artifact Inspection (2026-02-26, No Code Changes)
+- Inspected repository-root `best.pt` and `labels.jpg` to derive a usable `data.yaml`.
+- `best.pt` is legacy YOLOv5 checkpoint (`models.yolo.DetectionModel` pickle dependency), so direct load under current environment fails without YOLOv5 legacy modules.
+- Confirmed class names from both `labels.jpg` and raw checkpoint bytes:
+  - `glasses`, `gloves`, `helmet`, `mask`, `safety-shoes`, `vest`
+- Found embedded original dataset YAML reference inside checkpoint bytes:
+  - `/content/datasets/PPE-2/data.yaml`
+- Note: providing `data.yaml` restores dataset/class metadata, but does not alone convert legacy checkpoint compatibility to current `ultralytics` runtime.
+
+## Model Artifact Relocation + Dataset YAML (2026-02-26, No Code Changes)
+- Relocated uploaded PPE artifacts into server-side conventions:
+  - model weights: `server-side/backend/models/best.pt`
+  - dataset label summary image: `server-side/data/datasets/PPE-2/labels.jpg`
+- Created `server-side/data/datasets/PPE-2/data.yaml` with confirmed class names and YOLO dataset keys:
+  - `train: train/images`
+  - `val: valid/images`
+  - `test: test/images`
+  - `nc: 6`
+  - names = `glasses`, `gloves`, `helmet`, `mask`, `safety-shoes`, `vest`
+- Intended usage notes:
+  - backend model path for UI/Main Vision can reference `models/best.pt` (relative to backend cwd)
+  - dataset YAML is ready but actual dataset image/label folders still need to exist/populate under `server-side/data/datasets/PPE-2`

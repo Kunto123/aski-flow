@@ -1,0 +1,14 @@
+path: .
+
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 6
+names:
+  0: glasses
+  1: gloves
+  2: helmet
+  3: mask
+  4: safety-shoes
+  5: vest

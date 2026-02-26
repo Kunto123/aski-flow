@@ -281,3 +281,30 @@
   - final completion events remain unthrottled
 - Validation:
   - `client-side/ui`: `npm run build` success
+
+## Model Artifact Inspection Note (2026-02-26, No Code Changes)
+- User asked to inspect `best.pt` and `labels.jpg` and derive a `data.yaml` (without changing code yet).
+- Findings:
+  - `best.pt` exists and is a legacy YOLOv5-style checkpoint (loading with `torch.load(..., weights_only=False)` fails without `models.*` module: `ModuleNotFoundError: No module named 'models'`)
+  - `labels.jpg` confirms 6 PPE classes and distribution chart labels:
+    `glasses`, `gloves`, `helmet`, `mask`, `safety-shoes`, `vest`
+  - Binary string scan of `best.pt` confirms embedded class names and original training data YAML path:
+    `/content/datasets/PPE-2/data.yaml`
+- Important caveat:
+  - Creating `data.yaml` helps class metadata/dataset config, but will not by itself solve legacy YOLOv5 checkpoint compatibility if runtime expects newer Ultralytics model format.
+
+## Model Artifact Relocation + YAML Creation (2026-02-26, No Code Changes)
+- User approved moving files to appropriate project paths and generating the YAML.
+- Performed file relocation:
+  - `best.pt` -> `server-side/backend/models/best.pt`
+  - `labels.jpg` -> `server-side/data/datasets/PPE-2/labels.jpg`
+- Created dataset config:
+  - `server-side/data/datasets/PPE-2/data.yaml`
+- Generated `data.yaml` content uses 6 confirmed PPE classes:
+  - `glasses`, `gloves`, `helmet`, `mask`, `safety-shoes`, `vest`
+- YAML path layout assumes dataset root is `server-side/data/datasets/PPE-2` with:
+  - `train/images`
+  - `valid/images`
+  - `test/images`
+- Reminder preserved:
+  - legacy YOLOv5 checkpoint compatibility issue may still require conversion/legacy runtime support even with correct `data.yaml`.
