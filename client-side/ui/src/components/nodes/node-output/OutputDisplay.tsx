@@ -125,9 +125,11 @@ export default function OutputDisplay({
   const { t } = useTranslation("flow");
   const { socket } = useContext(SocketContext);
   const upstreamProcessorTypeForDisplay = (data as any)?.upstreamProcessorTypeForDisplay;
-  const effectiveTextFirstProcessorType =
+  const effectiveProcessorTypeForDisplay =
     upstreamProcessorTypeForDisplay ?? data.processorType;
-  const isMainVisionModel = data.processorType === "main-vision-model";
+  const effectiveTextFirstProcessorType =
+    effectiveProcessorTypeForDisplay;
+  const isMainVisionModel = effectiveProcessorTypeForDisplay === "main-vision-model";
   const preferTextFirst =
     effectiveTextFirstProcessorType === "ocr-reader" ||
     effectiveTextFirstProcessorType === "qr-code-reader";
@@ -374,14 +376,6 @@ export default function OutputDisplay({
       <div
         className={`flex w-full ${fitInContainer ? "h-full min-h-0 flex-col overflow-hidden" : "flex-col gap-2"}`}
       >
-        <div className={fitInContainer ? "shrink-0 overflow-auto" : ""}>
-          <MarkdownOutput
-            data={jsonMarkdown}
-            name={data.name}
-            appearance={data.appearance}
-            fitInContainer={fitInContainer}
-          />
-        </div>
         {sceneRaw && (
           <div
             className={
@@ -393,6 +387,20 @@ export default function OutputDisplay({
             {renderScene()}
           </div>
         )}
+        <div
+          className={
+            fitInContainer
+              ? "max-h-[42%] shrink-0 overflow-auto border-t border-slate-700/50 pt-1"
+              : ""
+          }
+        >
+          <MarkdownOutput
+            data={jsonMarkdown}
+            name={data.name}
+            appearance={data.appearance}
+            fitInContainer={fitInContainer}
+          />
+        </div>
       </div>
     );
   };

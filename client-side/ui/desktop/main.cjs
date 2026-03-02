@@ -7,6 +7,14 @@ const DEFAULT_URL = "http://127.0.0.1:5173";
 let localUiServer = null;
 let localUiServerUrl = null;
 
+app.setName("ASKI Flow");
+app.commandLine.appendSwitch("no-default-browser-check");
+app.commandLine.appendSwitch("disable-logging");
+app.commandLine.appendSwitch("log-level", "3");
+if (process.platform === "win32" && typeof app.setAppUserModelId === "function") {
+  app.setAppUserModelId("ASKI.Flow");
+}
+
 function isLoopbackHost(hostname) {
   return (
     hostname === "localhost" ||
@@ -188,12 +196,33 @@ function getClientTarget() {
   return { type: "url", value: DEFAULT_URL };
 }
 
+function resolveWindowIcon() {
+  const candidates = [
+    path.join(__dirname, "..", "build", "img", "aski_logo.png"),
+    path.join(__dirname, "..", "public", "img", "aski_logo.png"),
+    path.join(__dirname, "..", "public", "favicon.ico"),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return undefined;
+}
+
 async function createWindow() {
+  const icon = resolveWindowIcon();
   const mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 1100,
     minHeight: 700,
+    show: false,
+    title: "ASKI Flow",
+    icon,
+    backgroundColor: "#0b151d",
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -201,6 +230,9 @@ async function createWindow() {
       nodeIntegration: false,
       sandbox: true,
     },
+  });
+  mainWindow.once("ready-to-show", () => {
+    mainWindow.show();
   });
 
   mainWindow.removeMenu();
@@ -212,6 +244,10 @@ async function createWindow() {
     await mainWindow.loadURL(loopbackUrl);
   } else {
     await mainWindow.loadURL(target.value);
+  }
+  mainWindow.setTitle("ASKI Flow");
+  if (!mainWindow.isVisible()) {
+    mainWindow.show();
   }
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {

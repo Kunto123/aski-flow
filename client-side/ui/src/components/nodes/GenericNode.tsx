@@ -228,9 +228,9 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
             model_path: data.model_path ?? "models/yolov5mu.pt",
             conf_threshold: data.conf_threshold ?? 0.25,
             classes: data.classes ?? [],
-            stream_fps: data.stream_fps ?? 12,
-            inference_fps: data.inference_fps ?? 6,
-            imgsz: data.imgsz ?? 512,
+            stream_fps: data.stream_fps ?? 10,
+            inference_fps: data.inference_fps ?? 4,
+            imgsz: data.imgsz ?? 416,
             enable_ergonomic_check: data.enable_ergonomic_check ?? false,
             ergonomic_pose_model_path:
               data.ergonomic_pose_model_path ?? "models/yolov8n-pose.pt",

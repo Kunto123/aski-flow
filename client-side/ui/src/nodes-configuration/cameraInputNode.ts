@@ -21,7 +21,7 @@ export const cameraInputNodeConfig: NodeConfig = {
       description:
         "Lebar resolusi video dalam piksel. Nilai lebih besar menghasilkan detail lebih tinggi.",
       type: "numericfield",
-      defaultValue: 1280,
+      defaultValue: 640,
       min: 1,
       step: 1,
     },
@@ -31,7 +31,7 @@ export const cameraInputNodeConfig: NodeConfig = {
       description:
         "Tinggi resolusi video dalam piksel. Sesuaikan dengan width untuk menjaga rasio video.",
       type: "numericfield",
-      defaultValue: 720,
+      defaultValue: 360,
       min: 1,
       step: 1,
     },
@@ -41,7 +41,7 @@ export const cameraInputNodeConfig: NodeConfig = {
       description:
         "Jumlah frame yang diambil tiap detik. FPS lebih tinggi membuat gerakan lebih halus tetapi lebih berat.",
       type: "numericfield",
-      defaultValue: 20,
+      defaultValue: 12,
       min: 1,
       step: 1,
     },

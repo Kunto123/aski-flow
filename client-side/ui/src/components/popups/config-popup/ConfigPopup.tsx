@@ -1,4 +1,4 @@
-import { FaGithub, FaXTwitter } from "react-icons/fa6";
+import { useMemo } from "react";
 import styled from "styled-components";
 import { useTranslation } from "react-i18next";
 import { Modal } from "@mantine/core";
@@ -14,6 +14,9 @@ interface ConfigPopupProps {
 
 const ConfigPopup = ({ isOpen }: ConfigPopupProps) => {
   const { t } = useTranslation("config");
+  const logoSrc = useMemo(() => {
+    return `${import.meta.env.BASE_URL}img/aski_logo.png`;
+  }, []);
 
   const { getElement, configActiveTab, setConfigActiveTab } = useVisibility();
   const configPopup = getElement("configPopup");
@@ -31,23 +34,16 @@ const ConfigPopup = ({ isOpen }: ConfigPopupProps) => {
       centered
       styles={{
         content: {
-          borderRadius: "0.75em",
-          boxShadow: "0 4px 8px rgba(0, 0, 0, 0.1)",
+          borderRadius: "16px",
+          border: "1px solid rgba(255, 255, 255, 0.12)",
+          boxShadow: "0 26px 48px rgba(0, 0, 0, 0.45)",
           background:
-            "linear-gradient(135deg, #101113, #1a1b1e), url('/backgrounds/g-simple.png')",
-          backgroundBlendMode: "overlay",
-          backgroundSize: "cover",
+            "radial-gradient(circle at 10% 12%, rgba(229, 57, 53, 0.2), transparent 36%), radial-gradient(circle at 88% 90%, rgba(41, 95, 112, 0.28), transparent 42%), linear-gradient(158deg, #0c141a 0%, #10181f 46%, #091116 100%)",
           backgroundRepeat: "no-repeat",
           backgroundPosition: "center",
-          padding: "2em",
-          color: "#d8dee9",
+          padding: "1.5rem",
+          color: "#e6eef4",
           minHeight: "100%",
-        },
-        title: {
-          fontSize: "1.25rem",
-          color: "#d8dee9",
-          fontWeight: "bold",
-          marginBottom: "0.5em",
         },
         header: {
           background: "transparent",
@@ -55,6 +51,14 @@ const ConfigPopup = ({ isOpen }: ConfigPopupProps) => {
       }}
     >
       <Content>
+        <BrandHeader>
+          <BrandLogo src={logoSrc} alt="ASKI" />
+          <BrandMeta>
+            <BrandTitle>ASKI Settings</BrandTitle>
+            <BrandSubtitle>Client UI and runtime preferences</BrandSubtitle>
+          </BrandMeta>
+        </BrandHeader>
+
         <Tabs className="sm:text-md text-base">
           <Tab
             isActive={configActiveTab === "app"}
@@ -75,23 +79,8 @@ const ConfigPopup = ({ isOpen }: ConfigPopupProps) => {
           <AppParameters />
         )}
         <Footer>
-          <Message>{t("supportProjectPrompt")}</Message>
-          <Icons>
-            <Icon
-              href="https://github.com/DahnM20/ai-flow"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <FaGithub />
-            </Icon>
-            <Icon
-              href="https://twitter.com/DahnM20"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <FaXTwitter />
-            </Icon>
-          </Icons>
+          <Message>ASKI configuration center</Message>
+          <SubMessage>Local settings are stored on this ASKI client.</SubMessage>
         </Footer>
       </Content>
     </Modal>
@@ -101,58 +90,98 @@ const ConfigPopup = ({ isOpen }: ConfigPopupProps) => {
 const Content = styled.div`
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: flex-start;
+  gap: 0.95rem;
   overflow: auto;
+`;
+
+const BrandHeader = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  border-radius: 12px;
+  border: 1px solid rgba(229, 57, 53, 0.35);
+  background: linear-gradient(
+    135deg,
+    rgba(229, 57, 53, 0.18) 0%,
+    rgba(14, 30, 38, 0.45) 75%
+  );
+  padding: 0.75rem 0.9rem;
+`;
+
+const BrandLogo = styled.img`
+  width: clamp(96px, 18vw, 164px);
+  height: auto;
+  user-select: none;
+`;
+
+const BrandMeta = styled.div`
+  display: flex;
+  flex-direction: column;
+`;
+
+const BrandTitle = styled.h2`
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #f6fafc;
+`;
+
+const BrandSubtitle = styled.p`
+  margin: 0.15rem 0 0;
+  font-size: 0.83rem;
+  color: #c9d7df;
 `;
 
 const Tabs = styled.div`
   display: flex;
-  justify-content: center;
-  margin-bottom: 20px;
+  justify-content: flex-start;
+  gap: 0.5rem;
+  margin-top: 0.15rem;
 `;
 
 const Tab = styled.button<{ isActive: boolean }>`
-  padding: 10px 20px;
-  font-weight: bold;
-  color: ${(props) => (props.isActive ? "#fff" : "#b4b4b4")};
-  background-color: ${(props) => (props.isActive ? "#1a1b1e" : "transparent")};
-  border: none;
-  border-bottom: ${(props) => (props.isActive ? "2px solid #00bcd4" : "none")};
+  padding: 0.55rem 0.95rem;
+  font-weight: 700;
+  color: ${(props) => (props.isActive ? "#f8fdff" : "#b8c7cf")};
+  background: ${(props) =>
+    props.isActive
+      ? "linear-gradient(135deg, rgba(229, 57, 53, 0.25), rgba(95, 26, 24, 0.35))"
+      : "rgba(255, 255, 255, 0.04)"};
+  border-radius: 999px;
+  border: 1px solid
+    ${(props) =>
+      props.isActive ? "rgba(229, 57, 53, 0.5)" : "rgba(255, 255, 255, 0.08)"};
   cursor: pointer;
   transition:
     color 0.3s,
+    border-color 0.3s,
     background-color 0.3s;
 
   &:hover {
     color: #fff;
+    border-color: rgba(229, 57, 53, 0.45);
   }
 `;
 
 const Footer = styled.div`
-  margin-top: 20px;
+  margin-top: 0.45rem;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  font-size: 14px;
+  align-items: flex-start;
+  font-size: 0.88rem;
+  color: #d1dde4;
 `;
 
 const Message = styled.p`
-  margin-bottom: 10px;
+  margin: 0;
 `;
 
-const Icons = styled.div`
-  display: flex;
-  gap: 10px;
-`;
-
-const Icon = styled.a`
-  font-size: 1.75em;
-  cursor: pointer;
-  transition: color 0.3s ease-in-out;
-
-  &:hover {
-    color: #b3edff;
-  }
+const SubMessage = styled.p`
+  margin: 0.18rem 0 0;
+  font-size: 0.78rem;
+  color: #93a8b3;
 `;
 
 export default ConfigPopup;

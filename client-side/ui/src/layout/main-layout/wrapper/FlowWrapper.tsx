@@ -42,7 +42,7 @@ function FlowWrapper({
         <RightIconButton onClick={() => configPopup.show()} />
         <RightIconButton
           onClick={() => handleMenuChange("help")}
-          color="#7fcce38f"
+          color="linear-gradient(135deg, rgba(88, 124, 136, 0.95) 0%, rgba(30, 55, 68, 0.95) 100%)"
           bottom="80px"
           icon={<FiHelpCircle />}
         />

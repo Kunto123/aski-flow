@@ -26,7 +26,6 @@ class ProcessorType(Enum):
     LOCAL_ASR = "local-asr"
     LOCAL_TTS = "local-tts"
     MAIN_VISION_MODEL = "main-vision-model"
-    AR_OVERLAY = "ar-overlay"
     ROI = "roi"
     IMAGE_PROCESSING = "image-processing"
     CONDITIONAL_STATE = "conditional-state"

@@ -73,19 +73,19 @@ class MainVisionModelProcessor(BasicProcessor):
         self.stream_fps = float(
             config.get(
                 "stream_fps",
-                os.getenv("ASKI_MAIN_VISION_STREAM_FPS", "12"),
+                os.getenv("ASKI_MAIN_VISION_STREAM_FPS", "10"),
             )
         )
         self.inference_fps = float(
             config.get(
                 "inference_fps",
-                os.getenv("ASKI_MAIN_VISION_INFERENCE_FPS", "6"),
+                os.getenv("ASKI_MAIN_VISION_INFERENCE_FPS", "4"),
             )
         )
         self.imgsz = int(
             config.get(
                 "imgsz",
-                os.getenv("ASKI_MAIN_VISION_IMGSZ", "512"),
+                os.getenv("ASKI_MAIN_VISION_IMGSZ", "416"),
             )
         )
         self.input_url = config.get("input_url")
