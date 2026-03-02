@@ -76,7 +76,7 @@ export default function DisplayParameters() {
           <Checkbox
             label={tc("ShowMinimap")}
             size="sm"
-            color="cyan"
+            color="red"
             checked={minimap.isVisible}
             onChange={() => minimap.toggle()}
           />
@@ -108,7 +108,7 @@ export default function DisplayParameters() {
                     <Checkbox
                       label={t(node.label ?? node.type)}
                       size="sm"
-                      color="cyan"
+                      color="red"
                       checked={!nodesHidden.includes(node.type)}
                       onChange={() => handleCheckField(node.type)}
                     />
@@ -121,7 +121,7 @@ export default function DisplayParameters() {
       </SectionsScroll>
 
       <Actions>
-        <Button onClick={handleSave} color="teal" radius="md">
+        <Button onClick={handleSave} color="red" radius="md">
           {tc("validateButtonLabel")}
         </Button>
       </Actions>
@@ -140,7 +140,7 @@ const Container = styled.div`
 const SectionTitle = styled.h3`
   margin: 0.1rem 0 0.2rem;
   font-weight: 700;
-  color: #d9edf2;
+  color: #dce6ee;
 `;
 
 const Toolbar = styled.div`
@@ -165,7 +165,7 @@ const TopControlCard = styled.div`
   h3 {
     margin: 0;
     font-size: 0.95rem;
-    color: #c9dce1;
+    color: #d8e2ea;
   }
 `;
 
@@ -189,15 +189,15 @@ const SectionsGrid = styled.div`
 
 const SectionCard = styled.div`
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
   padding: 0.8rem 0.9rem;
 `;
 
 const SectionHeader = styled.h4`
   margin: 0 0 0.65rem;
   font-size: 0.9rem;
-  color: #9cc5d1;
+  color: #f0b9b7;
 `;
 
 const NodeGrid = styled.div`
@@ -213,7 +213,7 @@ const NodeItem = styled.div`
   transition: border-color 0.14s ease;
 
   &:hover {
-    border-color: rgba(112, 194, 214, 0.35);
+    border-color: rgba(229, 57, 53, 0.38);
   }
 `;
 
@@ -223,5 +223,5 @@ const Actions = styled.div`
   display: flex;
   justify-content: flex-end;
   padding-top: 0.65rem;
-  background: linear-gradient(to top, rgba(16, 17, 19, 0.95), rgba(16, 17, 19, 0));
+  background: linear-gradient(to top, rgba(10, 16, 21, 0.96), rgba(10, 16, 21, 0));
 `;

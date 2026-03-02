@@ -6,12 +6,83 @@ import zipfile
 from pathlib import Path
 
 from flask import Blueprint, jsonify, request
+from werkzeug.utils import secure_filename
 
 from app.storage.db import connect, get_data_root
-from app.utils.local_model_files import list_local_model_files_payload
+from app.utils.local_model_files import (
+    LOCAL_MODEL_FILE_EXTENSIONS,
+    infer_local_model_kind,
+    list_local_model_files_payload,
+    server_model_search_roots,
+    to_runtime_path,
+)
 from app.utils.ocr_languages import list_ocr_languages_payload
 
 models_blueprint = Blueprint("models_blueprint", __name__)
+
+
+def _local_model_manage_roots() -> list[Path]:
+    roots: list[Path] = []
+    seen: set[str] = set()
+    for raw_root in server_model_search_roots():
+        root = raw_root if raw_root.is_absolute() else (Path.cwd() / raw_root)
+        root = root.resolve()
+        # Ensure canonical default root exists for upload.
+        if raw_root.as_posix() == "models":
+            root.mkdir(parents=True, exist_ok=True)
+        if not root.exists() or not root.is_dir():
+            continue
+        key = str(root).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        roots.append(root)
+    return roots
+
+
+def _first_manage_root() -> Path:
+    roots = _local_model_manage_roots()
+    if roots:
+        return roots[0]
+    fallback = (Path.cwd() / "models").resolve()
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
+def _resolve_model_file_path(raw_path: str) -> Path:
+    candidate = Path(str(raw_path or "").strip())
+    if not str(candidate):
+        raise ValueError("Missing model path")
+    if not candidate.is_absolute():
+        candidate = (Path.cwd() / candidate).resolve()
+    else:
+        candidate = candidate.resolve()
+
+    for root in _local_model_manage_roots():
+        if candidate == root or root in candidate.parents:
+            return candidate
+    raise ValueError("Model path is outside allowed roots")
+
+
+def _ensure_supported_model_file(path: Path) -> None:
+    if path.suffix.lower() not in LOCAL_MODEL_FILE_EXTENSIONS:
+        raise ValueError(
+            f"Unsupported model extension '{path.suffix}'. "
+            f"Allowed: {', '.join(sorted(LOCAL_MODEL_FILE_EXTENSIONS))}"
+        )
+    if not path.is_file():
+        raise FileNotFoundError("Model file not found")
+
+
+def _model_file_payload(path: Path, search_root: Path | None = None) -> dict:
+    return {
+        "path": to_runtime_path(path),
+        "basename": path.name,
+        "extension": path.suffix.lower(),
+        "kind": infer_local_model_kind(path.name),
+        "search_root": to_runtime_path(search_root or path.parent),
+        "size_bytes": int(path.stat().st_size),
+    }
 
 def _models_root() -> Path:
     root = get_data_root() / "models"
@@ -105,3 +176,116 @@ def validate_model(model_id: str):
         if not weights:
             return {"valid": False, "error": "no weights found in weights/"}, 200
     return {"valid": True}
+
+
+@models_blueprint.route("/models/local-files/upload", methods=["POST"])
+def upload_local_model_file():
+    if "file" not in request.files:
+        return {"error": "Missing multipart field 'file'"}, 400
+
+    files = request.files.getlist("file")
+    files = [f for f in files if f and getattr(f, "filename", "")]
+    if not files:
+        return {"error": "Empty file list"}, 400
+
+    target_root = _first_manage_root()
+    saved = []
+    errors = []
+    for uploaded in files:
+        original_name = secure_filename(uploaded.filename)
+        if not original_name:
+            errors.append({"name": uploaded.filename, "error": "Invalid filename"})
+            continue
+
+        suffix = Path(original_name).suffix.lower()
+        if suffix not in LOCAL_MODEL_FILE_EXTENSIONS:
+            errors.append(
+                {
+                    "name": original_name,
+                    "error": (
+                        "Unsupported extension. "
+                        f"Allowed: {', '.join(sorted(LOCAL_MODEL_FILE_EXTENSIONS))}"
+                    ),
+                }
+            )
+            continue
+
+        stem = Path(original_name).stem or "model"
+        candidate = target_root / f"{stem}{suffix}"
+        while candidate.exists():
+            candidate = target_root / f"{stem}-{uuid.uuid4().hex[:6]}{suffix}"
+
+        uploaded.save(str(candidate))
+        saved.append(_model_file_payload(candidate, search_root=target_root))
+
+    status_code = 200 if saved else 400
+    return (
+        jsonify(
+            {
+                "saved_count": len(saved),
+                "files": saved,
+                "errors": errors,
+            }
+        ),
+        status_code,
+    )
+
+
+@models_blueprint.route("/models/local-files/rename", methods=["PATCH"])
+def rename_local_model_file():
+    body = request.json or {}
+    raw_path = str(body.get("path") or "").strip()
+    new_name = secure_filename(str(body.get("new_name") or "").strip())
+    if not raw_path:
+        return {"error": "Missing 'path'"}, 400
+    if not new_name:
+        return {"error": "Missing or invalid 'new_name'"}, 400
+
+    try:
+        src = _resolve_model_file_path(raw_path)
+        _ensure_supported_model_file(src)
+    except FileNotFoundError:
+        return {"error": "Model file not found"}, 404
+    except ValueError as e:
+        return {"error": str(e)}, 400
+
+    suffix = Path(new_name).suffix.lower()
+    if not suffix:
+        new_name = f"{new_name}{src.suffix.lower()}"
+        suffix = Path(new_name).suffix.lower()
+    if suffix not in LOCAL_MODEL_FILE_EXTENSIONS:
+        return {
+            "error": (
+                "Invalid target file extension. "
+                f"Allowed: {', '.join(sorted(LOCAL_MODEL_FILE_EXTENSIONS))}"
+            )
+        }, 400
+
+    dest = src.with_name(new_name)
+    # no-op rename support (same target path)
+    if src.resolve() == dest.resolve():
+        return jsonify({"file": _model_file_payload(src, search_root=src.parent)})
+    if dest.exists():
+        return {"error": "Target filename already exists"}, 409
+
+    src.rename(dest)
+    return jsonify({"file": _model_file_payload(dest, search_root=dest.parent)})
+
+
+@models_blueprint.route("/models/local-files/delete", methods=["DELETE"])
+def delete_local_model_file():
+    body = request.json or {}
+    raw_path = str(body.get("path") or "").strip()
+    if not raw_path:
+        return {"error": "Missing 'path'"}, 400
+
+    try:
+        target = _resolve_model_file_path(raw_path)
+        _ensure_supported_model_file(target)
+    except FileNotFoundError:
+        return {"error": "Model file not found"}, 404
+    except ValueError as e:
+        return {"error": str(e)}, 400
+
+    target.unlink()
+    return jsonify({"deleted": True, "path": to_runtime_path(target)})

@@ -52,6 +52,15 @@ class DisplayProcessor(BasicProcessor):
         if input_data is None:
             outputs = input_processor.get_output()
             if isinstance(outputs, list):
+                preferred_visual = self._prefer_visual_for_main_vision_outputs(
+                    input_processor,
+                    current_value=None,
+                    outputs=outputs,
+                    requested_key=requested_key,
+                )
+                if preferred_visual is not None:
+                    return preferred_visual
+
                 preferred = self._prefer_text_for_ocr_like_outputs(
                     input_processor,
                     current_value=None,
@@ -69,6 +78,14 @@ class DisplayProcessor(BasicProcessor):
                     return item
             return ""
 
+        preferred_visual = self._prefer_visual_for_main_vision_outputs(
+            input_processor,
+            current_value=input_data,
+            requested_key=requested_key,
+        )
+        if preferred_visual is not None:
+            return preferred_visual
+
         preferred = self._prefer_text_for_ocr_like_outputs(
             input_processor,
             current_value=input_data,
@@ -78,6 +95,50 @@ class DisplayProcessor(BasicProcessor):
             return preferred
 
         return input_data
+
+    def _prefer_visual_for_main_vision_outputs(
+        self,
+        input_processor,
+        current_value,
+        outputs=None,
+        requested_key=None,
+    ):
+        processor_type = _processor_type_name(getattr(input_processor, "processor_type", ""))
+        if processor_type != "main-vision-model":
+            return None
+
+        if not isinstance(outputs, list):
+            outputs = input_processor.get_output()
+        if not isinstance(outputs, list):
+            outputs = []
+
+        try:
+            requested_index = None if requested_key in (None, "") else int(requested_key)
+        except Exception:
+            requested_index = None
+
+        # For Main Vision, output[0] is JSON metadata and another output usually
+        # carries visual media/stream. Default Display behavior should show visual.
+        # Keep explicit non-zero handle selection as-is.
+        if (
+            requested_index is not None
+            and requested_index > 0
+            and 0 <= requested_index < len(outputs)
+        ):
+            return outputs[requested_index]
+
+        for item in outputs:
+            if isinstance(item, str) and _looks_like_media_reference(item):
+                return item
+
+        if (
+            requested_index == 0
+            and len(outputs) > 0
+            and outputs[0] is not None
+        ):
+            return outputs[0]
+
+        return current_value
 
     def _prefer_text_for_ocr_like_outputs(
         self,

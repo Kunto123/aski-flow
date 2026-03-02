@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { FaDownload } from "react-icons/fa";
 import styled from "styled-components";
 import { getGeneratedFileName, isStreamUrl } from "./outputUtils";
@@ -20,11 +20,33 @@ const ImageUrlOutput: React.FC<ImageUrlOutputProps> = ({
 }) => {
   const { t } = useTranslation("flow");
   const [hasError, setHasError] = useState(false);
-  const downloadAllowed = !isStreamUrl(url);
+  const [streamRetryNonce, setStreamRetryNonce] = useState(0);
+  const retryTimerRef = useRef<number | null>(null);
+  const isLiveStream = isStreamUrl(url);
+  const downloadAllowed = !isLiveStream;
+
+  const streamSrc =
+    isLiveStream && streamRetryNonce > 0
+      ? `${url}${url.includes("?") ? "&" : "?"}retry=${streamRetryNonce}`
+      : url;
 
   useEffect(() => {
     setHasError(false);
+    setStreamRetryNonce(0);
+    if (retryTimerRef.current != null) {
+      window.clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
   }, [url]);
+
+  useEffect(() => {
+    return () => {
+      if (retryTimerRef.current != null) {
+        window.clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const handleDownloadClick = (event: React.MouseEvent) => {
     event.stopPropagation();
@@ -40,23 +62,37 @@ const ImageUrlOutput: React.FC<ImageUrlOutputProps> = ({
   };
 
   const handleError = () => {
+    // Stream URLs can transiently fail during rerun/reconnect while stream id is
+    // still valid. Retry instead of hard-locking into an expired state.
+    if (isLiveStream) {
+      if (retryTimerRef.current != null) return;
+      retryTimerRef.current = window.setTimeout(() => {
+        retryTimerRef.current = null;
+        setStreamRetryNonce((prev) => prev + 1);
+      }, 600);
+      return;
+    }
     setHasError(true);
   };
 
   const handleLoad = () => {
     setHasError(false);
+    if (retryTimerRef.current != null) {
+      window.clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
   };
 
   return (
     <OutputImageContainer $fitInContainer={fitInContainer}>
-      {hasError ? (
+      {hasError && !isLiveStream ? (
         <p className="text-center"> {t("ExpiredURL")}</p>
       ) : (
         <>
           <OutputImage
             $fitInContainer={fitInContainer}
             $fitMode={fitMode}
-            src={url}
+            src={streamSrc}
             alt="Output Image"
             onError={handleError}
             onLoad={handleLoad}

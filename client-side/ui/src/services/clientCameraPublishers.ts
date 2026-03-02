@@ -32,6 +32,16 @@ type PrewarmArgs = {
 
 const publishers = new Map<string, Publisher>();
 
+const DEFAULT_CAMERA_WIDTH = 640;
+const DEFAULT_CAMERA_HEIGHT = 360;
+const DEFAULT_CAMERA_FPS = 12;
+const MAX_UPLOAD_WIDTH = 640;
+const MAX_UPLOAD_HEIGHT = 360;
+const MAX_UPLOAD_FPS = 12;
+const MIN_UPLOAD_WIDTH = 320;
+const MIN_UPLOAD_HEIGHT = 180;
+const JPEG_UPLOAD_QUALITY = 0.62;
+
 function isCameraNode(node: any): boolean {
   const processorType = String(node?.data?.processorType || "").toLowerCase();
   const nodeName = String(node?.data?.name || "").toLowerCase();
@@ -61,8 +71,31 @@ function toCameraIndex(value: any): number {
 
 function toFps(value: any): number {
   const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) return 10;
-  return Math.max(1, Math.min(30, parsed));
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_CAMERA_FPS;
+  return Math.max(1, Math.min(MAX_UPLOAD_FPS, parsed));
+}
+
+function normalizeCameraConfig(config: CameraConfig): CameraConfig {
+  const requestedWidth = config.width || DEFAULT_CAMERA_WIDTH;
+  const requestedHeight = config.height || DEFAULT_CAMERA_HEIGHT;
+  const safeWidth = Math.max(MIN_UPLOAD_WIDTH, Math.floor(requestedWidth));
+  const safeHeight = Math.max(MIN_UPLOAD_HEIGHT, Math.floor(requestedHeight));
+
+  const scale = Math.min(
+    1,
+    MAX_UPLOAD_WIDTH / safeWidth,
+    MAX_UPLOAD_HEIGHT / safeHeight,
+  );
+
+  const normalizedWidth = Math.max(MIN_UPLOAD_WIDTH, Math.floor(safeWidth * scale));
+  const normalizedHeight = Math.max(MIN_UPLOAD_HEIGHT, Math.floor(safeHeight * scale));
+
+  return {
+    cameraIndex: config.cameraIndex,
+    width: normalizedWidth,
+    height: normalizedHeight,
+    fps: Math.max(1, Math.min(MAX_UPLOAD_FPS, config.fps || DEFAULT_CAMERA_FPS)),
+  };
 }
 
 function extractCameraConfigs(nodes: Node[]): CameraConfig[] {
@@ -87,11 +120,11 @@ function extractCameraConfigs(nodes: Node[]): CameraConfig[] {
       cameraIndex,
       width: Math.max(existing.width || 0, width || 0) || undefined,
       height: Math.max(existing.height || 0, height || 0) || undefined,
-      fps: Math.max(existing.fps || 0, fps || 0) || 10,
+      fps: Math.max(existing.fps || 0, fps || 0) || DEFAULT_CAMERA_FPS,
     });
   });
 
-  return Array.from(byIndex.values());
+  return Array.from(byIndex.values()).map(normalizeCameraConfig);
 }
 
 function buildPublisherKey(sessionId: string, cameraIndex: number): string {
@@ -175,7 +208,7 @@ async function waitForVideoReady(video: HTMLVideoElement): Promise<void> {
 
 async function toJpegBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
   return await new Promise<Blob | null>((resolve) => {
-    canvas.toBlob((blob) => resolve(blob), "image/jpeg", 0.75);
+    canvas.toBlob((blob) => resolve(blob), "image/jpeg", JPEG_UPLOAD_QUALITY);
   });
 }
 

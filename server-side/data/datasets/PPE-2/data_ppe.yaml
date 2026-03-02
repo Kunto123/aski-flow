@@ -1,0 +1,20 @@
+path: .
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 7
+names:
+- '0'
+- '1'
+- '2'
+- '3'
+- '4'
+- '5'
+- '6'
+roboflow:
+  license: CC BY 4.0
+  project: epi-naioq-8ecg8
+  url: https://universe.roboflow.com/test-for-robot-vision/epi-naioq-8ecg8/dataset/1
+  version: 1
+  workspace: test-for-robot-vision

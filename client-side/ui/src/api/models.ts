@@ -32,3 +32,63 @@ export async function getServerModelFiles(): Promise<ServerModelFilesResponse> {
   const response = await client.get("/models/local-files");
   return response.data;
 }
+
+export type LocalModelFileMutationResponse = {
+  file: ServerModelFile & {
+    size_bytes?: number;
+  };
+};
+
+export type LocalModelUploadResponse = {
+  saved_count: number;
+  files: Array<
+    ServerModelFile & {
+      size_bytes?: number;
+    }
+  >;
+  errors?: Array<{
+    name: string;
+    error: string;
+  }>;
+};
+
+export async function uploadServerModelFiles(
+  files: File[],
+): Promise<LocalModelUploadResponse> {
+  const formData = new FormData();
+  files.forEach((file) => formData.append("file", file));
+  const response = await client.post<LocalModelUploadResponse>(
+    "/models/local-files/upload",
+    formData,
+    {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+    },
+  );
+  return response.data;
+}
+
+export async function renameServerModelFile(
+  path: string,
+  newName: string,
+): Promise<LocalModelFileMutationResponse> {
+  const response = await client.patch<LocalModelFileMutationResponse>(
+    "/models/local-files/rename",
+    {
+      path,
+      new_name: newName,
+    },
+  );
+  return response.data;
+}
+
+export async function deleteServerModelFile(path: string): Promise<{
+  deleted: boolean;
+  path: string;
+}> {
+  const response = await client.delete("/models/local-files/delete", {
+    data: { path },
+  });
+  return response.data;
+}

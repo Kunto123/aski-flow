@@ -16,7 +16,7 @@ import {
 import ButtonRunAll from "../../components/buttons/ButtonRunAll";
 import { FlowEvent, SocketContext } from "../../providers/SocketProvider";
 import FlowWrapper from "./wrapper/FlowWrapper";
-import TabHeader from "./header/TabHeader";
+import TabHeader, { TopWorkspaceTab } from "./header/TabHeader";
 import {
   createErrorMessageForMissingFields,
   getNodeInError,
@@ -32,6 +32,11 @@ import { useLoading } from "../../hooks/useLoading";
 import DnDSidebar from "../../components/bars/dnd-sidebar/DnDSidebar";
 import Tab from "./header/Tab";
 import { prewarmClientCameraPublishers } from "../../services/clientCameraPublishers";
+import {
+  WorkstationMain,
+  WorkstationSection,
+  WorkstationSidebar,
+} from "./workstation/WorkstationDummy";
 
 export interface FlowTab {
   nodes: Node[];
@@ -72,6 +77,9 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
   const { emitEvent, connect, socket } = useContext(SocketContext);
   const [isRunning, setIsRunning] = useState(false);
   const [mode, setMode] = useState<ApplicationMode>("flow");
+  const [activeTopTab, setActiveTopTab] = useState<TopWorkspaceTab>("canvas");
+  const [workstationSection, setWorkstationSection] =
+    useState<WorkstationSection>("annotate");
   const [selectedEdgeType, setSelectedEdgeType] = useState("default");
   const [isTabletOrMobile, setIsTabletOrMobile] = useState(false);
   const useAuth = import.meta.env.VITE_APP_USE_AUTH === "true";
@@ -293,13 +301,29 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
   };
 
   return (
-    <div className={`aski-app ${isSidebarOpen ? "" : "sidebar-collapsed"}`}>
+    <div
+      className={`aski-app ${isSidebarOpen ? "" : "sidebar-collapsed"} ${activeTopTab === "workstation" ? "is-workstation" : ""}`}
+    >
       <TabHeader
         onToggleSidebar={handleToggleSidebar}
+        activeTopTab={activeTopTab}
+        onChangeTopTab={setActiveTopTab}
       />
 
       <aside className={`aski-sidebar ${isSidebarOpen ? "is-open" : ""}`}>
-        <DnDSidebar />
+        {activeTopTab === "canvas" ? (
+          <DnDSidebar />
+        ) : (
+          <WorkstationSidebar
+            activeSection={workstationSection}
+            onSelect={(section) => {
+              setWorkstationSection(section);
+              if (isTabletOrMobile) {
+                dndSidebar.hide();
+              }
+            }}
+          />
+        )}
       </aside>
 
       <div
@@ -307,67 +331,80 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
         onClick={handleCloseSidebar}
       />
 
-      <main className="aski-main">
-        <div className="aski-canvas-header">
-          <div className="aski-tabs-strip flex max-w-[72%] items-center">
-            {flowTabs.tabs.map((tab: any, index: number) => (
-              <Tab
-                key={index}
-                index={index}
-                active={index === currentTab}
-                onChangeTab={handleChangeTab}
-                onDeleteTab={handleDeleteFlow}
-                onChangeTabName={handleChangeTabName}
-                name={
-                  !!tab.metadata?.name
-                    ? tab.metadata.name
-                    : !!tab.name
-                      ? tab.name
-                      : t("Flow") + " " + (index + 1)
-                }
-              />
-            ))}
-            <button
-              onClick={addNewFlowTab}
-              className="aski-add-tab ml-1"
-              aria-label="Add flow tab"
-            >
-              <FaPlus />
-            </button>
-          </div>
-          <div className="ml-3 flex items-center">
-            <ButtonRunAll onClick={handleRunAllCurrentFlow} isRunning={isRunning} />
-          </div>
-        </div>
-
-        <div className="aski-canvas-body">
-          <FlowDataProvider
-            flowTab={flowTabs.tabs[currentTab]}
-            onFlowChange={handleFlowChange}
-          >
-            <FlowWrapper
-              key={`flow-${currentTab}`}
-              mode={mode}
-              onChangeMode={handleChangeMode}
-              onAddNewFlow={handleAddNewFlow}
-            >
-              {mode === "flow" && (
-                <Flow
-                  key={`flow-${currentTab}-${refresh}`}
-                  nodes={flowTabs.tabs[currentTab]?.nodes ?? []}
-                  edges={flowTabs.tabs[currentTab]?.edges ?? []}
-                  metadata={flowTabs.tabs[currentTab]?.metadata ?? {}}
-                  onFlowChange={handleFlowChange}
-                  onUpdateMetadata={handleMetadataChange}
-                  showOnlyOutput={showOnlyOutput}
+      <main
+        className={`aski-main ${activeTopTab === "workstation" ? "aski-main-workstation" : ""}`}
+      >
+        {activeTopTab === "canvas" ? (
+          <>
+            <div className="aski-canvas-header">
+              <div className="aski-tabs-strip flex max-w-[72%] items-center">
+                {flowTabs.tabs.map((tab: any, index: number) => (
+                  <Tab
+                    key={index}
+                    index={index}
+                    active={index === currentTab}
+                    onChangeTab={handleChangeTab}
+                    onDeleteTab={handleDeleteFlow}
+                    onChangeTabName={handleChangeTabName}
+                    name={
+                      !!tab.metadata?.name
+                        ? tab.metadata.name
+                        : !!tab.name
+                          ? tab.name
+                          : t("Flow") + " " + (index + 1)
+                    }
+                  />
+                ))}
+                <button
+                  onClick={addNewFlowTab}
+                  className="aski-add-tab ml-1"
+                  aria-label="Add flow tab"
+                >
+                  <FaPlus />
+                </button>
+              </div>
+              <div className="ml-3 flex items-center">
+                <ButtonRunAll
+                  onClick={handleRunAllCurrentFlow}
                   isRunning={isRunning}
-                  onRunChange={handleChangeRun}
-                  onLoaded={() => {}}
                 />
-              )}
-            </FlowWrapper>
-          </FlowDataProvider>
-        </div>
+              </div>
+            </div>
+
+            <div className="aski-canvas-body">
+              <FlowDataProvider
+                flowTab={flowTabs.tabs[currentTab]}
+                onFlowChange={handleFlowChange}
+              >
+                <FlowWrapper
+                  key={`flow-${currentTab}`}
+                  mode={mode}
+                  onChangeMode={handleChangeMode}
+                  onAddNewFlow={handleAddNewFlow}
+                >
+                  {mode === "flow" && (
+                    <Flow
+                      key={`flow-${currentTab}-${refresh}`}
+                      nodes={flowTabs.tabs[currentTab]?.nodes ?? []}
+                      edges={flowTabs.tabs[currentTab]?.edges ?? []}
+                      metadata={flowTabs.tabs[currentTab]?.metadata ?? {}}
+                      onFlowChange={handleFlowChange}
+                      onUpdateMetadata={handleMetadataChange}
+                      showOnlyOutput={showOnlyOutput}
+                      isRunning={isRunning}
+                      onRunChange={handleChangeRun}
+                      onLoaded={() => {}}
+                    />
+                  )}
+                </FlowWrapper>
+              </FlowDataProvider>
+            </div>
+          </>
+        ) : (
+          <div className="aski-workstation-wrap">
+            <WorkstationMain activeSection={workstationSection} />
+          </div>
+        )}
       </main>
     </div>
   );

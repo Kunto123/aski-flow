@@ -4,7 +4,6 @@ import withCache from "../api/cache/withCache";
 import { cameraInputNodeConfig } from "./cameraInputNode";
 import { recorderNodeConfig } from "./recorderNode";
 import { mainVisionModelNodeConfig } from "./mainVisionModelNode";
-import { arOverlayNodeConfig } from "./arOverlayNode";
 import { roiNodeConfig } from "./roiNode";
 import { imageProcessingNodeConfig } from "./imageProcessingNode";
 import { conditionalStateNodeConfig } from "./conditionalStateNode";
@@ -21,7 +20,6 @@ export const nodeConfigs: { [key: string]: NodeConfig | undefined } = {
   "camera-input": cameraInputNodeConfig,
   recorder: recorderNodeConfig,
   "main-vision-model": mainVisionModelNodeConfig,
-  "ar-overlay": arOverlayNodeConfig,
   roi: roiNodeConfig,
   "image-processing": imageProcessingNodeConfig,
   "conditional-state": conditionalStateNodeConfig,

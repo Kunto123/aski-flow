@@ -1,16 +1,20 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { FiMenu } from "react-icons/fi";
 import styled from "styled-components";
 
+export type TopWorkspaceTab = "canvas" | "workstation";
+
 interface TabHeaderProps {
   onToggleSidebar: () => void;
+  activeTopTab: TopWorkspaceTab;
+  onChangeTopTab: (tab: TopWorkspaceTab) => void;
 }
 
-const TabHeader = ({ onToggleSidebar }: TabHeaderProps) => {
-  const [activeTopTab, setActiveTopTab] = useState<"canvas" | "workstation">(
-    "canvas",
-  );
-
+const TabHeader = ({
+  onToggleSidebar,
+  activeTopTab,
+  onChangeTopTab,
+}: TabHeaderProps) => {
   const logoSrc = useMemo(() => {
     return `${import.meta.env.BASE_URL}img/aski_logo.png`;
   }, []);
@@ -39,7 +43,7 @@ const TabHeader = ({ onToggleSidebar }: TabHeaderProps) => {
       <div className="mx-auto flex items-center gap-x-6">
         <button
           className={`aski-top-tab ${activeTopTab === "canvas" ? "active" : ""}`}
-          onClick={() => setActiveTopTab("canvas")}
+          onClick={() => onChangeTopTab("canvas")}
           type="button"
         >
           Canvas
@@ -48,7 +52,7 @@ const TabHeader = ({ onToggleSidebar }: TabHeaderProps) => {
           className={`aski-top-tab ${
             activeTopTab === "workstation" ? "active" : ""
           }`}
-          onClick={() => setActiveTopTab("workstation")}
+          onClick={() => onChangeTopTab("workstation")}
           type="button"
         >
           WorkStation

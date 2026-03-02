@@ -5,6 +5,9 @@ const { spawn } = require("child_process");
 const rootDir = path.resolve(__dirname, "..");
 const viteCliPath = path.join(rootDir, "node_modules", "vite", "bin", "vite.js");
 const electronBinPath = require("electron");
+const SUPPRESSED_STDERR_PATTERNS = [
+  "registration_protocol_win.cc(108)] CreateFile: The system cannot find the file specified. (0x2)",
+];
 
 function getArgValue(name, fallback) {
   const index = process.argv.indexOf(name);
@@ -38,6 +41,37 @@ function waitForUrl(url, timeoutMs) {
     };
 
     probe();
+  });
+}
+
+function forwardFilteredStderr(childProcess) {
+  if (!childProcess || !childProcess.stderr) return;
+
+  let buffer = "";
+  childProcess.stderr.on("data", (chunk) => {
+    buffer += chunk.toString();
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      const shouldSuppress = SUPPRESSED_STDERR_PATTERNS.some((pattern) =>
+        line.includes(pattern),
+      );
+      if (!shouldSuppress && line.trim() !== "") {
+        process.stderr.write(`${line}\n`);
+      }
+    }
+  });
+
+  childProcess.stderr.on("end", () => {
+    const line = buffer.trim();
+    if (!line) return;
+    const shouldSuppress = SUPPRESSED_STDERR_PATTERNS.some((pattern) =>
+      line.includes(pattern),
+    );
+    if (!shouldSuppress) {
+      process.stderr.write(`${line}\n`);
+    }
   });
 }
 
@@ -98,9 +132,11 @@ waitForUrl(clientUrl, 90_000)
   .then(() => {
     electronProcess = spawn(electronBinPath, ["."], {
       cwd: rootDir,
-      stdio: "inherit",
+      stdio: ["inherit", "inherit", "pipe"],
       env: runtimeEnv,
     });
+
+    forwardFilteredStderr(electronProcess);
 
     electronProcess.on("exit", (code) => {
       shutdown(code ?? 0);

@@ -51,7 +51,8 @@ class CameraInputProcessor(ContextAwareProcessor):
         if session_id:
             self.stream_id = manager.create_client_camera_stream(
                 client_session_id=session_id,
-                **common_kwargs,
+                camera_index=self.camera_index,
+                owner_name=self.name,
             )
         else:
             self.stream_id = manager.create_camera_stream(**common_kwargs)
