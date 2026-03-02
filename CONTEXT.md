@@ -1,8 +1,8 @@
 # AI Flow Context Log
 
 ## Last Updated
-- Date: 2026-02-25
-- Focus: OCR/QR reader usability (decoded text visibility + output semantics) while preserving central-server flow architecture.
+- Date: 2026-03-02
+- Focus: Workstation UI cleanup (remove dummy Predict feature) while preserving central-server flow architecture.
 
 ## Current Goal
 - Keep architecture mode `Central Server + Many Clients`.
@@ -45,6 +45,12 @@
   - Launcher auto-rebuilds when source files are newer than existing build.
 
 ## Key Fixes Applied This Cycle
+- Workstation `Predict` section removed from client UI:
+  - Removed `predict` from workstation section type and sidebar menu.
+  - Removed dummy `Predict` placeholder panel fallback.
+  - File: `client-side/ui/src/layout/main-layout/workstation/WorkstationDummy.tsx`
+- Frontend build re-validated after workstation cleanup:
+  - `client-side/ui`: `npm run build` -> passed
 - Backend local/cloud storage detection fixed:
   - `is_s3_enabled()` now requires non-empty `S3_BUCKET_NAME` (avoid false S3 activation on empty env).
   - File: `server-side/backend/app/env_config.py`

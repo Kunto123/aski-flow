@@ -1,8 +1,8 @@
 # Client Side Context
 
 ## Last Updated
-- Date: 2026-02-25
-- Scope: Thin desktop client for central server + OCR/QR output readability UX.
+- Date: 2026-03-02
+- Scope: Thin desktop client for central server + OCR/QR output readability UX + workstation menu cleanup.
 
 ## Canonical Path
 - `client-side/ui`: client UI source code.
@@ -30,6 +30,7 @@
 - Socket disconnect/reconnect now clears per-node running indicators to avoid stuck `Start` loading state after dropped WS connection
 - QR/OCR output text now has fallback live refresh from stream predictions endpoint (`predictions.json`) when socket progress events are missed
 - Client camera publisher cleanup now handles stale publishers from previous socket session IDs (post-reconnect), helping release webcam after node delete/clear
+- Workstation tab cleanup: removed dummy `Predict` feature from workstation sidebar/section flow.
 
 ## Code Changes (This Cycle)
 1. Build blocker fix:
@@ -105,6 +106,10 @@
    - Stops publishers from previous socket session IDs during prewarm and stop operations
    - Prevents webcam lock persisting after reconnect + node deletion
    - File: `client-side/ui/src/services/clientCameraPublishers.ts`
+16. Workstation `Predict` feature removal:
+   - Removed `predict` from `WorkstationSection` and `WORKSTATION_ITEMS`.
+   - Removed `Predict` placeholder panel and fallback route in workstation main render.
+   - File: `client-side/ui/src/layout/main-layout/workstation/WorkstationDummy.tsx`
 
 ## Validation Status
 - Prior blocker is resolved:
@@ -122,6 +127,8 @@
 - Post-socket-disconnect/stuck-start patch build result:
   - `npm run build` -> success.
 - Post-predictions-fallback/camera-cleanup patch build result:
+  - `npm run build` -> success.
+- Post-workstation-predict-removal build result:
   - `npm run build` -> success.
 
 ## Run Instructions
