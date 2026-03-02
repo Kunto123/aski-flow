@@ -74,7 +74,7 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
   const [currentTab, setCurrentTab] = useState(0);
   const [refresh, setRefresh] = useState(false);
   const [showOnlyOutput, setShowOnlyOutput] = useState(false);
-  const { emitEvent, connect, socket } = useContext(SocketContext);
+  const { emitEvent, connect, socket, updateSocket } = useContext(SocketContext);
   const [isRunning, setIsRunning] = useState(false);
   const [mode, setMode] = useState<ApplicationMode>("flow");
   const [activeTopTab, setActiveTopTab] = useState<TopWorkspaceTab>("canvas");
@@ -300,6 +300,12 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
     }
   };
 
+  const handleRefreshApp = useCallback(() => {
+    setRefresh((prev) => !prev);
+    updateSocket();
+    toastFastInfoMessage("Frontend dan koneksi backend direfresh.");
+  }, [updateSocket]);
+
   return (
     <div
       className={`aski-app ${isSidebarOpen ? "" : "sidebar-collapsed"} ${activeTopTab === "workstation" ? "is-workstation" : ""}`}
@@ -308,6 +314,7 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
         onToggleSidebar={handleToggleSidebar}
         activeTopTab={activeTopTab}
         onChangeTopTab={setActiveTopTab}
+        onRefresh={handleRefreshApp}
       />
 
       <aside className={`aski-sidebar ${isSidebarOpen ? "is-open" : ""}`}>
@@ -401,7 +408,7 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
             </div>
           </>
         ) : (
-          <div className="aski-workstation-wrap">
+          <div className="aski-workstation-wrap" key={`workstation-${refresh}`}>
             <WorkstationMain activeSection={workstationSection} />
           </div>
         )}

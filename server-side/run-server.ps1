@@ -6,17 +6,27 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $backendDir = Join-Path $PSScriptRoot "backend"
-Set-Location $backendDir
+$didPushLocation = $false
 
-$venvPython = Join-Path $backendDir ".venv\\Scripts\\python.exe"
+try {
+    Push-Location $backendDir
+    $didPushLocation = $true
 
-if (-not (Test-Path $venvPython)) {
-    py -3.11 -m venv .venv
+    $venvPython = Join-Path $backendDir ".venv\\Scripts\\python.exe"
+
+    if (-not (Test-Path $venvPython)) {
+        py -3.11 -m venv .venv
+    }
+
+    if ($InstallDeps) {
+        & $venvPython -m pip install --upgrade pip
+        & $venvPython -m pip install -r requirements.txt
+    }
+
+    & $venvPython main.py
 }
-
-if ($InstallDeps) {
-    & $venvPython -m pip install --upgrade pip
-    & $venvPython -m pip install -r requirements.txt
+finally {
+    if ($didPushLocation) {
+        Pop-Location
+    }
 }
-
-& $venvPython main.py
