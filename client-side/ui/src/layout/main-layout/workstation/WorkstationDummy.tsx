@@ -1,4 +1,4 @@
-import { ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   FiCpu,
   FiDatabase,
@@ -9,7 +9,6 @@ import {
   FiUploadCloud,
 } from "react-icons/fi";
 import { MdOutlineModelTraining } from "react-icons/md";
-import { TbCubeSend } from "react-icons/tb";
 import {
   createDataset,
   listDatasetFiles,
@@ -30,7 +29,6 @@ export type WorkstationSection =
   | "upload-data"
   | "annotate"
   | "dataset"
-  | "predict"
   | "train"
   | "models";
 
@@ -43,7 +41,6 @@ export const WORKSTATION_ITEMS: WorkstationItem[] = [
   { id: "upload-data", label: "Upload Data" },
   { id: "annotate", label: "Annotate" },
   { id: "dataset", label: "Dataset" },
-  { id: "predict", label: "Predict" },
   { id: "train", label: "Train" },
   { id: "models", label: "Models" },
 ];
@@ -771,29 +768,6 @@ function ModelsPanel() {
   );
 }
 
-function PlaceholderPanel({
-  icon,
-  title,
-  description,
-}: {
-  icon: ReactNode;
-  title: string;
-  description: string;
-}) {
-  return (
-    <section className="aski-ws-panel">
-      <header className="aski-ws-panel-head">
-        <h2>
-          {icon} {title}
-        </h2>
-      </header>
-      <div className="aski-ws-placeholder">
-        <p>{description}</p>
-      </div>
-    </section>
-  );
-}
-
 export function WorkstationMain({ activeSection }: WorkstationMainProps) {
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
   const [isDatasetLoading, setIsDatasetLoading] = useState(false);
@@ -842,11 +816,5 @@ export function WorkstationMain({ activeSection }: WorkstationMainProps) {
     );
   }
 
-  return (
-    <PlaceholderPanel
-      icon={<TbCubeSend />}
-      title="Predict"
-      description="Dummy screen: area untuk menjalankan inferensi dari model aktif."
-    />
-  );
+  return <AnnotatePanel />;
 }
