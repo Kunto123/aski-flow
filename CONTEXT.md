@@ -2,7 +2,7 @@
 
 ## Last Updated
 - Date: 2026-03-02
-- Focus: Workstation UI cleanup (remove dummy Predict feature) while preserving central-server flow architecture.
+- Focus: Workstation UI cleanup + topbar refresh action + launcher directory restore on Ctrl+C.
 
 ## Current Goal
 - Keep architecture mode `Central Server + Many Clients`.
@@ -45,6 +45,18 @@
   - Launcher auto-rebuilds when source files are newer than existing build.
 
 ## Key Fixes Applied This Cycle
+- Topbar `Refresh` button added to refresh frontend render state and reconnect backend socket:
+  - Header button added in main tab bar.
+  - Refresh action now remounts canvas/workstation view and recreates socket connection.
+  - Files:
+    - `client-side/ui/src/layout/main-layout/header/TabHeader.tsx`
+    - `client-side/ui/src/layout/main-layout/AppLayout.tsx`
+    - `client-side/ui/src/index.css`
+- Launcher scripts now restore the caller working directory after run/interrupt (`Ctrl+C`):
+  - Added `Push-Location`/`Pop-Location` guard in both scripts.
+  - Files:
+    - `client-side/run-client.ps1`
+    - `server-side/run-server.ps1`
 - Workstation `Predict` section removed from client UI:
   - Removed `predict` from workstation section type and sidebar menu.
   - Removed dummy `Predict` placeholder panel fallback.

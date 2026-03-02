@@ -1,8 +1,8 @@
 # Server Side Context
 
 ## Last Updated
-- Date: 2026-02-25
-- Scope: Central server runtime for many clients + OCR/QR display semantics/readability support.
+- Date: 2026-03-02
+- Scope: Central server runtime for many clients + OCR/QR display semantics/readability support + launcher reliability.
 
 ## Canonical Paths
 - `server-side/backend`: backend source code.
@@ -30,6 +30,7 @@
   - If transform stream emits text immediately during startup, processor now returns the fresher output for the same stream id instead of stale initial payload (`No ... detected`)
 - Frontend now also uses existing server stream predictions endpoint as fallback for QR/OCR text visibility when socket updates drop:
   - `GET /stream/<stream_id>/predictions.json` remains the canonical polling endpoint used by UI fallback
+- Server launcher now restores original caller directory after process ends/interrupted (`Ctrl+C`).
 
 ## Code Changes (This Cycle)
 1. Storage mode detection fix:
@@ -76,6 +77,9 @@
    - Files:
      - `server-side/backend/app/processors/components/extension/qr_code_reader_processor.py`
      - `server-side/backend/app/processors/components/extension/ocr_reader_processor.py`
+15. Server launcher directory-restore hardening:
+   - Added `Push-Location`/`Pop-Location` guard so terminal returns to starting directory after run or `Ctrl+C`.
+   - File: `server-side/run-server.ps1`
 
 ## Validation Status
 - Python compile check passed:
@@ -113,6 +117,8 @@
 - Python compile checks passed for QR/OCR startup race hardening:
   - `py -3.11 -m py_compile server-side/backend/app/processors/components/extension/qr_code_reader_processor.py`
   - `py -3.11 -m py_compile server-side/backend/app/processors/components/extension/ocr_reader_processor.py`
+- `run-server.ps1` syntax validation:
+  - PowerShell scriptblock parse -> success.
 
 ## Run Instructions
 - First-time setup + run:

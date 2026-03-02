@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { FiMenu } from "react-icons/fi";
+import { FiMenu, FiRefreshCw } from "react-icons/fi";
 import styled from "styled-components";
 
 export type TopWorkspaceTab = "canvas" | "workstation";
@@ -8,12 +8,14 @@ interface TabHeaderProps {
   onToggleSidebar: () => void;
   activeTopTab: TopWorkspaceTab;
   onChangeTopTab: (tab: TopWorkspaceTab) => void;
+  onRefresh: () => void;
 }
 
 const TabHeader = ({
   onToggleSidebar,
   activeTopTab,
   onChangeTopTab,
+  onRefresh,
 }: TabHeaderProps) => {
   const logoSrc = useMemo(() => {
     return `${import.meta.env.BASE_URL}img/aski_logo.png`;
@@ -58,6 +60,16 @@ const TabHeader = ({
           WorkStation
         </button>
       </div>
+
+      <button
+        type="button"
+        className="aski-topbar-refresh"
+        aria-label="Refresh frontend and backend connection"
+        onClick={onRefresh}
+      >
+        <FiRefreshCw />
+        Refresh
+      </button>
     </TabsContainer>
   );
 };

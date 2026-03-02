@@ -2,7 +2,7 @@
 
 ## Last Updated
 - Date: 2026-03-02
-- Scope: Thin desktop client for central server + OCR/QR output readability UX + workstation menu cleanup.
+- Scope: Thin desktop client for central server + OCR/QR output readability UX + workstation/menu/runtime refresh quality.
 
 ## Canonical Path
 - `client-side/ui`: client UI source code.
@@ -31,6 +31,8 @@
 - QR/OCR output text now has fallback live refresh from stream predictions endpoint (`predictions.json`) when socket progress events are missed
 - Client camera publisher cleanup now handles stale publishers from previous socket session IDs (post-reconnect), helping release webcam after node delete/clear
 - Workstation tab cleanup: removed dummy `Predict` feature from workstation sidebar/section flow.
+- Added global topbar `Refresh` button to refresh frontend state and reconnect backend socket in one action.
+- `run-client.ps1` now restores original caller directory after process ends/interrupted (`Ctrl+C`).
 
 ## Code Changes (This Cycle)
 1. Build blocker fix:
@@ -110,6 +112,16 @@
    - Removed `predict` from `WorkstationSection` and `WORKSTATION_ITEMS`.
    - Removed `Predict` placeholder panel and fallback route in workstation main render.
    - File: `client-side/ui/src/layout/main-layout/workstation/WorkstationDummy.tsx`
+17. Global refresh action in topbar:
+   - Added header `Refresh` button.
+   - Refresh action remounts current frontend workspace and recreates backend socket connection.
+   - Files:
+     - `client-side/ui/src/layout/main-layout/header/TabHeader.tsx`
+     - `client-side/ui/src/layout/main-layout/AppLayout.tsx`
+     - `client-side/ui/src/index.css`
+18. Client launcher directory-restore hardening:
+   - Added `Push-Location`/`Pop-Location` guard so terminal returns to starting directory after run or `Ctrl+C`.
+   - File: `client-side/run-client.ps1`
 
 ## Validation Status
 - Prior blocker is resolved:
@@ -130,6 +142,10 @@
   - `npm run build` -> success.
 - Post-workstation-predict-removal build result:
   - `npm run build` -> success.
+- Post-topbar-refresh + launcher-path patch build result:
+  - `npm run build` -> success.
+- `run-client.ps1` syntax validation:
+  - PowerShell scriptblock parse -> success.
 
 ## Run Instructions
 - First-time setup + run desktop client:
