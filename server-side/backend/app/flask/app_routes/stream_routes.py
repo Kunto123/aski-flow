@@ -1,4 +1,5 @@
 from flask import Blueprint, Response, jsonify, request
+import os
 
 from app.streaming import get_stream_manager
 
@@ -6,12 +7,21 @@ from app.streaming import get_stream_manager
 stream_blueprint = Blueprint("stream_blueprint", __name__)
 
 
+def _request_body():
+    if request.is_json:
+        return request.json or {}
+    return {}
+
+
 def _get_client_session_id_from_request():
-    body = request.json if request.is_json else {}
+    body = _request_body()
     return (
         request.headers.get("X-Aski-Client-Session-Id")
+        or request.headers.get("X-Aski-Client-Id")
         or request.args.get("client_session_id")
+        or request.args.get("client_id")
         or (body or {}).get("client_session_id")
+        or (body or {}).get("client_id")
     )
 
 
@@ -31,6 +41,43 @@ def _parse_optional_float(raw, field_name: str):
         return float(raw)
     except Exception:
         raise ValueError(f"{field_name} must be a number")
+
+
+def _get_auth_token_from_request():
+    body = _request_body()
+
+    authorization = (request.headers.get("Authorization") or "").strip()
+    if authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+        if token:
+            return token
+
+    header_token = (request.headers.get("X-Aski-Auth-Token") or "").strip()
+    if header_token:
+        return header_token
+
+    query_token = (request.args.get("auth_token") or "").strip()
+    if query_token:
+        return query_token
+
+    body_token = str((body or {}).get("auth_token") or "").strip()
+    if body_token:
+        return body_token
+
+    return ""
+
+
+def _is_request_authorized():
+    expected = (os.getenv("ASKI_CLIENT_AUTH_TOKEN") or "").strip()
+    if not expected:
+        return True
+    return _get_auth_token_from_request() == expected
+
+
+def _require_authorized_request():
+    if _is_request_authorized():
+        return None
+    return {"error": "Unauthorized"}, 401
 
 
 @stream_blueprint.route("/stream/<stream_id>.mjpg", methods=["GET"])
@@ -63,6 +110,10 @@ def stream_predictions(stream_id: str):
 
 @stream_blueprint.route("/stream/<stream_id>/roi/params", methods=["POST"])
 def update_roi_stream_params(stream_id: str):
+    unauthorized = _require_authorized_request()
+    if unauthorized is not None:
+        return unauthorized
+
     manager = get_stream_manager()
     stream = manager.get_stream(stream_id)
     if stream is None:
@@ -108,6 +159,10 @@ def update_roi_stream_params(stream_id: str):
 
 @stream_blueprint.route("/stream/<stream_id>/stop", methods=["POST"])
 def stop_stream(stream_id: str):
+    unauthorized = _require_authorized_request()
+    if unauthorized is not None:
+        return unauthorized
+
     manager = get_stream_manager()
     stopped = manager.stop_stream(stream_id)
     if not stopped:
@@ -117,6 +172,10 @@ def stop_stream(stream_id: str):
 
 @stream_blueprint.route("/stream/owner/<node_name>/stop", methods=["POST"])
 def stop_stream_by_owner(node_name: str):
+    unauthorized = _require_authorized_request()
+    if unauthorized is not None:
+        return unauthorized
+
     manager = get_stream_manager()
     stopped_count = manager.stop_streams_by_owner(node_name)
     return {"stopped": stopped_count > 0, "stopped_count": stopped_count}
@@ -124,7 +183,11 @@ def stop_stream_by_owner(node_name: str):
 
 @stream_blueprint.route("/stream/camera", methods=["POST"])
 def create_camera_stream():
-    body = request.json or {}
+    unauthorized = _require_authorized_request()
+    if unauthorized is not None:
+        return unauthorized
+
+    body = _request_body()
     camera_index = int(body.get("camera_index", 0))
     width = body.get("width")
     height = body.get("height")
@@ -148,6 +211,10 @@ def create_camera_stream():
 
 @stream_blueprint.route("/stream/client-camera/frame", methods=["POST"])
 def ingest_client_camera_frame():
+    unauthorized = _require_authorized_request()
+    if unauthorized is not None:
+        return unauthorized
+
     client_session_id = str(_get_client_session_id_from_request() or "").strip()
     if not client_session_id:
         return {"ingested": False, "error": "client_session_id is required"}, 400
@@ -204,6 +271,10 @@ def ingest_client_camera_frame():
 
 @stream_blueprint.route("/stream/camera/stop", methods=["POST"])
 def stop_all_camera_streams():
+    unauthorized = _require_authorized_request()
+    if unauthorized is not None:
+        return unauthorized
+
     manager = get_stream_manager()
     client_session_id = _get_client_session_id_from_request()
     stopped_count = manager.stop_camera_streams(client_session_id=client_session_id)
@@ -212,7 +283,11 @@ def stop_all_camera_streams():
 
 @stream_blueprint.route("/stream/camera/by-index/stop", methods=["POST"])
 def stop_camera_streams_by_index():
-    body = request.json or {}
+    unauthorized = _require_authorized_request()
+    if unauthorized is not None:
+        return unauthorized
+
+    body = _request_body()
     camera_index_raw = body.get("camera_index")
     if camera_index_raw is None:
         return {"stopped": False, "error": "camera_index is required"}, 400
@@ -249,6 +324,10 @@ def stream_debug_snapshot():
 
 @stream_blueprint.route("/stream/debug/clear", methods=["POST"])
 def stream_debug_clear():
+    unauthorized = _require_authorized_request()
+    if unauthorized is not None:
+        return unauthorized
+
     manager = get_stream_manager()
     manager.clear_debug_events()
     return {"cleared": True}

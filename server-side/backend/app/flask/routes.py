@@ -25,13 +25,26 @@ def health():
     return {"status": "ok"}, HTTP_OK
 
 
+def register_blueprint_with_v1_alias(blueprint, legacy_name: str):
+    """
+    Register legacy route paths and a `/v1` alias in parallel.
+    This keeps old clients stable while native client migration can target versioned paths.
+    """
+    flask_app.register_blueprint(blueprint)
+    flask_app.register_blueprint(
+        blueprint,
+        url_prefix="/v1",
+        name=f"v1_{legacy_name}",
+    )
+
+
 from .app_routes.node_routes import node_blueprint
 
-flask_app.register_blueprint(node_blueprint)
+register_blueprint_with_v1_alias(node_blueprint, "node_blueprint")
 
 from .app_routes.upload_routes import upload_blueprint
 
-flask_app.register_blueprint(upload_blueprint)
+register_blueprint_with_v1_alias(upload_blueprint, "upload_blueprint")
 
 if is_server_static_files_enabled():
     # Only register static UI serving if the build folder exists.
@@ -57,10 +70,10 @@ if is_local_environment():
     from .app_routes.training_routes import training_blueprint
 
     logging.info("Environment set to LOCAL")
-    flask_app.register_blueprint(asset_blueprint)
-    flask_app.register_blueprint(image_blueprint)
-    flask_app.register_blueprint(stream_blueprint)
-    flask_app.register_blueprint(models_blueprint)
-    flask_app.register_blueprint(datasets_blueprint)
-    flask_app.register_blueprint(annotation_blueprint)
-    flask_app.register_blueprint(training_blueprint)
+    register_blueprint_with_v1_alias(asset_blueprint, "asset_blueprint")
+    register_blueprint_with_v1_alias(image_blueprint, "image_blueprint")
+    register_blueprint_with_v1_alias(stream_blueprint, "stream_blueprint")
+    register_blueprint_with_v1_alias(models_blueprint, "models_blueprint")
+    register_blueprint_with_v1_alias(datasets_blueprint, "datasets_blueprint")
+    register_blueprint_with_v1_alias(annotation_blueprint, "annotation_blueprint")
+    register_blueprint_with_v1_alias(training_blueprint, "training_blueprint")

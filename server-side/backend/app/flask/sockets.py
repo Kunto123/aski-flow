@@ -24,6 +24,67 @@ import traceback
 import os
 
 
+def _normalize_event_data(data):
+    if isinstance(data, dict):
+        return data
+    return {}
+
+
+def _extract_auth_token(event_data=None):
+    payload = _normalize_event_data(event_data)
+
+    authorization = (request.headers.get("Authorization") or "").strip()
+    if authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+        if token:
+            return token
+
+    header_token = (request.headers.get("X-Aski-Auth-Token") or "").strip()
+    if header_token:
+        return header_token
+
+    query_token = (request.args.get("auth_token") or "").strip()
+    if query_token:
+        return query_token
+
+    payload_token = str(payload.get("auth_token") or "").strip()
+    if payload_token:
+        return payload_token
+
+    return ""
+
+
+def _is_socket_authorized(event_data=None):
+    expected = (os.getenv("ASKI_CLIENT_AUTH_TOKEN") or "").strip()
+    if not expected:
+        return True
+    return _extract_auth_token(event_data) == expected
+
+
+def _extract_client_id(event_data=None):
+    payload = _normalize_event_data(event_data)
+
+    payload_client_id = str(payload.get("client_id") or "").strip()
+    if payload_client_id:
+        return payload_client_id
+
+    header_client_id = (request.headers.get("X-Aski-Client-Id") or "").strip()
+    if header_client_id:
+        return header_client_id
+
+    query_client_id = (request.args.get("client_id") or "").strip()
+    if query_client_id:
+        return query_client_id
+
+    return ""
+
+
+def _resolve_runtime_session_id(event_data=None):
+    # Prefer stable client_id when provided (native app lifecycle), fallback to socket sid.
+    client_id = _extract_client_id(event_data)
+    return client_id or request.sid
+
+
 def populate_request_global_object(data):
     """
     This function is responsible for initializing individual request objects either from the
@@ -59,8 +120,13 @@ def populate_request_global_object(data):
 
 
 @socketio.on("connect")
-def handle_connect():
-    logging.info("Client connected")
+def handle_connect(auth=None):
+    if not _is_socket_authorized(auth):
+        logging.warning("Socket connection rejected: unauthorized sid=%s", request.sid)
+        return False
+
+    runtime_session_id = _resolve_runtime_session_id(auth)
+    logging.info("Client connected sid=%s runtime_session_id=%s", request.sid, runtime_session_id)
 
 
 @socketio.on("process_file")
@@ -74,11 +140,19 @@ def handle_process_file(data):
                     ("jsonFile").
 
     """
+    data = _normalize_event_data(data)
     try:
+        if not _is_socket_authorized(data):
+            emit("error", {"error": "Unauthorized"})
+            emit("run_end", {"output": None})
+            return
+
         populate_request_global_object(data)
         flow_data = json.loads(data.get("jsonFile"))
         launcher = get_root_injector().get(ProcessorLauncher)
-        launcher.set_context(ProcessorContextFlaskRequest(g, session, request.sid))
+        launcher.set_context(
+            ProcessorContextFlaskRequest(g, session, _resolve_runtime_session_id(data))
+        )
 
         if flow_data:
             processors = launcher.load_processors(flow_data)
@@ -110,13 +184,21 @@ def handle_run_node(data):
                     ("jsonFile") and the name of the node to run ("nodeName").
 
     """
+    data = _normalize_event_data(data)
+    node_name = data.get("nodeName")
     try:
+        if not _is_socket_authorized(data):
+            emit("error", {"error": "Unauthorized"})
+            emit("run_end", {"output": None})
+            return
+
         populate_request_global_object(data)
         flow_data = json.loads(data.get("jsonFile"))
-        node_name = data.get("nodeName")
 
         launcher = get_root_injector().get(ProcessorLauncher)
-        launcher.set_context(ProcessorContextFlaskRequest(g, session, request.sid))
+        launcher.set_context(
+            ProcessorContextFlaskRequest(g, session, _resolve_runtime_session_id(data))
+        )
 
         if flow_data and node_name:
             processors = launcher.load_processors_for_node(flow_data, node_name)
@@ -139,7 +221,7 @@ def handle_run_node(data):
 
 @socketio.on("disconnect")
 def handle_disconnect():
-    logging.info("Client disconnected")
+    logging.info("Client disconnected sid=%s", request.sid)
 
 
 @socketio.on("update_app_config")

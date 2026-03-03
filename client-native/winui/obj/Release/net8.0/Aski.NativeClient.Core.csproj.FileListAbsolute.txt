@@ -1,0 +1,13 @@
+D:\ProjectMagang\aiflow\aski-flow\client-native\winui\obj\Release\net8.0\Aski.NativeClient.Core.csproj.AssemblyReference.cache
+D:\ProjectMagang\aiflow\aski-flow\client-native\winui\obj\Release\net8.0\Aski.NativeClient.Core.GeneratedMSBuildEditorConfig.editorconfig
+D:\ProjectMagang\aiflow\aski-flow\client-native\winui\obj\Release\net8.0\Aski.NativeClient.Core.AssemblyInfoInputs.cache
+D:\ProjectMagang\aiflow\aski-flow\client-native\winui\obj\Release\net8.0\Aski.NativeClient.Core.AssemblyInfo.cs
+D:\ProjectMagang\aiflow\aski-flow\client-native\winui\obj\Release\net8.0\Aski.NativeClient.Core.csproj.CoreCompileInputs.cache
+D:\ProjectMagang\aiflow\aski-flow\client-native\winui\obj\Release\net8.0\Aski.NativeClient.Core.sourcelink.json
+D:\ProjectMagang\aiflow\aski-flow\client-native\winui\bin\Release\net8.0\Aski.NativeClient.Core.deps.json
+D:\ProjectMagang\aiflow\aski-flow\client-native\winui\bin\Release\net8.0\Aski.NativeClient.Core.dll
+D:\ProjectMagang\aiflow\aski-flow\client-native\winui\bin\Release\net8.0\Aski.NativeClient.Core.pdb
+D:\ProjectMagang\aiflow\aski-flow\client-native\winui\obj\Release\net8.0\Aski.NativeClient.Core.dll
+D:\ProjectMagang\aiflow\aski-flow\client-native\winui\obj\Release\net8.0\refint\Aski.NativeClient.Core.dll
+D:\ProjectMagang\aiflow\aski-flow\client-native\winui\obj\Release\net8.0\Aski.NativeClient.Core.pdb
+D:\ProjectMagang\aiflow\aski-flow\client-native\winui\obj\Release\net8.0\ref\Aski.NativeClient.Core.dll
