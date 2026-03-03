@@ -1,14 +1,48 @@
-server-side/backend/.env
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.user
+*.suo
+
+# Python
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
 server-side/backend/.venv/
-client-side/ui/.env
-client-side/ui/.env.local
-client-side/ui/node_modules/
-client-side/ui/build/
+server-side/backend/.env
 server-side/data/app.db
+
+# Node (legacy tooling)
 node_modules/
 **/node_modules/
-**/__pycache__/
+
+# .NET / Native build output
+**/bin/
+**/obj/
+**/TestResults/
+
+# Native packaging/artifacts
+client-native/winui/artifacts/
+*.msix
+*.msixbundle
+*.appx
+*.appxbundle
+*.cer
+*.pfx
+
+# Runtime/local config files
+client-native/winui/*.local.json
+client-native/winui/**/*.local.json
+
+# Logs / temporary
+*.log
+*.tmp
 *.zip
+
+# Local project planning / legacy workspace leftovers
+docs/
 native_app.txt
-docs
-client-side
+client-side/

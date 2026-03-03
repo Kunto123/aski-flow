@@ -1,6 +1,6 @@
 # Native Client (WinUI) Scaffold
 
-This directory is the parallel workspace for the native Windows client migration.
+This directory is the active Windows native client workspace.
 
 ## Current Phase
 - Stage 1: baseline freeze complete.
@@ -15,7 +15,7 @@ This directory is the parallel workspace for the native Windows client migration
 - Stage 10: output rendering core complete (controller + polling orchestration).
 - Stage 11: flow editor host runtime core complete.
 - Stage 12: MSIX packaging pipeline complete (host publish + manifest templating + package build).
-- Stage 13: pilot toolkit in progress (dev cert/sign/install scripts + rollout checklist).
+- Stage 13: pilot toolkit complete and validated.
 
 ## Folder Layout
 - `src/AppShell` - app bootstrap and navigation host.
@@ -26,7 +26,6 @@ This directory is the parallel workspace for the native Windows client migration
 - `src/StreamViewer` - stream and prediction rendering.
 
 ## Important
-- Existing Electron client remains the production path during migration.
 - Native implementation must keep communication compatibility with:
   - `docs/native-migration/COMMUNICATION_CONTRACT_V1.md`
 
@@ -42,6 +41,7 @@ This directory is the parallel workspace for the native Windows client migration
 - `src/CameraService/CameraFrameUploader.cs`
 - `src/FlowEditor/FlowEditorHostRuntime.cs`
 - `Aski.NativeClient.Host/Aski.NativeClient.Host.csproj`
+- `Aski.NativeClient.ConnectionCheck/Aski.NativeClient.ConnectionCheck.csproj`
 
 ## Scripts
 - `scripts/publish-core.ps1` for core publish output artifacts.
@@ -51,6 +51,7 @@ This directory is the parallel workspace for the native Windows client migration
 - `scripts/install-msix.ps1` for pilot install flow (cert import + app install).
 - `scripts/pilot-preflight.ps1` for pilot environment readiness checks.
 - `scripts/pilot-smoke.ps1` for pilot smoke execution (launch/process/connectivity baseline).
+- `scripts/check-native-connection.ps1` for native REST + Socket connectivity verification.
 
 ## Prerequisites (to start coding WinUI)
 - Install .NET SDK 8+.

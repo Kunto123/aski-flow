@@ -1,5 +1,11 @@
 # AI Flow Context Log
 
+## Migration Notice
+- Date: 2026-03-03
+- Client architecture is now native-first.
+- Legacy `client-side/` web/electron workspace has been removed from tracked sources.
+- Active client runtime lives under `client-native/winui/`.
+
 ## Last Updated
 - Date: 2026-03-02
 - Focus: Workstation UI cleanup + topbar refresh action + launcher directory restore on Ctrl+C.

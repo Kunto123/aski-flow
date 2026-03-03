@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+
 namespace Aski.NativeClient.Settings;
 
 public sealed record NativeClientSettings
@@ -23,7 +25,7 @@ public sealed record NativeClientSettings
 
         var normalizedPort = ServerPort is > 0 and <= 65535 ? ServerPort : 8000;
         var normalizedApiVersion = (ApiVersion ?? string.Empty).Trim().Trim('/');
-        var normalizedClientId = string.IsNullOrWhiteSpace(ClientId)
+        var normalizedClientId = string.IsNullOrWhiteSpace(ClientId) || IsLegacyInvalidClientId(ClientId)
             ? GenerateClientId()
             : ClientId.Trim();
         var normalizedTimeout = RequestTimeoutSeconds <= 0 ? 30 : RequestTimeoutSeconds;
@@ -63,7 +65,13 @@ public sealed record NativeClientSettings
     {
         // Keep the client id short enough for logging and header transport.
         Span<byte> bytes = stackalloc byte[8];
-        Guid.NewGuid().TryWriteBytes(bytes);
+        RandomNumberGenerator.Fill(bytes);
         return Convert.ToHexString(bytes).ToLowerInvariant();
+    }
+
+    private static bool IsLegacyInvalidClientId(string? clientId)
+    {
+        var trimmed = (clientId ?? string.Empty).Trim();
+        return string.Equals(trimmed, "0000000000000000", StringComparison.Ordinal);
     }
 }

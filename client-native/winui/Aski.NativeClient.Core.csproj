@@ -16,6 +16,8 @@
 
   <ItemGroup>
     <Compile Remove="Aski.NativeClient.Host\\**\\*.cs" />
+    <Compile Remove="Aski.NativeClient.ConnectionCheck\\**\\*.cs" />
     <None Remove="Aski.NativeClient.Host\\**\\*" />
+    <None Remove="Aski.NativeClient.ConnectionCheck\\**\\*" />
   </ItemGroup>
 </Project>

@@ -57,3 +57,8 @@ Pilot note:
     - `powershell -ExecutionPolicy Bypass -File client-native/winui/scripts/pilot-smoke.ps1 -ServerHost 192.168.137.103 -ServerPort 8000`
   - Example (dry-run):
     - `powershell -ExecutionPolicy Bypass -File client-native/winui/scripts/pilot-smoke.ps1 -DryRun -SkipNetworkCheck -SkipLaunch`
+
+- `check-native-connection.ps1`
+  - Runs native connectivity diagnostics (`/health` + real Socket.IO connect/disconnect) through `Aski.NativeClient.ConnectionCheck`.
+  - Example:
+    - `powershell -ExecutionPolicy Bypass -File client-native/winui/scripts/check-native-connection.ps1 -ServerHost 127.0.0.1 -ServerPort 8000`

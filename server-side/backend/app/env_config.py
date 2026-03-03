@@ -44,14 +44,10 @@ def get_static_folder() -> str:
         build_dir = os.path.join(base_path, "build")
         return build_dir
 
-    # Preferred layout after repository restructuring:
-    #   <repo>/client-side/ui/build
-    # Keep legacy fallbacks so older layouts still work.
+    # Web static UI build is optional in native-client mode.
+    # Keep legacy fallback paths for compatibility if a web bundle is provided.
     current_file_dir = os.path.dirname(os.path.abspath(__file__))
     candidate_paths = [
-        os.path.abspath(
-            os.path.join(current_file_dir, "..", "..", "..", "client-side", "ui", "build")
-        ),
         os.path.abspath(os.path.join(current_file_dir, "..", "..", "ui", "build")),
         os.path.abspath(
             os.path.join(current_file_dir, "..", "..", "..", "packages", "ui", "build")
