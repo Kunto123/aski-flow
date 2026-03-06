@@ -64,8 +64,39 @@ def init_db() -> None:
               status TEXT NOT NULL,
               log_path TEXT NOT NULL,
               output_model_id TEXT,
+              architecture_family TEXT,
+              architecture_variant TEXT,
+              trained_model_path TEXT,
+              params_json TEXT,
+              started_at REAL,
+              finished_at REAL,
+              error_message TEXT,
               created_at REAL NOT NULL
             )
             """
         )
+        _ensure_training_jobs_schema(conn)
         conn.commit()
+
+
+def _ensure_training_jobs_schema(conn: sqlite3.Connection) -> None:
+    """Best-effort migration for older local SQLite databases."""
+
+    rows = conn.execute("PRAGMA table_info(training_jobs)").fetchall()
+    existing = {str(row["name"]).lower() for row in rows}
+    alter_statements = [
+        ("architecture_family", "TEXT"),
+        ("architecture_variant", "TEXT"),
+        ("trained_model_path", "TEXT"),
+        ("params_json", "TEXT"),
+        ("started_at", "REAL"),
+        ("finished_at", "REAL"),
+        ("error_message", "TEXT"),
+    ]
+
+    for column_name, column_type in alter_statements:
+        if column_name.lower() in existing:
+            continue
+        conn.execute(
+            f"ALTER TABLE training_jobs ADD COLUMN {column_name} {column_type}"
+        )

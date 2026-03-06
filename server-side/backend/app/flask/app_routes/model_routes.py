@@ -12,6 +12,7 @@ from app.storage.db import connect, get_data_root
 from app.utils.local_model_files import (
     LOCAL_MODEL_FILE_EXTENSIONS,
     infer_local_model_kind,
+    infer_local_model_source,
     list_local_model_files_payload,
     server_model_search_roots,
     to_runtime_path,
@@ -80,6 +81,7 @@ def _model_file_payload(path: Path, search_root: Path | None = None) -> dict:
         "basename": path.name,
         "extension": path.suffix.lower(),
         "kind": infer_local_model_kind(path.name),
+        "source": infer_local_model_source(path),
         "search_root": to_runtime_path(search_root or path.parent),
         "size_bytes": int(path.stat().st_size),
     }

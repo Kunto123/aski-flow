@@ -3,6 +3,7 @@ using Aski.NativeClient.FlowRunner;
 using Aski.NativeClient.Settings;
 using Aski.NativeClient.SocketService;
 using System.Net.Http.Headers;
+using System.Text.Json;
 
 namespace Aski.NativeClient.Host;
 
@@ -22,12 +23,23 @@ public sealed class MainForm : Form
     private readonly Button _testApiButton;
     private readonly Button _connectSocketButton;
     private readonly Button _disconnectSocketButton;
+    private readonly Button _openCanvasButton;
     private readonly Button _reloadButton;
+    private readonly TextBox _flowJsonPathTextBox;
+    private readonly Button _browseFlowJsonButton;
+    private readonly TextBox _nodeNameTextBox;
+    private readonly Button _runNodeButton;
+    private readonly Button _runFlowButton;
     private readonly NativeClientBootstrap _bootstrap;
+    private readonly NativeHostStartupOptions _startupOptions;
     private NativeClientRuntime? _runtime;
+    private bool _startupApplied;
+    private string? _editorUrlOverride;
+    private string? _editorBundleRootOverride;
+    private string? _editorEntryFileOverride;
     private bool _busy;
 
-    public MainForm()
+    public MainForm(NativeHostStartupOptions? startupOptions = null)
     {
         Text = "ASKI Flow Native Host";
         Width = 1060;
@@ -36,6 +48,7 @@ public sealed class MainForm : Form
         StartPosition = FormStartPosition.CenterScreen;
 
         _bootstrap = new NativeClientBootstrap();
+        _startupOptions = startupOptions ?? new NativeHostStartupOptions();
 
         _titleLabel = new Label
         {
@@ -202,13 +215,104 @@ public sealed class MainForm : Form
         };
         _disconnectSocketButton.Click += async (_, _) => await DisconnectSocketAsync();
 
+        _openCanvasButton = new Button
+        {
+            Text = "Open Canvas",
+            Width = 112,
+            Height = 32,
+            Location = new Point(728, 220),
+            Anchor = AnchorStyles.Left | AnchorStyles.Top
+        };
+        _openCanvasButton.Click += async (_, _) => await OpenCanvasWindowAsync();
+
+        var runGroup = new GroupBox
+        {
+            Text = "Flow Execution",
+            Location = new Point(20, 264),
+            Width = ClientSize.Width - 40,
+            Height = 150,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+        };
+
+        var flowJsonPathLabel = new Label
+        {
+            Text = "Flow JSON",
+            AutoSize = true,
+            Location = new Point(16, 32)
+        };
+
+        _flowJsonPathTextBox = new TextBox
+        {
+            Location = new Point(100, 28),
+            Width = runGroup.Width - 206,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+        };
+
+        _browseFlowJsonButton = new Button
+        {
+            Text = "Browse",
+            Width = 84,
+            Height = 28,
+            Location = new Point(runGroup.Width - 96, 26),
+            Anchor = AnchorStyles.Top | AnchorStyles.Right
+        };
+        _browseFlowJsonButton.Click += (_, _) => BrowseFlowJsonFile();
+
+        var nodeNameLabel = new Label
+        {
+            Text = "Node Name",
+            AutoSize = true,
+            Location = new Point(16, 72)
+        };
+
+        _nodeNameTextBox = new TextBox
+        {
+            Location = new Point(100, 68),
+            Width = 258
+        };
+
+        _runNodeButton = new Button
+        {
+            Text = "Run Node",
+            Width = 108,
+            Height = 32,
+            Location = new Point(380, 64)
+        };
+        _runNodeButton.Click += async (_, _) => await RunNodeAsync();
+
+        _runFlowButton = new Button
+        {
+            Text = "Run Flow",
+            Width = 108,
+            Height = 32,
+            Location = new Point(494, 64)
+        };
+        _runFlowButton.Click += async (_, _) => await RunFlowAsync();
+
+        var runHintLabel = new Label
+        {
+            Text = "Use a valid exported flow JSON. Run Node requires exact node name from the flow graph.",
+            AutoSize = true,
+            Location = new Point(16, 112),
+            ForeColor = Color.FromArgb(96, 96, 96)
+        };
+
+        runGroup.Controls.Add(flowJsonPathLabel);
+        runGroup.Controls.Add(_flowJsonPathTextBox);
+        runGroup.Controls.Add(_browseFlowJsonButton);
+        runGroup.Controls.Add(nodeNameLabel);
+        runGroup.Controls.Add(_nodeNameTextBox);
+        runGroup.Controls.Add(_runNodeButton);
+        runGroup.Controls.Add(_runFlowButton);
+        runGroup.Controls.Add(runHintLabel);
+
         _statusLabel = new Label
         {
             Text = "Status: not initialized",
             AutoSize = true,
             Font = new Font("Segoe UI", 9, FontStyle.Bold),
             ForeColor = Color.FromArgb(24, 88, 150),
-            Location = new Point(20, 264)
+            Location = new Point(20, 424)
         };
 
         _logBox = new TextBox
@@ -217,9 +321,9 @@ public sealed class MainForm : Form
             ScrollBars = ScrollBars.Vertical,
             ReadOnly = true,
             Font = new Font("Consolas", 10, FontStyle.Regular),
-            Location = new Point(20, 290),
+            Location = new Point(20, 450),
             Width = ClientSize.Width - 40,
-            Height = ClientSize.Height - 330,
+            Height = ClientSize.Height - 490,
             Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right
         };
 
@@ -231,10 +335,18 @@ public sealed class MainForm : Form
         Controls.Add(_testApiButton);
         Controls.Add(_connectSocketButton);
         Controls.Add(_disconnectSocketButton);
+        Controls.Add(_openCanvasButton);
+        Controls.Add(runGroup);
         Controls.Add(_statusLabel);
         Controls.Add(_logBox);
 
-        Shown += async (_, _) => await LoadRuntimeSummaryAsync();
+        Shown += async (_, _) => await HandleInitialShownAsync();
+    }
+
+    private async Task HandleInitialShownAsync()
+    {
+        await LoadRuntimeSummaryAsync();
+        await ApplyStartupOptionsIfNeededAsync();
     }
 
     private async Task LoadRuntimeSummaryAsync()
@@ -248,6 +360,71 @@ public sealed class MainForm : Form
                     $"Runtime ready. REST={_runtime!.Settings.BuildServerUri(includeApiVersion: false)} Socket={_runtime.Settings.BuildSocketUrl()} ClientId={_runtime.Settings.ClientId}"
                 );
                 UpdateSocketStatus();
+            }
+        );
+    }
+
+    private async Task ApplyStartupOptionsIfNeededAsync()
+    {
+        if (_startupApplied || !_startupOptions.HasAnyOverride)
+        {
+            return;
+        }
+
+        _startupApplied = true;
+        await RunActionAsync(
+            "Apply startup args",
+            async () =>
+            {
+                if (!string.IsNullOrWhiteSpace(_startupOptions.ServerAddress))
+                {
+                    _serverHostTextBox.Text = _startupOptions.ServerAddress;
+                }
+
+                if (_startupOptions.ServerPort.HasValue)
+                {
+                    var port = _startupOptions.ServerPort.Value;
+                    if (port is >= 1 and <= 65535)
+                    {
+                        _serverPortInput.Value = port;
+                    }
+                }
+
+                if (_startupOptions.UseHttps.HasValue)
+                {
+                    _useHttpsCheckBox.Checked = _startupOptions.UseHttps.Value;
+                }
+
+                if (!string.IsNullOrWhiteSpace(_startupOptions.ApiVersion))
+                {
+                    _apiVersionTextBox.Text = _startupOptions.ApiVersion;
+                }
+
+                if (!string.IsNullOrWhiteSpace(_startupOptions.ClientId))
+                {
+                    _clientIdTextBox.Text = _startupOptions.ClientId;
+                }
+
+                if (!string.IsNullOrWhiteSpace(_startupOptions.AuthToken))
+                {
+                    _authTokenTextBox.Text = _startupOptions.AuthToken;
+                }
+
+                _editorUrlOverride = NormalizeOptional(_startupOptions.EditorUrl);
+                _editorBundleRootOverride = NormalizeOptional(_startupOptions.EditorBundleRootPath);
+                _editorEntryFileOverride = NormalizeOptional(_startupOptions.EditorEntryFile);
+
+                await SaveSettingsCoreAsync();
+                AppendLog("Startup args applied.");
+
+                _editorUrlOverride = null;
+                _editorBundleRootOverride = null;
+                _editorEntryFileOverride = null;
+
+                if (_startupOptions.AutoOpenCanvas)
+                {
+                    await OpenCanvasWindowCoreAsync();
+                }
             }
         );
     }
@@ -368,6 +545,29 @@ public sealed class MainForm : Form
         );
     }
 
+    private async Task OpenCanvasWindowAsync()
+    {
+        await RunActionAsync(
+            "Open canvas window",
+            OpenCanvasWindowCoreAsync
+        );
+    }
+
+    private async Task OpenCanvasWindowCoreAsync()
+    {
+        await SaveSettingsCoreAsync();
+        if (_runtime is null)
+        {
+            throw new InvalidOperationException("Runtime is not available.");
+        }
+
+        var canvasForm = new FlowCanvasForm(
+            _runtime.SettingsStore,
+            ReadSettingsFromForm()
+        );
+        canvasForm.Show(this);
+    }
+
     private async Task SaveSettingsCoreAsync()
     {
         var settings = ReadSettingsFromForm();
@@ -380,8 +580,95 @@ public sealed class MainForm : Form
         await ReplaceRuntimeAsync();
     }
 
+    private async Task RunNodeAsync()
+    {
+        await RunActionAsync(
+            "Run node",
+            async () =>
+            {
+                var nodeName = _nodeNameTextBox.Text?.Trim();
+                if (string.IsNullOrWhiteSpace(nodeName))
+                {
+                    throw new InvalidOperationException("Node Name is required.");
+                }
+
+                var flowJson = await ReadFlowJsonAsync();
+                await EnsureSocketReadyAsync();
+                await _runtime!.SocketClient.EmitRunNodeAsync(
+                    new RunNodeRequest(flowJson, nodeName)
+                );
+                AppendLog($"run_node emitted. NodeName={nodeName}");
+            }
+        );
+    }
+
+    private async Task RunFlowAsync()
+    {
+        await RunActionAsync(
+            "Run flow",
+            async () =>
+            {
+                var flowJson = await ReadFlowJsonAsync();
+                await EnsureSocketReadyAsync();
+                await _runtime!.SocketClient.EmitProcessFileAsync(new ProcessFileRequest(flowJson));
+                AppendLog("process_file emitted.");
+            }
+        );
+    }
+
+    private async Task EnsureSocketReadyAsync()
+    {
+        await SaveSettingsCoreAsync();
+        if (_runtime is null)
+        {
+            throw new InvalidOperationException("Runtime is not available.");
+        }
+
+        if (!_runtime.SocketClient.IsConnected)
+        {
+            await _runtime.SocketClient.ConnectAsync();
+            AppendLog("Socket connected for flow execution.");
+        }
+
+        UpdateSocketStatus();
+    }
+
+    private async Task<string> ReadFlowJsonAsync()
+    {
+        var path = _flowJsonPathTextBox.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new InvalidOperationException("Flow JSON file path is required.");
+        }
+
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException($"Flow JSON file not found: {path}");
+        }
+
+        var content = await File.ReadAllTextAsync(path);
+        using var _ = JsonDocument.Parse(content);
+        return content;
+    }
+
+    private void BrowseFlowJsonFile()
+    {
+        using var dialog = new OpenFileDialog
+        {
+            Filter = "JSON files (*.json)|*.json|All files (*.*)|*.*",
+            Title = "Select flow JSON file",
+            CheckFileExists = true
+        };
+
+        if (dialog.ShowDialog(this) == DialogResult.OK)
+        {
+            _flowJsonPathTextBox.Text = dialog.FileName;
+        }
+    }
+
     private NativeClientSettings ReadSettingsFromForm()
     {
+        var existing = _runtime?.Settings.Normalize();
         var token = _authTokenTextBox.Text?.Trim();
         return new NativeClientSettings
         {
@@ -391,6 +678,9 @@ public sealed class MainForm : Form
             ApiVersion = _apiVersionTextBox.Text,
             ClientId = _clientIdTextBox.Text,
             AuthToken = string.IsNullOrWhiteSpace(token) ? null : token,
+            EditorUrl = _editorUrlOverride ?? existing?.EditorUrl,
+            EditorBundleRootPath = _editorBundleRootOverride ?? existing?.EditorBundleRootPath,
+            EditorEntryFile = _editorEntryFileOverride ?? existing?.EditorEntryFile ?? "index.html",
             RequestTimeoutSeconds = 30
         }.Normalize();
     }
@@ -431,6 +721,9 @@ public sealed class MainForm : Form
         socketClient.Connected += HandleSocketConnected;
         socketClient.Disconnected += HandleSocketDisconnected;
         socketClient.ErrorReceived += HandleSocketError;
+        socketClient.ProgressReceived += HandleSocketProgress;
+        socketClient.CurrentNodeRunningReceived += HandleCurrentNodeRunning;
+        socketClient.RunEndReceived += HandleRunEnd;
     }
 
     private void DetachSocketEvents(IFlowSocketClient socketClient)
@@ -438,6 +731,9 @@ public sealed class MainForm : Form
         socketClient.Connected -= HandleSocketConnected;
         socketClient.Disconnected -= HandleSocketDisconnected;
         socketClient.ErrorReceived -= HandleSocketError;
+        socketClient.ProgressReceived -= HandleSocketProgress;
+        socketClient.CurrentNodeRunningReceived -= HandleCurrentNodeRunning;
+        socketClient.RunEndReceived -= HandleRunEnd;
     }
 
     private void HandleSocketConnected()
@@ -456,6 +752,24 @@ public sealed class MainForm : Form
     {
         AppendLog($"Socket error: {error.Error}");
         UpdateSocketStatus();
+    }
+
+    private void HandleSocketProgress(FlowProgressEvent progress)
+    {
+        var outputSummary = SummarizeOutput(progress.Output);
+        AppendLog(
+            $"Progress: instance={progress.InstanceName} done={progress.IsDone} output={outputSummary}"
+        );
+    }
+
+    private void HandleCurrentNodeRunning(FlowCurrentNodeRunningEvent progress)
+    {
+        AppendLog($"Current node: {progress.InstanceName}");
+    }
+
+    private void HandleRunEnd(FlowRunEndEvent runEnd)
+    {
+        AppendLog($"Run end: output={SummarizeOutput(runEnd.Output)}");
     }
 
     private void UpdateSocketStatus()
@@ -529,6 +843,41 @@ public sealed class MainForm : Form
         _testApiButton.Enabled = !_busy;
         _connectSocketButton.Enabled = !_busy && !connected;
         _disconnectSocketButton.Enabled = !_busy && connected;
+        _openCanvasButton.Enabled = !_busy;
+        _browseFlowJsonButton.Enabled = !_busy;
+        _runNodeButton.Enabled = !_busy;
+        _runFlowButton.Enabled = !_busy;
+    }
+
+    private static string SummarizeOutput(object? output)
+    {
+        if (output is null)
+        {
+            return "null";
+        }
+
+        if (output is JsonElement element)
+        {
+            return Truncate(element.GetRawText(), 260);
+        }
+
+        return Truncate(output.ToString() ?? output.GetType().Name, 260);
+    }
+
+    private static string Truncate(string value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= maxLength)
+        {
+            return value;
+        }
+
+        return value[..maxLength] + "...";
+    }
+
+    private static string? NormalizeOptional(string? value)
+    {
+        var trimmed = (value ?? string.Empty).Trim();
+        return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)

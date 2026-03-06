@@ -26,6 +26,7 @@ node_modules/
 
 # Native packaging/artifacts
 client-native/winui/artifacts/
+client-native/winui/embedded/
 *.msix
 *.msixbundle
 *.appx
@@ -36,6 +37,15 @@ client-native/winui/artifacts/
 # Runtime/local config files
 client-native/winui/*.local.json
 client-native/winui/**/*.local.json
+
+# Server runtime/generated data (non-main code)
+server-side/backend/storage/assets/
+server-side/backend/models/trained/
+server-side/data/datasets/
+server-side/data/runs/
+server-side/data/datasets/*/exports/
+server-side/data/datasets/*/labels.cache
+server-side/data/datasets/*/labels/*.done
 
 # Logs / temporary
 *.log

@@ -43,6 +43,19 @@ def infer_local_model_kind(file_name: str) -> str:
     return "detect"
 
 
+def infer_local_model_source(path: Path) -> str:
+    normalized = str(path).replace("\\", "/").lower()
+    if "/models/trained/" in normalized:
+        return "trained"
+    if "/models/architectures/" in normalized:
+        return "architecture"
+
+    basename = path.name.lower()
+    if basename in {"yolov5m.pt", "yolov5mu.pt"}:
+        return "architecture"
+    return "custom"
+
+
 def list_local_model_files_payload() -> dict:
     files = []
     seen_paths = set()
@@ -74,6 +87,7 @@ def list_local_model_files_payload() -> dict:
                     "basename": candidate.name,
                     "extension": ext,
                     "kind": infer_local_model_kind(candidate.name),
+                    "source": infer_local_model_source(candidate),
                     "search_root": to_runtime_path(root),
                 }
             )

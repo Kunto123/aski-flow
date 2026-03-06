@@ -10,6 +10,9 @@ public sealed record NativeClientSettings
     public string ApiVersion { get; init; } = "v1";
     public string ClientId { get; init; } = string.Empty;
     public string? AuthToken { get; init; }
+    public string? EditorUrl { get; init; }
+    public string? EditorBundleRootPath { get; init; }
+    public string EditorEntryFile { get; init; } = "index.html";
     public int RequestTimeoutSeconds { get; init; } = 30;
 
     public static NativeClientSettings Default => new()
@@ -28,6 +31,13 @@ public sealed record NativeClientSettings
         var normalizedClientId = string.IsNullOrWhiteSpace(ClientId) || IsLegacyInvalidClientId(ClientId)
             ? GenerateClientId()
             : ClientId.Trim();
+        var normalizedEditorUrl = string.IsNullOrWhiteSpace(EditorUrl) ? null : EditorUrl.Trim();
+        var normalizedEditorBundleRoot = string.IsNullOrWhiteSpace(EditorBundleRootPath)
+            ? null
+            : EditorBundleRootPath.Trim();
+        var normalizedEditorEntry = string.IsNullOrWhiteSpace(EditorEntryFile)
+            ? "index.html"
+            : EditorEntryFile.Trim().TrimStart('/', '\\');
         var normalizedTimeout = RequestTimeoutSeconds <= 0 ? 30 : RequestTimeoutSeconds;
 
         return this with
@@ -36,6 +46,9 @@ public sealed record NativeClientSettings
             ServerPort = normalizedPort,
             ApiVersion = normalizedApiVersion,
             ClientId = normalizedClientId,
+            EditorUrl = normalizedEditorUrl,
+            EditorBundleRootPath = normalizedEditorBundleRoot,
+            EditorEntryFile = normalizedEditorEntry,
             RequestTimeoutSeconds = normalizedTimeout
         };
     }

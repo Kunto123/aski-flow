@@ -33,8 +33,23 @@ def run() -> None:
             sys._MEIPASS, "ms-playwright"
         )
 
+    debug_raw = str(
+        os.getenv("BACKEND_DEBUG")
+        or os.getenv("FLASK_DEBUG")
+        or os.getenv("DEBUG")
+        or ""
+    ).strip().lower()
+    debug_enabled = debug_raw in {"1", "true", "yes", "on"}
+
     root_logger.warning("Protocol set to HTTP")
-    socketio.run(flask_app, port=port, host=host)
+    socketio.run(
+        flask_app,
+        port=port,
+        host=host,
+        debug=debug_enabled,
+        # Keep single-process behavior so interpreter/venv stays deterministic.
+        use_reloader=False,
+    )
 
 
 if __name__ == "__main__":

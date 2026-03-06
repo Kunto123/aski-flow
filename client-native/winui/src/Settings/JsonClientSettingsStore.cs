@@ -57,6 +57,9 @@ public sealed class JsonClientSettingsStore : IClientSettingsStore
             ApiVersion = persisted.ApiVersion ?? "v1",
             ClientId = persisted.ClientId ?? string.Empty,
             AuthToken = string.IsNullOrWhiteSpace(authToken) ? null : authToken,
+            EditorUrl = persisted.EditorUrl,
+            EditorBundleRootPath = persisted.EditorBundleRootPath,
+            EditorEntryFile = persisted.EditorEntryFile ?? "index.html",
             RequestTimeoutSeconds = persisted.RequestTimeoutSeconds ?? 30
         }.Normalize();
     }
@@ -80,6 +83,9 @@ public sealed class JsonClientSettingsStore : IClientSettingsStore
             UseHttps = normalized.UseHttps,
             ApiVersion = normalized.ApiVersion,
             ClientId = normalized.ClientId,
+            EditorUrl = normalized.EditorUrl,
+            EditorBundleRootPath = normalized.EditorBundleRootPath,
+            EditorEntryFile = normalized.EditorEntryFile,
             RequestTimeoutSeconds = normalized.RequestTimeoutSeconds,
             AuthTokenProtected = string.IsNullOrWhiteSpace(normalized.AuthToken)
                 ? null
@@ -126,6 +132,9 @@ public sealed class JsonClientSettingsStore : IClientSettingsStore
         public bool? UseHttps { get; init; }
         public string? ApiVersion { get; init; }
         public string? ClientId { get; init; }
+        public string? EditorUrl { get; init; }
+        public string? EditorBundleRootPath { get; init; }
+        public string? EditorEntryFile { get; init; }
         public int? RequestTimeoutSeconds { get; init; }
         public string? AuthTokenProtected { get; init; }
     }

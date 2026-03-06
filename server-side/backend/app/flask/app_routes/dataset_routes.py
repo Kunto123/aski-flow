@@ -1,5 +1,6 @@
 import json
 import re
+import shutil
 import time
 import uuid
 from pathlib import Path
@@ -15,6 +16,54 @@ datasets_blueprint = Blueprint("datasets_blueprint", __name__)
 
 _DATASET_SUBDIRS = ("images", "labels", "videos", "splits", "exports")
 _DEFAULT_UPLOAD_TARGET = "images"
+_IMAGE_EXTENSIONS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".bmp",
+    ".gif",
+    ".webp",
+    ".tif",
+    ".tiff",
+}
+_VIDEO_EXTENSIONS = {
+    ".mp4",
+    ".avi",
+    ".mov",
+    ".mkv",
+    ".webm",
+    ".mpeg",
+    ".mpg",
+    ".wmv",
+    ".m4v",
+}
+_FILE_EXTENSIONS = {
+    ".txt",
+    ".json",
+    ".csv",
+    ".xml",
+    ".yaml",
+    ".yml",
+    ".pdf",
+    ".zip",
+    ".rar",
+    ".7z",
+}
+_DLL_EXTENSIONS = {".dll"}
+_TARGET_ALLOWED_EXTENSIONS: Dict[str, Optional[set[str]]] = {
+    "images": _IMAGE_EXTENSIONS,
+    "videos": _VIDEO_EXTENSIONS,
+    "labels": {".txt", ".json", ".csv", ".xml"},
+    "splits": {".txt", ".json", ".csv", ".yaml", ".yml"},
+    # Exports is intentionally flexible for generic artifacts.
+    "exports": None,
+}
+_UPLOAD_KIND_ALLOWED_EXTENSIONS: Dict[str, set[str]] = {
+    "image": _IMAGE_EXTENSIONS,
+    "video": _VIDEO_EXTENSIONS,
+    "file": _FILE_EXTENSIONS,
+    "dll": _DLL_EXTENSIONS,
+}
 
 
 def _datasets_root() -> Path:
@@ -103,6 +152,27 @@ def _resolve_upload_target(raw_target: Optional[str]) -> str:
     return target
 
 
+def _normalize_upload_kind(raw_kind: Optional[str]) -> Optional[str]:
+    value = str(raw_kind or "").strip().lower()
+    if not value:
+        return None
+    if value in _UPLOAD_KIND_ALLOWED_EXTENSIONS:
+        return value
+    return ""
+
+
+def _select_allowed_extensions(target: str, upload_kind: Optional[str]) -> Optional[set[str]]:
+    if upload_kind:
+        return _UPLOAD_KIND_ALLOWED_EXTENSIONS.get(upload_kind)
+    return _TARGET_ALLOWED_EXTENSIONS.get(target)
+
+
+def _is_under_datasets_root(path: Path) -> bool:
+    datasets_root = _datasets_root().resolve()
+    resolved = path.resolve()
+    return resolved != datasets_root and datasets_root in resolved.parents
+
+
 @datasets_blueprint.route("/datasets", methods=["GET"])
 def list_datasets():
     with connect() as conn:
@@ -149,6 +219,34 @@ def get_dataset(dataset_id: str):
     return jsonify(_row_to_dataset_payload(dict(row)))
 
 
+@datasets_blueprint.route("/datasets/<dataset_id>", methods=["DELETE"])
+def delete_dataset(dataset_id: str):
+    row = _get_dataset_row(dataset_id)
+    if not row:
+        return {"error": "Dataset not found"}, 404
+
+    dataset_path = Path(str(row["path"]))
+    if not _is_under_datasets_root(dataset_path):
+        return {"error": "Invalid dataset path"}, 400
+
+    try:
+        if dataset_path.exists():
+            shutil.rmtree(dataset_path)
+    except Exception as exc:
+        return {"error": f"Failed to remove dataset directory: {exc}"}, 500
+
+    with connect() as conn:
+        conn.execute("DELETE FROM datasets WHERE id=?", (dataset_id,))
+        conn.commit()
+
+    return jsonify(
+        {
+            "id": dataset_id,
+            "deleted": True,
+        }
+    )
+
+
 @datasets_blueprint.route("/datasets/<dataset_id>/files", methods=["GET"])
 def list_dataset_files(dataset_id: str):
     row = _get_dataset_row(dataset_id)
@@ -184,6 +282,65 @@ def list_dataset_files(dataset_id: str):
     )
 
 
+@datasets_blueprint.route("/datasets/<dataset_id>/files", methods=["DELETE"])
+def delete_dataset_files(dataset_id: str):
+    row = _get_dataset_row(dataset_id)
+    if not row:
+        return {"error": "Dataset not found"}, 404
+
+    body = request.json or {}
+    target = _resolve_upload_target(body.get("target"))
+    raw_names = body.get("names") or []
+    if not isinstance(raw_names, list):
+        return {"error": "Field 'names' must be an array"}, 400
+
+    names = [str(name or "").strip() for name in raw_names if str(name or "").strip()]
+    if not names:
+        return {"error": "No files selected"}, 400
+
+    dataset_path = Path(str(row["path"])).resolve()
+    target_path = (dataset_path / target).resolve()
+    if dataset_path not in target_path.parents and target_path != dataset_path:
+        return {"error": "Invalid target path"}, 400
+
+    deleted: List[str] = []
+    missing: List[str] = []
+    errors: List[Dict[str, str]] = []
+
+    for raw_name in names:
+        # Disallow nested paths; API expects file basenames from list endpoint.
+        if Path(raw_name).name != raw_name:
+            errors.append({"name": raw_name, "error": "Invalid filename"})
+            continue
+
+        requested = (target_path / raw_name).resolve()
+        if target_path not in requested.parents or requested == target_path:
+            errors.append({"name": raw_name, "error": "Invalid file path"})
+            continue
+
+        if not requested.exists() or not requested.is_file():
+            missing.append(raw_name)
+            continue
+
+        try:
+            requested.unlink()
+            deleted.append(raw_name)
+        except Exception as exc:
+            errors.append({"name": raw_name, "error": str(exc)})
+
+    return jsonify(
+        {
+            "dataset_id": dataset_id,
+            "target": target,
+            "requested_count": len(names),
+            "deleted_count": len(deleted),
+            "deleted": deleted,
+            "missing": missing,
+            "errors": errors,
+        }
+    )
+
+
 @datasets_blueprint.route("/datasets/<dataset_id>/upload", methods=["POST"])
 def upload_dataset_files(dataset_id: str):
     row = _get_dataset_row(dataset_id)
@@ -200,8 +357,30 @@ def upload_dataset_files(dataset_id: str):
 
     dataset_path = Path(str(row["path"]))
     target = _resolve_upload_target(request.form.get("target"))
+    upload_kind = _normalize_upload_kind(request.form.get("upload_kind"))
+    if upload_kind == "":
+        return {
+            "error": "Invalid upload_kind. Use one of: image, video, file, dll."
+        }, 400
     target_path = dataset_path / target
     target_path.mkdir(parents=True, exist_ok=True)
+
+    allowed_extensions = _select_allowed_extensions(target, upload_kind)
+    if allowed_extensions:
+        invalid_files: List[str] = []
+        for uploaded in files:
+            safe_name = secure_filename(uploaded.filename or "")
+            extension = Path(safe_name).suffix.lower()
+            if extension not in allowed_extensions:
+                invalid_files.append(safe_name or uploaded.filename or "unknown")
+
+        if invalid_files:
+            return {
+                "error": f"Invalid file format for target '{target}'"
+                + (f" and kind '{upload_kind}'" if upload_kind else ""),
+                "invalid_files": invalid_files,
+                "allowed_extensions": sorted(allowed_extensions),
+            }, 400
 
     saved_files = []
     for uploaded in files:
