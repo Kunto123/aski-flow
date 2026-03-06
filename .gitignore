@@ -40,7 +40,9 @@ client-native/winui/**/*.local.json
 
 # Server runtime/generated data (non-main code)
 server-side/backend/storage/assets/
+server-side/backend/models/
 server-side/backend/models/trained/
+server-side/backend/_tmp_yolov5_legacy/
 server-side/data/datasets/
 server-side/data/runs/
 server-side/data/datasets/*/exports/
@@ -56,3 +58,10 @@ server-side/data/datasets/*/labels/*.done
 docs/
 native_app.txt
 client-side/
+
+# Non-main docs/context files
+CONTEXT.md
+server-side/CONTEXT.md
+guide.md
+client-native/winui/README.md
+client-native/winui/scripts/README.md
