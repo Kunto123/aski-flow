@@ -69,7 +69,11 @@ class MainVisionModelProcessor(BasicProcessor):
     def __init__(self, config):
         super().__init__(config)
         self.model_path = config.get("model_path", "models/yolov5mu.pt")
-        self.conf_threshold = float(config.get("conf_threshold", 0.25))
+        raw_conf_threshold = float(config.get("conf_threshold", 0.25))
+        if raw_conf_threshold > 1.0 and raw_conf_threshold <= 100.0:
+            # UI sliders often send percentages (e.g. 50 -> 0.50).
+            raw_conf_threshold = raw_conf_threshold / 100.0
+        self.conf_threshold = max(0.0, min(1.0, raw_conf_threshold))
         self.stream_fps = float(
             config.get(
                 "stream_fps",
@@ -497,6 +501,17 @@ class MainVisionModelProcessor(BasicProcessor):
                 return overlay, last_predictions
 
             now = time.monotonic()
+            current_shape = list(frame.shape[:2]) if frame is not None else None
+            previous_shape = None
+            try:
+                previous_shape = list((last_predictions or {}).get("shape") or [])
+            except Exception:
+                previous_shape = None
+            shape_changed = (
+                bool(current_shape)
+                and bool(previous_shape)
+                and current_shape != previous_shape
+            )
 
             # Run heavy model inference at a controlled rate, while still pushing
             # display frames at stream_fps with the latest known predictions.
@@ -504,6 +519,7 @@ class MainVisionModelProcessor(BasicProcessor):
                 inference_interval <= 0.0
                 or (now - last_inference_at) >= inference_interval
                 or not last_predictions
+                or shape_changed
             )
             if should_infer:
                 predictions = runtime.predict(
