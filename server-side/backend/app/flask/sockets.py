@@ -22,6 +22,40 @@ from ..processors.context.processor_context_flask_request import (
 )
 import traceback
 import os
+import threading
+
+
+_ACTIVE_RUNTIME_RUNS = set()
+_ACTIVE_RUNTIME_RUNS_LOCK = threading.Lock()
+
+
+def _runtime_session_key(runtime_session_id=None):
+    key = str(runtime_session_id or "").strip()
+    if key:
+        return key
+    sid = str(getattr(request, "sid", "") or "").strip()
+    return sid
+
+
+def _acquire_runtime_run_slot(runtime_session_id=None) -> bool:
+    session_key = _runtime_session_key(runtime_session_id)
+    if not session_key:
+        return True
+
+    with _ACTIVE_RUNTIME_RUNS_LOCK:
+        if session_key in _ACTIVE_RUNTIME_RUNS:
+            return False
+        _ACTIVE_RUNTIME_RUNS.add(session_key)
+    return True
+
+
+def _release_runtime_run_slot(runtime_session_id=None) -> None:
+    session_key = _runtime_session_key(runtime_session_id)
+    if not session_key:
+        return
+
+    with _ACTIVE_RUNTIME_RUNS_LOCK:
+        _ACTIVE_RUNTIME_RUNS.discard(session_key)
 
 
 def _normalize_event_data(data):
@@ -141,17 +175,38 @@ def handle_process_file(data):
 
     """
     data = _normalize_event_data(data)
+    runtime_session_id = _resolve_runtime_session_id(data)
+    run_slot_acquired = False
     try:
         if not _is_socket_authorized(data):
             emit("error", {"error": "Unauthorized"})
             emit("run_end", {"output": None})
             return
 
+        if not _acquire_runtime_run_slot(runtime_session_id):
+            logging.info(
+                "Rejecting process_file while run in progress sid=%s runtime_session_id=%s",
+                request.sid,
+                runtime_session_id,
+            )
+            emit(
+                "error",
+                {
+                    "error": (
+                        "Run already in progress for this client session. "
+                        "Wait until current run finishes."
+                    )
+                },
+            )
+            emit("run_end", {"output": None})
+            return
+        run_slot_acquired = True
+
         populate_request_global_object(data)
         flow_data = json.loads(data.get("jsonFile"))
         launcher = get_root_injector().get(ProcessorLauncher)
         launcher.set_context(
-            ProcessorContextFlaskRequest(g, session, _resolve_runtime_session_id(data))
+            ProcessorContextFlaskRequest(g, session, runtime_session_id)
         )
 
         if flow_data:
@@ -170,6 +225,9 @@ def handle_process_file(data):
         emit("run_end", {"output": None})
         traceback.print_exc()
         logging.error(f"An error occurred: {str(e)}")
+    finally:
+        if run_slot_acquired:
+            _release_runtime_run_slot(runtime_session_id)
 
 
 @socketio.on("run_node")
@@ -186,18 +244,41 @@ def handle_run_node(data):
     """
     data = _normalize_event_data(data)
     node_name = data.get("nodeName")
+    runtime_session_id = _resolve_runtime_session_id(data)
+    run_slot_acquired = False
     try:
         if not _is_socket_authorized(data):
             emit("error", {"error": "Unauthorized"})
             emit("run_end", {"output": None})
             return
 
+        if not _acquire_runtime_run_slot(runtime_session_id):
+            logging.info(
+                "Rejecting run_node while run in progress sid=%s runtime_session_id=%s node=%s",
+                request.sid,
+                runtime_session_id,
+                node_name,
+            )
+            emit(
+                "error",
+                {
+                    "error": (
+                        "Run already in progress for this client session. "
+                        "Wait until current run finishes."
+                    ),
+                    "nodeName": node_name,
+                },
+            )
+            emit("run_end", {"output": None})
+            return
+        run_slot_acquired = True
+
         populate_request_global_object(data)
         flow_data = json.loads(data.get("jsonFile"))
 
         launcher = get_root_injector().get(ProcessorLauncher)
         launcher.set_context(
-            ProcessorContextFlaskRequest(g, session, _resolve_runtime_session_id(data))
+            ProcessorContextFlaskRequest(g, session, runtime_session_id)
         )
 
         if flow_data and node_name:
@@ -217,10 +298,14 @@ def handle_run_node(data):
         emit("run_end", {"output": None})
         traceback.print_exc()
         logging.error(f"An error occurred: {node_name} - {str(e)}")
+    finally:
+        if run_slot_acquired:
+            _release_runtime_run_slot(runtime_session_id)
 
 
 @socketio.on("disconnect")
 def handle_disconnect():
+    _release_runtime_run_slot(_resolve_runtime_session_id())
     logging.info("Client disconnected sid=%s", request.sid)
 
 

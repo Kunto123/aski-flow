@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 from typing import Any, Dict, List, Optional, Sequence
 
 _COCO_KEYPOINT_NAMES = [
@@ -28,6 +29,7 @@ class UltralyticsRuntime:
 
     def __init__(self):
         self._models: Dict[str, YOLO] = {}
+        self._runtime_lock = threading.RLock()
         self._allow_cpu_fallback = self._to_bool(
             os.getenv("ASKI_MAIN_VISION_ALLOW_CPU_FALLBACK", "0")
         )
@@ -185,14 +187,15 @@ class UltralyticsRuntime:
         return YOLO
 
     def get_model(self, model_path: str):
-        YOLO = self._load_yolo_class()
-        key = self._normalize_key(model_path)
-        model = self._models.get(key)
-        if model is None:
-            model = YOLO(key)
-            self._prepare_model_device(model)
-            self._models[key] = model
-        return model
+        with self._runtime_lock:
+            YOLO = self._load_yolo_class()
+            key = self._normalize_key(model_path)
+            model = self._models.get(key)
+            if model is None:
+                model = YOLO(key)
+                self._prepare_model_device(model)
+                self._models[key] = model
+            return model
 
     def _prepare_model_device(self, model):
         target_device = self._inference_device
@@ -216,27 +219,28 @@ class UltralyticsRuntime:
             ) from e
 
     def _predict_with_device(self, model, image: Any, kwargs: Dict[str, Any]):
-        request_kwargs = dict(kwargs)
-        request_kwargs["device"] = self._inference_device
-        try:
-            return model.predict(image, **request_kwargs)
-        except Exception as e:
-            if self._inference_device == "cpu":
-                raise
-            if not self._allow_cpu_fallback:
-                raise RuntimeError(
-                    f"GPU inference failed on device '{self._inference_device}': {e}"
-                ) from e
-            fallback_kwargs = dict(kwargs)
-            fallback_kwargs["device"] = "cpu"
-            results = model.predict(image, **fallback_kwargs)
-            self._inference_device = "cpu"
-            logging.warning(
-                "GPU inference failed on %s (%s). Falling back to CPU.",
-                request_kwargs["device"],
-                e,
-            )
-            return results
+        with self._runtime_lock:
+            request_kwargs = dict(kwargs)
+            request_kwargs["device"] = self._inference_device
+            try:
+                return model.predict(image, **request_kwargs)
+            except Exception as e:
+                if self._inference_device == "cpu":
+                    raise
+                if not self._allow_cpu_fallback:
+                    raise RuntimeError(
+                        f"GPU inference failed on device '{self._inference_device}': {e}"
+                    ) from e
+                fallback_kwargs = dict(kwargs)
+                fallback_kwargs["device"] = "cpu"
+                results = model.predict(image, **fallback_kwargs)
+                self._inference_device = "cpu"
+                logging.warning(
+                    "GPU inference failed on %s (%s). Falling back to CPU.",
+                    request_kwargs["device"],
+                    e,
+                )
+                return results
 
     def _align_to_stride(self, value: Optional[int], stride: int = 32) -> Optional[int]:
         if value is None:

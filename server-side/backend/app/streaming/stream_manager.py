@@ -102,6 +102,20 @@ class StreamManager:
         except Exception:
             self._jpeg_quality = 80
         self._jpeg_quality = max(30, min(95, self._jpeg_quality))
+        try:
+            self._stop_join_timeout_sec = max(
+                0.1,
+                float(os.getenv("ASKI_STREAM_STOP_JOIN_TIMEOUT_SEC", "1.2")),
+            )
+        except Exception:
+            self._stop_join_timeout_sec = 1.2
+        try:
+            self._stop_force_release_join_timeout_sec = max(
+                0.1,
+                float(os.getenv("ASKI_STREAM_STOP_FORCE_RELEASE_JOIN_TIMEOUT_SEC", "0.5")),
+            )
+        except Exception:
+            self._stop_force_release_join_timeout_sec = 0.5
         self._debug_events_max = int(os.getenv("ASKI_STREAM_DEBUG_MAX_EVENTS", "800"))
         self._debug_events: Deque[Dict[str, Any]] = deque(maxlen=self._debug_events_max)
 
@@ -1114,7 +1128,7 @@ class StreamManager:
         try:
             thread = state.thread
             if thread is not None and thread.is_alive():
-                thread.join(timeout=5.0)
+                thread.join(timeout=self._stop_join_timeout_sec)
         except Exception:
             pass
 
@@ -1133,7 +1147,7 @@ class StreamManager:
                         state.capture = None
                 # Give it a moment to unwind.
                 try:
-                    thread.join(timeout=1.0)
+                    thread.join(timeout=self._stop_force_release_join_timeout_sec)
                 except Exception:
                     pass
         except Exception:
