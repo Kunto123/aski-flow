@@ -90,7 +90,7 @@ class MainVisionModelProcessor(BasicProcessor):
         self.inference_fps = (
             0.0
             if parsed_inference_fps <= 0
-            else max(float(parsed_inference_fps), float(self.stream_fps))
+            else float(parsed_inference_fps)
         )
         imgsz_raw = config.get(
             "imgsz",
@@ -421,8 +421,6 @@ class MainVisionModelProcessor(BasicProcessor):
         # Without this, the transform thread can silently loop without frames.
         _ = runtime._normalize_key(self.model_path)
         inference_fps = float(self.inference_fps)
-        if inference_fps > 0:
-            inference_fps = max(inference_fps, effective_stream_fps)
         inference_interval = (
             0.0 if inference_fps <= 0 else 1.0 / max(float(inference_fps), 1.0)
         )

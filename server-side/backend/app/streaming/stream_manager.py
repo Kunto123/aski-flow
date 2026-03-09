@@ -5,7 +5,7 @@ import uuid
 import logging
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Callable, Deque, Dict, Generator, List, Optional
+from typing import Any, Callable, Deque, Dict, Generator, List, Optional, Tuple
 
 try:
     import cv2
@@ -55,6 +55,8 @@ class StreamState:
     client_session_id: Optional[str] = None
     latest_frame: Optional[Any] = None
     latest_jpeg: Optional[bytes] = None
+    frame_version: int = 0
+    decoded_frame_version: int = 0
     latest_predictions: Dict[str, Any] = field(default_factory=dict)
     thread: Optional[threading.Thread] = None
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -79,6 +81,10 @@ class StreamManager:
             str(os.getenv("ASKI_STREAM_DEBUG", "0")).strip().lower()
             in ("1", "true", "yes", "on")
         )
+        self._record_debug_events = (
+            str(os.getenv("ASKI_STREAM_RECORD_EVENTS", "0")).strip().lower()
+            in ("1", "true", "yes", "on")
+        )
         try:
             self._jpeg_quality = int(os.getenv("ASKI_STREAM_JPEG_QUALITY", "80"))
         except Exception:
@@ -98,6 +104,8 @@ class StreamManager:
         self._reaper_thread.start()
 
     def _debug_event(self, event: str, **payload: Any) -> None:
+        if (not self._debug_enabled) and (not self._record_debug_events):
+            return
         entry = {
             "timestamp": time.time(),
             "event": event,
@@ -142,6 +150,8 @@ class StreamManager:
                         "has_capture": state.capture is not None,
                         "has_latest_frame": state.latest_frame is not None,
                         "has_latest_jpeg": state.latest_jpeg is not None,
+                        "frame_version": state.frame_version,
+                        "decoded_frame_version": state.decoded_frame_version,
                         "last_error": state.last_error,
                         "camera_transport": state.camera_transport,
                         "client_session_id": state.client_session_id,
@@ -564,11 +574,6 @@ class StreamManager:
         if state is None:
             raise RuntimeError("Client camera stream not found after creation")
 
-        frame_buffer = np.frombuffer(jpeg_bytes, dtype=np.uint8)
-        frame = cv2.imdecode(frame_buffer, cv2.IMREAD_COLOR)
-        if frame is None:
-            raise ValueError("Invalid JPEG frame")
-
         now = time.time()
         with state.lock:
             if width is not None:
@@ -577,8 +582,8 @@ class StreamManager:
                 state.camera_height = int(height)
             if fps is not None:
                 state.camera_fps = float(fps)
-            state.latest_frame = frame
             state.latest_jpeg = bytes(jpeg_bytes)
+            state.frame_version += 1
             state.frames_produced += 1
             state.last_frame_at = now
             state.last_access_at = now
@@ -774,6 +779,8 @@ class StreamManager:
                 with state.lock:
                     state.latest_frame = frame
                     state.latest_jpeg = encoded_bytes
+                    state.frame_version += 1
+                    state.decoded_frame_version = state.frame_version
                     state.frames_produced += 1
                     state.last_frame_at = time.time()
         finally:
@@ -819,6 +826,7 @@ class StreamManager:
         )
         consumer_grace_sec = float(os.getenv("ASKI_STREAM_CONSUMER_GRACE_SEC", "6"))
         no_consumer_idle_sec = float(os.getenv("ASKI_STREAM_NO_CONSUMERS_IDLE_SEC", "1"))
+        last_source_frame_version = -1
         while state.active and not state.stop_event.is_set():
             loop_started_at = time.perf_counter()
             now = time.time()
@@ -842,10 +850,14 @@ class StreamManager:
                     state.active = False
                     break
 
-                source_frame = self.get_latest_frame(source_stream_id)
+                source_frame, source_frame_version = self.get_latest_frame_with_version(
+                    source_stream_id,
+                    min_version=last_source_frame_version,
+                )
                 if source_frame is None:
                     self._cooperative_sleep(min(delay, 0.03))
                     continue
+                last_source_frame_version = source_frame_version
 
                 # get_latest_frame() already returns a frame copy.
                 transformed = transform_fn(source_frame)
@@ -872,6 +884,8 @@ class StreamManager:
                 with state.lock:
                     state.latest_frame = frame
                     state.latest_jpeg = encoded_bytes
+                    state.frame_version += 1
+                    state.decoded_frame_version = state.frame_version
                     state.frames_produced += 1
                     state.last_frame_at = time.time()
                     if predictions:
@@ -914,13 +928,70 @@ class StreamManager:
         with self._registry_lock:
             return self._streams.get(stream_id)
 
-    def get_latest_frame(self, stream_id: str) -> Optional[Any]:
+    def get_latest_frame_with_version(
+        self,
+        stream_id: str,
+        min_version: Optional[int] = None,
+    ) -> Tuple[Optional[Any], int]:
         state = self.get_stream(stream_id)
         if state is None:
-            return None
+            return None, -1
+
         with state.lock:
             state.last_access_at = time.time()
-            return None if state.latest_frame is None else state.latest_frame.copy()
+            current_version = int(state.frame_version)
+            if min_version is not None and current_version <= int(min_version):
+                return None, current_version
+
+            if (
+                state.latest_frame is not None
+                and int(state.decoded_frame_version) >= current_version
+            ):
+                frame = state.latest_frame
+                try:
+                    frame_copy = frame.copy()
+                except Exception:
+                    frame_copy = frame
+                return frame_copy, current_version
+
+            jpeg_bytes = bytes(state.latest_jpeg) if state.latest_jpeg is not None else None
+            decode_version = current_version
+
+        if jpeg_bytes is None or cv2 is None or np is None:
+            return None, current_version
+
+        frame_buffer = np.frombuffer(jpeg_bytes, dtype=np.uint8)
+        decoded_frame = cv2.imdecode(frame_buffer, cv2.IMREAD_COLOR)
+        if decoded_frame is None:
+            return None, decode_version
+
+        with state.lock:
+            state.last_access_at = time.time()
+            current_version = int(state.frame_version)
+            if min_version is not None and current_version <= int(min_version):
+                return None, current_version
+
+            if current_version == decode_version:
+                state.latest_frame = decoded_frame
+                state.decoded_frame_version = decode_version
+                frame = state.latest_frame
+            elif (
+                state.latest_frame is not None
+                and int(state.decoded_frame_version) >= current_version
+            ):
+                frame = state.latest_frame
+            else:
+                return None, current_version
+
+            try:
+                frame_copy = frame.copy()
+            except Exception:
+                frame_copy = frame
+            return frame_copy, current_version
+
+    def get_latest_frame(self, stream_id: str) -> Optional[Any]:
+        frame, _ = self.get_latest_frame_with_version(stream_id)
+        return frame
 
     def get_latest_jpeg(self, stream_id: str) -> Optional[bytes]:
         state = self.get_stream(stream_id)

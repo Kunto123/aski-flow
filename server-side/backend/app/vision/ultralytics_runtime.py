@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -27,7 +28,20 @@ class UltralyticsRuntime:
 
     def __init__(self):
         self._models: Dict[str, YOLO] = {}
+        self._allow_cpu_fallback = self._to_bool(
+            os.getenv("ASKI_MAIN_VISION_ALLOW_CPU_FALLBACK", "0")
+        )
+        self._require_gpu = self._to_bool(
+            os.getenv("ASKI_MAIN_VISION_REQUIRE_GPU", "0")
+        )
         self._inference_device = self._resolve_inference_device()
+
+    def _to_bool(self, value: Any, default: bool = False) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in ("1", "true", "yes", "on")
 
     def _load_torch(self):
         try:
@@ -40,9 +54,26 @@ class UltralyticsRuntime:
         forced = str(os.getenv("ASKI_MAIN_VISION_DEVICE", "")).strip()
         torch = self._load_torch()
 
+        def _on_gpu_unavailable(context: str) -> str:
+            message = (
+                f"{context}. CUDA device is required for inference but not available. "
+                "Install CUDA-enabled PyTorch and verify NVIDIA driver/runtime."
+            )
+            if self._allow_cpu_fallback:
+                logging.warning("%s Falling back to CPU because fallback is enabled.", message)
+                return "cpu"
+            if self._require_gpu:
+                raise RuntimeError(message)
+            logging.warning("%s Falling back to CPU.", message)
+            return "cpu"
+
         if forced:
             forced_lower = forced.lower()
             if torch is None:
+                if forced_lower.startswith("cuda"):
+                    return _on_gpu_unavailable(
+                        f"Forced device '{forced}' requested but torch is unavailable"
+                    )
                 return forced
 
             if forced_lower.startswith("cuda"):
@@ -51,7 +82,9 @@ class UltralyticsRuntime:
                         return forced
                 except Exception:
                     pass
-                return "cpu"
+                return _on_gpu_unavailable(
+                    f"Forced device '{forced}' requested but CUDA is not available"
+                )
 
             if forced_lower == "mps":
                 try:
@@ -60,7 +93,12 @@ class UltralyticsRuntime:
                         return "mps"
                 except Exception:
                     pass
-                return "cpu"
+                if self._allow_cpu_fallback:
+                    return "cpu"
+                raise RuntimeError(
+                    "Forced device 'mps' requested but MPS backend is unavailable "
+                    "and CPU fallback is disabled."
+                )
 
             return forced
 
@@ -77,6 +115,8 @@ class UltralyticsRuntime:
             except Exception:
                 pass
 
+        if self._require_gpu:
+            return _on_gpu_unavailable("No CUDA-capable device detected")
         return "cpu"
 
     def _normalize_key(self, model_path: str) -> str:
@@ -158,26 +198,44 @@ class UltralyticsRuntime:
         target_device = self._inference_device
         try:
             model.to(target_device)
-        except Exception:
-            if target_device != "cpu":
+        except Exception as e:
+            if target_device != "cpu" and self._allow_cpu_fallback:
+                logging.warning(
+                    "Failed to move model to %s (%s). Falling back to CPU.",
+                    target_device,
+                    e,
+                )
                 self._inference_device = "cpu"
                 try:
                     model.to("cpu")
                 except Exception:
                     pass
+                return
+            raise RuntimeError(
+                f"Failed to move model to inference device '{target_device}': {e}"
+            ) from e
 
     def _predict_with_device(self, model, image: Any, kwargs: Dict[str, Any]):
         request_kwargs = dict(kwargs)
         request_kwargs["device"] = self._inference_device
         try:
             return model.predict(image, **request_kwargs)
-        except Exception:
+        except Exception as e:
             if self._inference_device == "cpu":
                 raise
+            if not self._allow_cpu_fallback:
+                raise RuntimeError(
+                    f"GPU inference failed on device '{self._inference_device}': {e}"
+                ) from e
             fallback_kwargs = dict(kwargs)
             fallback_kwargs["device"] = "cpu"
             results = model.predict(image, **fallback_kwargs)
             self._inference_device = "cpu"
+            logging.warning(
+                "GPU inference failed on %s (%s). Falling back to CPU.",
+                request_kwargs["device"],
+                e,
+            )
             return results
 
     def _resolve_imgsz(self, image: Any, imgsz: Optional[int]):
