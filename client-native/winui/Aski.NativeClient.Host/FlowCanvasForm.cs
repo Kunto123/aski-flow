@@ -22,6 +22,7 @@ public sealed class FlowCanvasForm : Form
     private readonly Button _openExternalButton;
     private readonly Label _statusLabel;
     private readonly WebView2 _webView;
+    private readonly SplitContainer _layoutSplit;
 
     private FlowEditorHostRuntime? _flowEditorRuntime;
     private string? _bootstrapScriptId;
@@ -43,6 +44,21 @@ public sealed class FlowCanvasForm : Form
         Height = 860;
         MinimumSize = new Size(1000, 640);
         StartPosition = FormStartPosition.CenterParent;
+        AutoScaleMode = AutoScaleMode.Dpi;
+
+        _layoutSplit = new SplitContainer
+        {
+            Dock = DockStyle.Fill,
+            Orientation = Orientation.Horizontal,
+            FixedPanel = FixedPanel.Panel1,
+            IsSplitterFixed = false,
+            SplitterDistance = 190,
+            SplitterWidth = 8,
+            Panel1MinSize = 56,
+            Panel2MinSize = 120
+        };
+        _layoutSplit.Panel1.AutoScroll = true;
+        _layoutSplit.Panel2.Padding = Padding.Empty;
 
         _sourceGroup = new GroupBox
         {
@@ -104,12 +120,25 @@ public sealed class FlowCanvasForm : Form
             Width = 160
         };
 
+        var actionPanel = new FlowLayoutPanel
+        {
+            Location = new Point(280, 86),
+            Width = _sourceGroup.Width - 294,
+            Height = 30,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            AutoScroll = true,
+            WrapContents = false,
+            FlowDirection = FlowDirection.LeftToRight,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty
+        };
+
         _loadCanvasButton = new Button
         {
             Text = "Load",
             Width = 92,
             Height = 28,
-            Location = new Point(280, 88)
+            Margin = new Padding(0, 0, 8, 0)
         };
         _loadCanvasButton.Click += async (_, _) => await LoadCanvasAsync(forceReload: false);
 
@@ -118,7 +147,7 @@ public sealed class FlowCanvasForm : Form
             Text = "Reload",
             Width = 92,
             Height = 28,
-            Location = new Point(378, 88)
+            Margin = new Padding(0, 0, 8, 0)
         };
         _reloadCanvasButton.Click += async (_, _) => await LoadCanvasAsync(forceReload: true);
 
@@ -126,10 +155,13 @@ public sealed class FlowCanvasForm : Form
         {
             Text = "Open External",
             Width = 118,
-            Height = 28,
-            Location = new Point(476, 88)
+            Height = 28
         };
         _openExternalButton.Click += (_, _) => OpenExternal();
+
+        actionPanel.Controls.Add(_loadCanvasButton);
+        actionPanel.Controls.Add(_reloadCanvasButton);
+        actionPanel.Controls.Add(_openExternalButton);
 
         _sourceGroup.Controls.Add(editorUrlLabel);
         _sourceGroup.Controls.Add(_editorUrlTextBox);
@@ -138,9 +170,7 @@ public sealed class FlowCanvasForm : Form
         _sourceGroup.Controls.Add(_browseBundleRootButton);
         _sourceGroup.Controls.Add(entryFileLabel);
         _sourceGroup.Controls.Add(_editorEntryFileTextBox);
-        _sourceGroup.Controls.Add(_loadCanvasButton);
-        _sourceGroup.Controls.Add(_reloadCanvasButton);
-        _sourceGroup.Controls.Add(_openExternalButton);
+        _sourceGroup.Controls.Add(actionPanel);
 
         _statusLabel = new Label
         {
@@ -153,15 +183,13 @@ public sealed class FlowCanvasForm : Form
 
         _webView = new WebView2
         {
-            Location = new Point(12, 172),
-            Width = ClientSize.Width - 24,
-            Height = ClientSize.Height - 184,
-            Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right
+            Dock = DockStyle.Fill
         };
 
-        Controls.Add(_sourceGroup);
-        Controls.Add(_statusLabel);
-        Controls.Add(_webView);
+        _layoutSplit.Panel1.Controls.Add(_sourceGroup);
+        _layoutSplit.Panel1.Controls.Add(_statusLabel);
+        _layoutSplit.Panel2.Controls.Add(_webView);
+        Controls.Add(_layoutSplit);
 
         _editorUrlTextBox.Text = _settings.EditorUrl ?? string.Empty;
         _editorBundleRootTextBox.Text = _settings.EditorBundleRootPath
@@ -231,16 +259,14 @@ public sealed class FlowCanvasForm : Form
     {
         var showSource = !_options.CanvasOnly && _options.ShowSourceControls;
         var showStatus = !_options.CanvasOnly && _options.ShowStatusBar;
+        var hasTopContent = showSource || showStatus;
 
         _sourceGroup.Visible = showSource;
         _statusLabel.Visible = showStatus;
+        _layoutSplit.Panel1Collapsed = _options.CanvasOnly || !hasTopContent;
 
         if (_options.CanvasOnly)
         {
-            _webView.Location = new Point(0, 0);
-            _webView.Width = ClientSize.Width;
-            _webView.Height = ClientSize.Height;
-            _webView.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             if (_options.StartMaximized || !_options.ShowSourceControls)
             {
                 WindowState = FormWindowState.Maximized;
@@ -248,10 +274,15 @@ public sealed class FlowCanvasForm : Form
             return;
         }
 
-        _webView.Location = new Point(12, 172);
-        _webView.Width = ClientSize.Width - 24;
-        _webView.Height = ClientSize.Height - 184;
-        _webView.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+        if (hasTopContent)
+        {
+            _layoutSplit.SplitterDistance = showSource && showStatus
+                ? 190
+                : showSource
+                    ? 156
+                    : 56;
+        }
+
         if (_options.StartMaximized)
         {
             WindowState = FormWindowState.Maximized;
@@ -331,11 +362,58 @@ public sealed class FlowCanvasForm : Form
     {
         if (e.IsSuccess)
         {
+            _ = ApplyEmbeddedUiLayoutOverridesAsync();
             _statusLabel.Text = $"Canvas status: loaded {_currentUri}";
             return;
         }
 
         _statusLabel.Text = $"Canvas status: failed ({e.WebErrorStatus})";
+    }
+
+    private Task ApplyEmbeddedUiLayoutOverridesAsync()
+    {
+        var core = _webView.CoreWebView2;
+        if (core is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        const string script = """
+            (() => {
+              try {
+                const styleId = "__aski_native_layout_overrides__";
+                if (document.getElementById(styleId)) {
+                  return;
+                }
+
+                const style = document.createElement("style");
+                style.id = styleId;
+                style.textContent = `
+                  html, body, #root {
+                    width: 100% !important;
+                    height: 100% !important;
+                    margin: 0 !important;
+                  }
+
+                  .aski-workstation-wrap {
+                    overflow: auto !important;
+                  }
+
+                  .aski-ws-dataset-board {
+                    max-height: min(60vh, 640px) !important;
+                    overflow-y: auto !important;
+                    overflow-x: hidden !important;
+                    align-content: start !important;
+                  }
+                `;
+                document.head.appendChild(style);
+              } catch (_) {
+                // no-op
+              }
+            })();
+            """;
+
+        return core.ExecuteScriptAsync(script);
     }
 
     private void BrowseBundleRootFolder()

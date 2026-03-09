@@ -74,6 +74,12 @@ public sealed class CameraFrameUploader : IAsyncDisposable
     {
         lock (_stateLock)
         {
+            if (_options.UploadFps <= 0)
+            {
+                _lastUploadAtUtc = nowUtc;
+                return true;
+            }
+
             var intervalMs = Math.Max(1, (int)Math.Round(1000.0 / Math.Max(1f, _options.UploadFps)));
             if (_lastUploadAtUtc != DateTimeOffset.MinValue)
             {
@@ -91,9 +97,12 @@ public sealed class CameraFrameUploader : IAsyncDisposable
 
     private async Task UploadInternalAsync(CameraFrame frame, CancellationToken cancellationToken)
     {
-        if (!await _uploadSemaphore.WaitAsync(0, cancellationToken))
+        try
         {
-            Interlocked.Increment(ref _droppedFrameCount);
+            await _uploadSemaphore.WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
             return;
         }
 
@@ -109,6 +118,10 @@ public sealed class CameraFrameUploader : IAsyncDisposable
                 cancellationToken: cancellationToken
             );
             Interlocked.Increment(ref _uploadedFrameCount);
+        }
+        catch (OperationCanceledException)
+        {
+            // Ignore cancellation during shutdown.
         }
         catch
         {

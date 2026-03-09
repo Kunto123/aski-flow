@@ -73,21 +73,30 @@ class MainVisionModelProcessor(BasicProcessor):
         self.stream_fps = float(
             config.get(
                 "stream_fps",
-                os.getenv("ASKI_MAIN_VISION_STREAM_FPS", "10"),
+                os.getenv("ASKI_MAIN_VISION_STREAM_FPS", "30"),
             )
         )
-        self.inference_fps = float(
-            config.get(
-                "inference_fps",
-                os.getenv("ASKI_MAIN_VISION_INFERENCE_FPS", "4"),
-            )
+        if self.stream_fps <= 0:
+            self.stream_fps = 30.0
+        inference_fps_raw = config.get(
+            "inference_fps",
+            os.getenv("ASKI_MAIN_VISION_INFERENCE_FPS", None),
         )
-        self.imgsz = int(
-            config.get(
-                "imgsz",
-                os.getenv("ASKI_MAIN_VISION_IMGSZ", "416"),
-            )
+        parsed_inference_fps = (
+            float(inference_fps_raw)
+            if inference_fps_raw not in (None, "")
+            else float(self.stream_fps)
         )
+        self.inference_fps = (
+            0.0
+            if parsed_inference_fps <= 0
+            else max(float(parsed_inference_fps), float(self.stream_fps))
+        )
+        imgsz_raw = config.get(
+            "imgsz",
+            os.getenv("ASKI_MAIN_VISION_IMGSZ", "0"),
+        )
+        self.imgsz = int(imgsz_raw) if imgsz_raw not in (None, "") else 0
         self.input_url = config.get("input_url")
         self.classes = config.get("classes")
         self.enable_ergonomic_check = _to_bool(
@@ -391,10 +400,32 @@ class MainVisionModelProcessor(BasicProcessor):
         manager.stop_streams_by_owner(self.name)
         runtime = get_ultralytics_runtime()
 
+        source_stream_fps = None
+        source_state = manager.get_stream(source_stream_id)
+        if source_state is not None:
+            try:
+                with source_state.lock:
+                    raw_source_fps = source_state.camera_fps
+                if raw_source_fps is not None:
+                    parsed_source_fps = float(raw_source_fps)
+                    if parsed_source_fps > 0:
+                        source_stream_fps = parsed_source_fps
+            except Exception:
+                source_stream_fps = None
+
+        effective_stream_fps = float(self.stream_fps)
+        if source_stream_fps is not None:
+            effective_stream_fps = max(effective_stream_fps, source_stream_fps)
+
         # Fail fast in local-first mode if the model weights are missing.
         # Without this, the transform thread can silently loop without frames.
         _ = runtime._normalize_key(self.model_path)
-        inference_interval = 1.0 / max(float(self.inference_fps), 1.0)
+        inference_fps = float(self.inference_fps)
+        if inference_fps > 0:
+            inference_fps = max(inference_fps, effective_stream_fps)
+        inference_interval = (
+            0.0 if inference_fps <= 0 else 1.0 / max(float(inference_fps), 1.0)
+        )
         last_inference_at = 0.0
         last_predictions: Dict[str, Any] = {}
         last_ergonomic_payload: Dict[str, Any] = {"enabled": False}
@@ -471,7 +502,11 @@ class MainVisionModelProcessor(BasicProcessor):
 
             # Run heavy model inference at a controlled rate, while still pushing
             # display frames at stream_fps with the latest known predictions.
-            should_infer = (now - last_inference_at) >= inference_interval or not last_predictions
+            should_infer = (
+                inference_interval <= 0.0
+                or (now - last_inference_at) >= inference_interval
+                or not last_predictions
+            )
             if should_infer:
                 predictions = runtime.predict(
                     frame,
@@ -493,7 +528,7 @@ class MainVisionModelProcessor(BasicProcessor):
         overlay_stream_id = manager.create_transform_stream(
             source_stream_id,
             _transform,
-            fps=max(1.0, float(self.stream_fps)),
+            fps=max(1.0, float(effective_stream_fps)),
             owner_name=self.name,
         )
         predictions_url = manager.build_predictions_url(overlay_stream_id)

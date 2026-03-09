@@ -145,8 +145,25 @@ public sealed class OpenCvCameraFrameSource : ICameraFrameSource
         CancellationToken cancellationToken
     )
     {
-        var fps = Math.Max(1f, options.UploadFps);
-        var frameInterval = TimeSpan.FromMilliseconds(1000.0 / fps);
+        var requestedFps = options.UploadFps > 0 ? options.UploadFps : 0f;
+        var captureFps = 0f;
+        try
+        {
+            var rawCaptureFps = capture.Get(VideoCaptureProperties.Fps);
+            if (rawCaptureFps > 0 && !double.IsNaN(rawCaptureFps) && !double.IsInfinity(rawCaptureFps))
+            {
+                captureFps = (float)rawCaptureFps;
+            }
+        }
+        catch
+        {
+            captureFps = 0f;
+        }
+
+        var effectiveFps = requestedFps > 0 ? requestedFps : captureFps;
+        var frameInterval = requestedFps > 0
+            ? TimeSpan.FromMilliseconds(1000.0 / requestedFps)
+            : TimeSpan.Zero;
         var jpegParams = new[] { new ImageEncodingParam(ImwriteFlags.JpegQuality, 72) };
 
         using var mat = new Mat();
@@ -168,17 +185,20 @@ public sealed class OpenCvCameraFrameSource : ICameraFrameSource
                     jpegBytes,
                     mat.Width,
                     mat.Height,
-                    fps,
+                    effectiveFps,
                     DateTimeOffset.UtcNow
                 );
                 FrameReady?.Invoke(frame);
             }
 
-            var elapsed = DateTimeOffset.UtcNow - startedAt;
-            var remaining = frameInterval - elapsed;
-            if (remaining > TimeSpan.Zero)
+            if (frameInterval > TimeSpan.Zero)
             {
-                await Task.Delay(remaining, cancellationToken);
+                var elapsed = DateTimeOffset.UtcNow - startedAt;
+                var remaining = frameInterval - elapsed;
+                if (remaining > TimeSpan.Zero)
+                {
+                    await Task.Delay(remaining, cancellationToken);
+                }
             }
         }
     }

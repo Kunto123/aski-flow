@@ -46,6 +46,21 @@ public sealed class MainForm : Form
         Height = 720;
         MinimumSize = new Size(900, 620);
         StartPosition = FormStartPosition.CenterScreen;
+        AutoScaleMode = AutoScaleMode.Dpi;
+
+        var rootSplit = new SplitContainer
+        {
+            Dock = DockStyle.Fill,
+            Orientation = Orientation.Horizontal,
+            FixedPanel = FixedPanel.Panel1,
+            IsSplitterFixed = false,
+            SplitterDistance = 470,
+            SplitterWidth = 8,
+            Panel1MinSize = 360,
+            Panel2MinSize = 140
+        };
+        rootSplit.Panel1.AutoScroll = true;
+        rootSplit.Panel2.Padding = new Padding(20, 8, 20, 16);
 
         _bootstrap = new NativeClientBootstrap();
         _startupOptions = startupOptions ?? new NativeHostStartupOptions();
@@ -143,6 +158,19 @@ public sealed class MainForm : Form
             UseSystemPasswordChar = true
         };
 
+        var actionPanel = new FlowLayoutPanel
+        {
+            Location = new Point(20, 220),
+            Width = configGroup.Width,
+            Height = 36,
+            AutoScroll = true,
+            WrapContents = false,
+            FlowDirection = FlowDirection.LeftToRight,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty
+        };
+
         configGroup.Controls.Add(hostLabel);
         configGroup.Controls.Add(_serverHostTextBox);
         configGroup.Controls.Add(portLabel);
@@ -160,8 +188,7 @@ public sealed class MainForm : Form
             Text = "Save Settings",
             Width = 112,
             Height = 32,
-            Location = new Point(20, 220),
-            Anchor = AnchorStyles.Left | AnchorStyles.Top
+            Margin = new Padding(0, 0, 8, 0)
         };
         _saveButton.Click += async (_, _) => await SaveSettingsAsync();
 
@@ -170,8 +197,7 @@ public sealed class MainForm : Form
             Text = "Reload",
             Width = 92,
             Height = 32,
-            Location = new Point(138, 220),
-            Anchor = AnchorStyles.Left | AnchorStyles.Top
+            Margin = new Padding(0, 0, 8, 0)
         };
         _reloadButton.Click += async (_, _) => await LoadRuntimeSummaryAsync();
 
@@ -180,8 +206,7 @@ public sealed class MainForm : Form
             Text = "Test /health",
             Width = 108,
             Height = 32,
-            Location = new Point(236, 220),
-            Anchor = AnchorStyles.Left | AnchorStyles.Top
+            Margin = new Padding(0, 0, 8, 0)
         };
         _testHealthButton.Click += async (_, _) => await TestHealthAsync();
 
@@ -190,8 +215,7 @@ public sealed class MainForm : Form
             Text = "Test API v1",
             Width = 108,
             Height = 32,
-            Location = new Point(350, 220),
-            Anchor = AnchorStyles.Left | AnchorStyles.Top
+            Margin = new Padding(0, 0, 8, 0)
         };
         _testApiButton.Click += async (_, _) => await TestApiAsync();
 
@@ -200,8 +224,7 @@ public sealed class MainForm : Form
             Text = "Connect Socket",
             Width = 120,
             Height = 32,
-            Location = new Point(464, 220),
-            Anchor = AnchorStyles.Left | AnchorStyles.Top
+            Margin = new Padding(0, 0, 8, 0)
         };
         _connectSocketButton.Click += async (_, _) => await ConnectSocketAsync();
 
@@ -210,8 +233,7 @@ public sealed class MainForm : Form
             Text = "Disconnect Socket",
             Width = 132,
             Height = 32,
-            Location = new Point(590, 220),
-            Anchor = AnchorStyles.Left | AnchorStyles.Top
+            Margin = new Padding(0, 0, 8, 0)
         };
         _disconnectSocketButton.Click += async (_, _) => await DisconnectSocketAsync();
 
@@ -219,11 +241,17 @@ public sealed class MainForm : Form
         {
             Text = "Open Canvas",
             Width = 112,
-            Height = 32,
-            Location = new Point(728, 220),
-            Anchor = AnchorStyles.Left | AnchorStyles.Top
+            Height = 32
         };
         _openCanvasButton.Click += async (_, _) => await OpenCanvasWindowAsync();
+
+        actionPanel.Controls.Add(_saveButton);
+        actionPanel.Controls.Add(_reloadButton);
+        actionPanel.Controls.Add(_testHealthButton);
+        actionPanel.Controls.Add(_testApiButton);
+        actionPanel.Controls.Add(_connectSocketButton);
+        actionPanel.Controls.Add(_disconnectSocketButton);
+        actionPanel.Controls.Add(_openCanvasButton);
 
         var runGroup = new GroupBox
         {
@@ -292,9 +320,12 @@ public sealed class MainForm : Form
         var runHintLabel = new Label
         {
             Text = "Use a valid exported flow JSON. Run Node requires exact node name from the flow graph.",
-            AutoSize = true,
+            AutoSize = false,
+            Width = runGroup.Width - 32,
+            Height = 30,
             Location = new Point(16, 112),
-            ForeColor = Color.FromArgb(96, 96, 96)
+            ForeColor = Color.FromArgb(96, 96, 96),
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
         };
 
         runGroup.Controls.Add(flowJsonPathLabel);
@@ -318,27 +349,20 @@ public sealed class MainForm : Form
         _logBox = new TextBox
         {
             Multiline = true,
-            ScrollBars = ScrollBars.Vertical,
+            ScrollBars = ScrollBars.Both,
             ReadOnly = true,
             Font = new Font("Consolas", 10, FontStyle.Regular),
-            Location = new Point(20, 450),
-            Width = ClientSize.Width - 40,
-            Height = ClientSize.Height - 490,
-            Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right
+            Dock = DockStyle.Fill,
+            WordWrap = false
         };
 
-        Controls.Add(_titleLabel);
-        Controls.Add(configGroup);
-        Controls.Add(_saveButton);
-        Controls.Add(_reloadButton);
-        Controls.Add(_testHealthButton);
-        Controls.Add(_testApiButton);
-        Controls.Add(_connectSocketButton);
-        Controls.Add(_disconnectSocketButton);
-        Controls.Add(_openCanvasButton);
-        Controls.Add(runGroup);
-        Controls.Add(_statusLabel);
-        Controls.Add(_logBox);
+        rootSplit.Panel1.Controls.Add(_titleLabel);
+        rootSplit.Panel1.Controls.Add(configGroup);
+        rootSplit.Panel1.Controls.Add(actionPanel);
+        rootSplit.Panel1.Controls.Add(runGroup);
+        rootSplit.Panel1.Controls.Add(_statusLabel);
+        rootSplit.Panel2.Controls.Add(_logBox);
+        Controls.Add(rootSplit);
 
         Shown += async (_, _) => await HandleInitialShownAsync();
     }
