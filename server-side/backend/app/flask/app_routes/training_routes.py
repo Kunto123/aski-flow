@@ -61,6 +61,7 @@ _ARCHITECTURE_ALIASES = {
 }
 
 _DEFAULT_ARCHITECTURE_VARIANT = "yolov5mu"
+_DEFAULT_TRAIN_PATIENCE = 50
 
 _JOB_THREADS: Dict[str, threading.Thread] = {}
 _JOB_THREADS_LOCK = threading.Lock()
@@ -528,6 +529,12 @@ def _run_training_job_async(job_id: str) -> None:
             "epochs": _parse_int(params.get("epochs"), 50, 1, 1000),
             "imgsz": _parse_int(params.get("imgsz"), 640, 64, 2048),
             "batch": _parse_int(params.get("batch"), 16, 1, 512),
+            "patience": _parse_int(
+                params.get("patience"),
+                _DEFAULT_TRAIN_PATIENCE,
+                0,
+                1000,
+            ),
             "project": str(job_root),
             "name": "ultralytics",
             "exist_ok": True,
@@ -547,6 +554,7 @@ def _run_training_job_async(job_id: str) -> None:
                     "epochs": train_kwargs["epochs"],
                     "imgsz": train_kwargs["imgsz"],
                     "batch": train_kwargs["batch"],
+                    "patience": train_kwargs["patience"],
                     "device": train_kwargs.get("device", "default"),
                     "base_model": to_runtime_path(base_model_path),
                 },
@@ -697,6 +705,12 @@ def list_training_architectures():
         {
             "family": "yolov5",
             "default_variant": _DEFAULT_ARCHITECTURE_VARIANT,
+            "default_train_params": {
+                "epochs": 50,
+                "imgsz": 640,
+                "batch": 16,
+                "patience": _DEFAULT_TRAIN_PATIENCE,
+            },
             "items": items,
         }
     )
@@ -902,6 +916,12 @@ def create_job():
     epochs = _parse_int(body.get("epochs"), 50, 1, 1000)
     imgsz = _parse_int(body.get("imgsz"), 640, 64, 2048)
     batch = _parse_int(body.get("batch"), 16, 1, 512)
+    patience = _parse_int(
+        body.get("patience"),
+        _DEFAULT_TRAIN_PATIENCE,
+        0,
+        1000,
+    )
     val_split = _parse_float(body.get("val_split"), 0.2, 0.05, 0.5)
     seed = _parse_int(body.get("seed"), 42, 0, 1_000_000)
     device = str(body.get("device") or "").strip()
@@ -923,6 +943,7 @@ def create_job():
         "epochs": epochs,
         "imgsz": imgsz,
         "batch": batch,
+        "patience": patience,
         "val_split": val_split,
         "seed": seed,
         "device": device,
