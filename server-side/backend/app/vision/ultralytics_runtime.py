@@ -238,6 +238,17 @@ class UltralyticsRuntime:
             )
             return results
 
+    def _align_to_stride(self, value: Optional[int], stride: int = 32) -> Optional[int]:
+        if value is None:
+            return None
+        try:
+            v = int(value)
+        except Exception:
+            return None
+        if v <= 0:
+            return None
+        return int(((v + stride - 1) // stride) * stride)
+
     def _resolve_imgsz(self, image: Any, imgsz: Optional[int]):
         frame_height: Optional[int] = None
         frame_width: Optional[int] = None
@@ -263,10 +274,19 @@ class UltralyticsRuntime:
                 and frame_width is not None
                 and imgsz_value < max(frame_height, frame_width)
             ):
+                aligned_h = self._align_to_stride(frame_height)
+                aligned_w = self._align_to_stride(frame_width)
+                if aligned_h is not None and aligned_w is not None:
+                    return (aligned_h, aligned_w)
                 return (frame_height, frame_width)
-            return imgsz_value
+            aligned_single = self._align_to_stride(imgsz_value)
+            return aligned_single if aligned_single is not None else imgsz_value
 
         if frame_height is not None and frame_width is not None:
+            aligned_h = self._align_to_stride(frame_height)
+            aligned_w = self._align_to_stride(frame_width)
+            if aligned_h is not None and aligned_w is not None:
+                return (aligned_h, aligned_w)
             return (frame_height, frame_width)
         return None
 

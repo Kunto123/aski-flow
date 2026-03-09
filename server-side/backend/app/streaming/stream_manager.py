@@ -74,11 +74,23 @@ class StreamState:
 class StreamManager:
     """In-memory local stream runtime for camera and transform streams."""
 
+    _HIGH_FREQUENCY_DEBUG_EVENTS = {
+        "ingest_client_camera_frame",
+        "reuse_client_camera_stream",
+        "reuse_camera_stream",
+        "mjpeg_client_connected",
+        "mjpeg_client_disconnected",
+    }
+
     def __init__(self) -> None:
         self._streams: Dict[str, StreamState] = {}
         self._registry_lock = threading.Lock()
         self._debug_enabled = (
             str(os.getenv("ASKI_STREAM_DEBUG", "0")).strip().lower()
+            in ("1", "true", "yes", "on")
+        )
+        self._debug_log_high_freq_events = (
+            str(os.getenv("ASKI_STREAM_DEBUG_LOG_HIGH_FREQ", "0")).strip().lower()
             in ("1", "true", "yes", "on")
         )
         self._record_debug_events = (
@@ -112,7 +124,10 @@ class StreamManager:
             **payload,
         }
         self._debug_events.append(entry)
-        if self._debug_enabled:
+        if self._debug_enabled and (
+            self._debug_log_high_freq_events
+            or event not in self._HIGH_FREQUENCY_DEBUG_EVENTS
+        ):
             logging.info("[StreamDebug] %s", entry)
 
     def clear_debug_events(self) -> None:
@@ -167,6 +182,7 @@ class StreamManager:
         return {
             "now": now,
             "debug_enabled": self._debug_enabled,
+            "debug_log_high_freq_events": self._debug_log_high_freq_events,
             "active_stream_count": len(streams),
             "streams": streams,
             "events": events,
@@ -489,6 +505,12 @@ class StreamManager:
                 if owner_name:
                     reusable.owner_name = owner_name
                     reusable.owner_names = set([owner_name])
+                else:
+                    # Ingest requests are frequent and usually owner-less. Clear stale owner
+                    # metadata so lifecycle calls from old node IDs do not repeatedly stop an
+                    # otherwise healthy client camera stream.
+                    reusable.owner_name = None
+                    reusable.owner_names = set()
                 reusable.last_access_at = time.time()
 
             self._debug_event(
