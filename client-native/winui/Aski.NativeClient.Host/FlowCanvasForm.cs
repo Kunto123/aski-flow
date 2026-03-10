@@ -3,6 +3,7 @@ using Aski.NativeClient.Settings;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 using System.Diagnostics;
+using System.Net;
 
 namespace Aski.NativeClient.Host;
 
@@ -228,6 +229,12 @@ public sealed class FlowCanvasForm : Form
             }
 
             var launchContext = await BuildLaunchContextAsync(updatedSettings);
+            if (!ConfirmEditorSourceRisk(launchContext, updatedSettings))
+            {
+                _statusLabel.Text = "Canvas status: canceled (untrusted editor source)";
+                return;
+            }
+
             await EnsureWebViewReadyAsync();
             await ApplyBootstrapScriptAsync(launchContext.JavaScriptBootstrap);
 
@@ -333,7 +340,7 @@ public sealed class FlowCanvasForm : Form
             ?? throw new InvalidOperationException("WebView2 initialization failed.");
         core.NavigationStarting += HandleNavigationStarting;
         core.NavigationCompleted += HandleNavigationCompleted;
-        core.Settings.AreDevToolsEnabled = true;
+        core.Settings.AreDevToolsEnabled = IsWebViewDevToolsEnabled();
     }
 
     private async Task ApplyBootstrapScriptAsync(string script)
@@ -455,6 +462,184 @@ public sealed class FlowCanvasForm : Form
     {
         var trimmed = (value ?? string.Empty).Trim();
         return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
+    }
+
+    private bool ConfirmEditorSourceRisk(
+        FlowEditorLaunchContext launchContext,
+        NativeClientSettings settings
+    )
+    {
+        if (launchContext.UsesLocalBundleHost)
+        {
+            return true;
+        }
+
+        var strictTrust = IsStrictEditorTrustModeEnabled();
+        var shouldValidateTrust = strictTrust || !string.IsNullOrWhiteSpace(settings.AuthToken);
+        if (!shouldValidateTrust)
+        {
+            return true;
+        }
+
+        var trustedHosts = BuildTrustedEditorHosts(settings.ServerHost);
+        if (IsTrustedEditorHost(launchContext.EditorUri, trustedHosts))
+        {
+            return true;
+        }
+
+        var editorOrigin = launchContext.EditorUri.GetLeftPart(UriPartial.Authority);
+        var targetServer = settings.BuildServerUri(includeApiVersion: false).GetLeftPart(UriPartial.Authority);
+        var trustedHostsText = string.Join(", ", trustedHosts.OrderBy(static x => x));
+        if (strictTrust)
+        {
+            MessageBox.Show(
+                this,
+                "Editor URL diblokir karena strict trust mode aktif.\n\n"
+                + $"Editor origin: {editorOrigin}\n"
+                + $"Server target: {targetServer}\n"
+                + $"Trusted hosts: {trustedHostsText}\n\n"
+                + "Gunakan embedded bundle atau host yang termasuk trusted list.\n"
+                + "Env: ASKI_NATIVE_EDITOR_TRUSTED_HOSTS",
+                "Editor Source Blocked",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning
+            );
+            return false;
+        }
+
+        var warningMessage =
+            "Editor URL yang dipilih berada di host yang tidak termasuk trusted source.\n\n"
+            + $"Editor origin: {editorOrigin}\n"
+            + $"Server target: {targetServer}\n\n"
+            + $"Trusted hosts: {trustedHostsText}\n\n"
+            + "Auth token dari aplikasi dapat terekspos ke editor runtime.\n"
+            + "Untuk blok otomatis, set env ASKI_NATIVE_EDITOR_STRICT_TRUST=true.\n"
+            + "Lanjutkan load canvas?";
+
+        var result = MessageBox.Show(
+            this,
+            warningMessage,
+            "Untrusted Editor Source",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning,
+            MessageBoxDefaultButton.Button2
+        );
+
+        return result == DialogResult.Yes;
+    }
+
+    private static bool IsTrustedEditorHost(Uri editorUri, IReadOnlySet<string> trustedHosts)
+    {
+        var normalizedEditorHost = NormalizeHost(editorUri.Host);
+        if (string.IsNullOrWhiteSpace(normalizedEditorHost))
+        {
+            return false;
+        }
+
+        if (IsLoopbackHost(normalizedEditorHost))
+        {
+            return true;
+        }
+
+        return trustedHosts.Contains(normalizedEditorHost);
+    }
+
+    private static bool IsLoopbackHost(string host)
+    {
+        var normalized = NormalizeHost(host);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return false;
+        }
+
+        if (string.Equals(normalized, "localhost", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (IPAddress.TryParse(normalized, out var address))
+        {
+            return IPAddress.IsLoopback(address);
+        }
+
+        return false;
+    }
+
+    private static IReadOnlySet<string> BuildTrustedEditorHosts(string serverHost)
+    {
+        var trustedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        AddTrustedHost(trustedHosts, serverHost);
+        AddTrustedHost(trustedHosts, "localhost");
+        AddTrustedHost(trustedHosts, "127.0.0.1");
+        AddTrustedHost(trustedHosts, "::1");
+
+        var extraRaw = Environment.GetEnvironmentVariable("ASKI_NATIVE_EDITOR_TRUSTED_HOSTS") ?? string.Empty;
+        foreach (var item in extraRaw.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            AddTrustedHost(trustedHosts, item);
+        }
+
+        return trustedHosts;
+    }
+
+    private static void AddTrustedHost(ISet<string> hosts, string? value)
+    {
+        var normalized = NormalizeHost(value);
+        if (!string.IsNullOrWhiteSpace(normalized))
+        {
+            hosts.Add(normalized);
+        }
+    }
+
+    private static string? NormalizeHost(string? value)
+    {
+        var trimmed = (value ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return null;
+        }
+
+        if (IPAddress.TryParse(trimmed.Trim('[', ']'), out var ipAddress))
+        {
+            return ipAddress.ToString();
+        }
+
+        var candidate = trimmed.Contains("://", StringComparison.Ordinal)
+            ? trimmed
+            : $"http://{trimmed}";
+
+        if (Uri.TryCreate(candidate, UriKind.Absolute, out var uri))
+        {
+            var uriHost = (uri.Host ?? string.Empty).Trim();
+            if (!string.IsNullOrWhiteSpace(uriHost))
+            {
+                return uriHost.Trim('[', ']');
+            }
+        }
+
+        return trimmed.Trim('[', ']');
+    }
+
+    private static bool IsStrictEditorTrustModeEnabled()
+    {
+        var raw = (Environment.GetEnvironmentVariable("ASKI_NATIVE_EDITOR_STRICT_TRUST") ?? string.Empty)
+            .Trim()
+            .ToLowerInvariant();
+        return raw is "1" or "true" or "yes" or "on";
+    }
+
+    private static bool IsWebViewDevToolsEnabled()
+    {
+        if (Debugger.IsAttached)
+        {
+            return true;
+        }
+
+        var raw = (Environment.GetEnvironmentVariable("ASKI_NATIVE_WEBVIEW2_DEVTOOLS") ?? string.Empty)
+            .Trim()
+            .ToLowerInvariant();
+        return raw is "1" or "true" or "yes" or "on";
     }
 
     private void UpdateButtons()
