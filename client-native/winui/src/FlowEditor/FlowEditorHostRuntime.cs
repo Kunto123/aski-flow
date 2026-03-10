@@ -31,7 +31,10 @@ public sealed class FlowEditorHostRuntime : IAsyncDisposable
         var runtimeConfig = _bridgeService.BuildRuntimeConfig();
         var bootstrapScript = _bridgeService.BuildJavaScriptBootstrapSnippet();
 
-        if (_bridgeService.TryGetEmbeddedBundleLocation(out var bundleRoot, out var entryFile))
+        if (
+            _bridgeService.PreferEmbeddedBundle
+            && _bridgeService.TryGetEmbeddedBundleLocation(out var bundleRoot, out var entryFile)
+        )
         {
             var baseUri = await _localBundleHost.StartAsync(
                 bundleRoot,

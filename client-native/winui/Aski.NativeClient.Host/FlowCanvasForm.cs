@@ -320,7 +320,7 @@ public sealed class FlowCanvasForm : Form
             EmbeddedEntryFile = string.IsNullOrWhiteSpace(settings.EditorEntryFile)
                 ? "index.html"
                 : settings.EditorEntryFile,
-            PreferEmbeddedBundle = true
+            PreferEmbeddedBundle = string.IsNullOrWhiteSpace(settings.EditorUrl)
         };
 
         var bridgeService = new FlowEditorBridgeService(settings.Normalize(), bridgeOptions);

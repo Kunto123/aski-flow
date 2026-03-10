@@ -18,6 +18,7 @@ public sealed class FlowEditorBridgeService
     }
 
     public FlowEditorMode Mode => _options.Mode;
+    public bool PreferEmbeddedBundle => _options.PreferEmbeddedBundle;
 
     public Uri ResolveEditorUri()
     {
