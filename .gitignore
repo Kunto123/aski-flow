@@ -56,7 +56,7 @@ server-side/data/datasets/*/labels/*.done
 
 # Local project planning / legacy workspace leftovers
 docs/
-native_app.txt
+todo.txt
 client-side/
 
 # Non-main docs/context files
