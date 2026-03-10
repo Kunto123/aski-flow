@@ -6,10 +6,12 @@ param(
     [int]$ServerPort = 8000,
     [switch]$UseHttps,
     [switch]$SkipNetworkCheck,
+    [switch]$SkipPackageCheck,
     [switch]$SkipLaunch,
     [switch]$AutoStopProcess,
-    [int]$LaunchWaitSeconds = 8,
-    [switch]$DryRun
+    [int]$LaunchWaitSeconds = 15,
+    [switch]$DryRun,
+    [switch]$RuntimeOnly
 )
 
 Set-StrictMode -Version Latest
@@ -22,13 +24,24 @@ if (-not (Test-Path $webView2HelperPath)) {
 }
 . $webView2HelperPath
 
+if ($RuntimeOnly) {
+    $SkipNetworkCheck = $true
+    $SkipPackageCheck = $true
+    $SkipLaunch = $true
+}
+
 $webView2 = Get-WebView2RuntimeInfo
+$effectiveSkipLaunch = [bool]$SkipLaunch
 
 $summary = [ordered]@{
     TimestampUtc            = (Get-Date).ToUniversalTime().ToString("O")
+    RuntimeOnly             = [bool]$RuntimeOnly
     WebView2RuntimeInstalled = [bool]$webView2.Installed
     WebView2RuntimeVersion   = $webView2.Version
     WebView2RuntimeSource    = $webView2.Source
+    LaunchWaitSeconds        = $LaunchWaitSeconds
+    PackageCheckSkipped     = [bool]$SkipPackageCheck
+    LaunchCheckSkipped      = $false
     PackageInstalled        = $false
     PackageFullName         = ""
     PackageFamilyName       = ""
@@ -45,6 +58,12 @@ if ($null -ne $package) {
     $summary.PackageFullName = $package.PackageFullName
     $summary.PackageFamilyName = $package.PackageFamilyName
 }
+
+if ($SkipPackageCheck -and -not $summary.PackageInstalled -and -not $effectiveSkipLaunch) {
+    Write-Host "[pilot-smoke] package check skipped and package not installed; launch step auto-skipped."
+    $effectiveSkipLaunch = $true
+}
+$summary.LaunchCheckSkipped = [bool]$effectiveSkipLaunch
 
 $aumidFamilyName = if ($summary.PackageInstalled -and -not [string]::IsNullOrWhiteSpace($summary.PackageFamilyName)) {
     $summary.PackageFamilyName
@@ -68,7 +87,7 @@ else {
 }
 
 $launchSucceeded = $false
-if (-not $SkipLaunch) {
+if (-not $effectiveSkipLaunch) {
     if (-not $summary.PackageInstalled) {
         Write-Host "[pilot-smoke] package is not installed: $PackageIdentityName"
     }
@@ -93,7 +112,7 @@ else {
 }
 $summary.Launched = $launchSucceeded
 
-if ($launchSucceeded -and -not $SkipLaunch) {
+if ($launchSucceeded -and -not $effectiveSkipLaunch) {
     if ($DryRun) {
         $summary.ProcessDetected = $true
     }
@@ -107,7 +126,7 @@ if ($launchSucceeded -and -not $SkipLaunch) {
         }
     }
 }
-elseif ($SkipLaunch) {
+elseif ($effectiveSkipLaunch) {
     $summary.ProcessDetected = $true
 }
 
@@ -115,7 +134,7 @@ $errors = @()
 if (-not $summary.WebView2RuntimeInstalled) {
     $errors += "Microsoft Edge WebView2 Runtime is not installed."
 }
-if (-not $summary.PackageInstalled -and -not $SkipLaunch) {
+if (-not $summary.PackageInstalled -and -not $SkipPackageCheck -and -not $effectiveSkipLaunch) {
     $errors += "Package not installed."
 }
 if (-not $summary.NetworkReachable) {
@@ -125,7 +144,7 @@ if (-not $summary.Launched) {
     $errors += "Launch step failed."
 }
 if (-not $summary.ProcessDetected) {
-    $errors += "Host process not detected: $ProcessName"
+    $errors += "Host process not detected within $LaunchWaitSeconds second(s): $ProcessName"
 }
 
 if ($errors.Count -eq 0) {

@@ -3,11 +3,36 @@ param(
     [string]$CertificatePath = "",
     [string]$CertificatePassword = "",
     [string]$TimestampUrl = "",
-    [string]$HashAlgorithm = "SHA256"
+    [string]$HashAlgorithm = "SHA256",
+    [switch]$AllowInsecureDevPassword,
+    [switch]$AllowWeakPassword
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+function Test-StrongPassword {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Value
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $false
+    }
+
+    if ($Value.Length -lt 12) {
+        return $false
+    }
+
+    $classes = 0
+    if ($Value -cmatch '[A-Z]') { $classes++ }
+    if ($Value -cmatch '[a-z]') { $classes++ }
+    if ($Value -match '[0-9]') { $classes++ }
+    if ($Value -match '[^A-Za-z0-9]') { $classes++ }
+
+    return $classes -ge 3
+}
 
 function Get-WindowsSdkToolPath {
     param(
@@ -52,7 +77,7 @@ if ([string]::IsNullOrWhiteSpace($CertificatePath)) {
     $CertificatePath = [System.IO.Path]::GetFullPath((Join-Path $scriptDir "..\\artifacts\\cert\\aski-native-dev.pfx"))
 }
 if ([string]::IsNullOrWhiteSpace($CertificatePassword)) {
-    $CertificatePassword = "change-me-dev-password"
+    $CertificatePassword = ("" + [Environment]::GetEnvironmentVariable("ASKI_MSIX_CERT_PASSWORD")).Trim()
 }
 
 if (-not (Test-Path $MsixPath)) {
@@ -60,6 +85,18 @@ if (-not (Test-Path $MsixPath)) {
 }
 if (-not (Test-Path $CertificatePath)) {
     throw "Certificate file not found: $CertificatePath"
+}
+
+if ([string]::IsNullOrWhiteSpace($CertificatePassword)) {
+    throw "Certificate password is required. Pass -CertificatePassword or set ASKI_MSIX_CERT_PASSWORD."
+}
+
+if (-not $AllowInsecureDevPassword -and $CertificatePassword -eq "change-me-dev-password") {
+    throw "Insecure default certificate password is blocked. Use a strong password or pass -AllowInsecureDevPassword."
+}
+
+if (-not $AllowWeakPassword -and -not (Test-StrongPassword -Value $CertificatePassword)) {
+    throw "Weak certificate password. Use at least 12 chars with mixed upper/lower/digit/symbol (or pass -AllowWeakPassword)."
 }
 
 $signToolPath = Get-WindowsSdkToolPath -ToolName "signtool.exe"
@@ -86,4 +123,10 @@ if ($LASTEXITCODE -ne 0) {
     throw "signtool sign failed with exit code $LASTEXITCODE"
 }
 
+$signature = Get-AuthenticodeSignature -FilePath $MsixPath
+if ($signature.Status -eq "NotSigned") {
+    throw "MSIX is still unsigned after sign step."
+}
+
+Write-Host "[sign-msix] signature-status=$($signature.Status)"
 Write-Host "[sign-msix] completed."

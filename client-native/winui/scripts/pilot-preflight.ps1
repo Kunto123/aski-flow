@@ -4,7 +4,9 @@ param(
     [switch]$UseHttps,
     [string]$MsixPath = "",
     [string]$PackageIdentityName = "com.aski.nativeclient",
-    [switch]$SkipNetworkCheck
+    [switch]$SkipNetworkCheck,
+    [switch]$SkipMsixCheck,
+    [switch]$RuntimeOnly
 )
 
 Set-StrictMode -Version Latest
@@ -17,7 +19,12 @@ if (-not (Test-Path $webView2HelperPath)) {
 }
 . $webView2HelperPath
 
-if ([string]::IsNullOrWhiteSpace($MsixPath)) {
+if ($RuntimeOnly) {
+    $SkipNetworkCheck = $true
+    $SkipMsixCheck = $true
+}
+
+if (-not $SkipMsixCheck -and [string]::IsNullOrWhiteSpace($MsixPath)) {
     $defaultMsixDir = [System.IO.Path]::GetFullPath((Join-Path $scriptDir "..\\artifacts\\msix"))
     $latest = Get-ChildItem -Path $defaultMsixDir -Filter "*.msix" -File -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTimeUtc -Descending |
@@ -34,12 +41,14 @@ $webView2 = Get-WebView2RuntimeInfo
 $summary = [ordered]@{
     TimestampUtc          = (Get-Date).ToUniversalTime().ToString("O")
     BaseUrl               = $baseUrl
+    RuntimeOnly           = [bool]$RuntimeOnly
     WebView2RuntimeInstalled = [bool]$webView2.Installed
     WebView2RuntimeVersion   = $webView2.Version
     WebView2RuntimeSource    = $webView2.Source
     DnsResolved           = $false
     TcpReachable          = $false
     MsixPath              = $MsixPath
+    MsixCheckSkipped      = [bool]$SkipMsixCheck
     MsixExists            = $false
     MsixSignatureStatus   = "NotChecked"
     InstalledPackageFound = $false
@@ -68,15 +77,20 @@ else {
     $summary.TcpReachable = $true
 }
 
-if (-not [string]::IsNullOrWhiteSpace($MsixPath) -and (Test-Path $MsixPath)) {
-    $summary.MsixExists = $true
-    try {
-        $sig = Get-AuthenticodeSignature -FilePath $MsixPath
-        $summary.MsixSignatureStatus = [string]$sig.Status
+if (-not $SkipMsixCheck) {
+    if (-not [string]::IsNullOrWhiteSpace($MsixPath) -and (Test-Path $MsixPath)) {
+        $summary.MsixExists = $true
+        try {
+            $sig = Get-AuthenticodeSignature -FilePath $MsixPath
+            $summary.MsixSignatureStatus = [string]$sig.Status
+        }
+        catch {
+            $summary.MsixSignatureStatus = "Error"
+        }
     }
-    catch {
-        $summary.MsixSignatureStatus = "Error"
-    }
+}
+else {
+    $summary.MsixSignatureStatus = "Skipped"
 }
 
 $pkg = Get-AppxPackage -Name $PackageIdentityName -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -95,9 +109,11 @@ if (-not $SkipNetworkCheck) {
     if (-not $summary.DnsResolved) { $errors += "DNS resolution failed for $ServerHost" }
     if (-not $summary.TcpReachable) { $errors += "TCP port unreachable: $ServerHost`:$ServerPort" }
 }
-if (-not $summary.MsixExists) { $errors += "MSIX file not found." }
-if ($summary.MsixExists -and $summary.MsixSignatureStatus -ne "Valid") {
-    $errors += "MSIX signature status is not valid: $($summary.MsixSignatureStatus)"
+if (-not $SkipMsixCheck) {
+    if (-not $summary.MsixExists) { $errors += "MSIX file not found." }
+    if ($summary.MsixExists -and $summary.MsixSignatureStatus -ne "Valid") {
+        $errors += "MSIX signature status is not valid: $($summary.MsixSignatureStatus)"
+    }
 }
 if (-not $summary.WebView2RuntimeInstalled) { $errors += "Microsoft Edge WebView2 Runtime is not installed." }
 

@@ -14,11 +14,36 @@ param(
     [string]$MaxWindowsVersion = "10.0.22631.0",
     [string]$CertificatePath = "",
     [string]$CertificatePassword = "",
-    [switch]$SelfContained
+    [switch]$SelfContained,
+    [switch]$AllowInsecureDevPassword,
+    [switch]$AllowWeakCertificatePassword
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+function Test-StrongPassword {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Value
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $false
+    }
+
+    if ($Value.Length -lt 12) {
+        return $false
+    }
+
+    $classes = 0
+    if ($Value -cmatch '[A-Z]') { $classes++ }
+    if ($Value -cmatch '[a-z]') { $classes++ }
+    if ($Value -match '[0-9]') { $classes++ }
+    if ($Value -match '[^A-Za-z0-9]') { $classes++ }
+
+    return $classes -ge 3
+}
 
 function Get-DotnetPath {
     $command = Get-Command dotnet -ErrorAction SilentlyContinue
@@ -215,6 +240,19 @@ if (-not [string]::IsNullOrWhiteSpace($CertificatePath)) {
         throw "Certificate file not found: $CertificatePath"
     }
 
+    if ([string]::IsNullOrWhiteSpace($CertificatePassword)) {
+        $CertificatePassword = ("" + [Environment]::GetEnvironmentVariable("ASKI_MSIX_CERT_PASSWORD")).Trim()
+    }
+    if ([string]::IsNullOrWhiteSpace($CertificatePassword)) {
+        throw "Certificate password is required when -CertificatePath is set. Pass -CertificatePassword or set ASKI_MSIX_CERT_PASSWORD."
+    }
+    if (-not $AllowInsecureDevPassword -and $CertificatePassword -eq "change-me-dev-password") {
+        throw "Insecure default certificate password is blocked. Use a strong password or pass -AllowInsecureDevPassword."
+    }
+    if (-not $AllowWeakCertificatePassword -and -not (Test-StrongPassword -Value $CertificatePassword)) {
+        throw "Weak certificate password. Use at least 12 chars with mixed upper/lower/digit/symbol (or pass -AllowWeakCertificatePassword)."
+    }
+
     $signToolPath = Get-WindowsSdkToolPath -ToolName "signtool.exe"
 
     $signArgs = @(
@@ -232,7 +270,13 @@ if (-not [string]::IsNullOrWhiteSpace($CertificatePath)) {
         throw "signtool sign failed with exit code $LASTEXITCODE"
     }
 
+    $signature = Get-AuthenticodeSignature -FilePath $msixPath
+    if ($signature.Status -eq "NotSigned") {
+        throw "MSIX is still unsigned after sign step."
+    }
+
     Write-Host "[build-msix] package signed."
+    Write-Host "[build-msix] signature-status=$($signature.Status)"
 }
 else {
     Write-Host "[build-msix] package is unsigned. Sign it before installation on standard Windows policy."
