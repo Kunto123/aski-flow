@@ -516,6 +516,7 @@ class StreamManager:
                     pass
 
             with reusable.lock:
+                previous_session_id = reusable.client_session_id
                 if owner_name:
                     reusable.owner_name = owner_name
                     reusable.owner_names = set([owner_name])
@@ -525,6 +526,10 @@ class StreamManager:
                     # otherwise healthy client camera stream.
                     reusable.owner_name = None
                     reusable.owner_names = set()
+                # Rebind ownership to the active client session on every reuse.
+                # This keeps lifecycle operations (stop by client session, refresh)
+                # aligned with whichever client is currently producing frames.
+                reusable.client_session_id = client_session_id
                 reusable.last_access_at = time.time()
 
             self._debug_event(
@@ -538,6 +543,7 @@ class StreamManager:
                 fps=fps,
                 reused_cross_session=reuse_from_cross_session,
                 stream_client_session_id=reusable.client_session_id,
+                previous_stream_client_session_id=previous_session_id,
                 reused_without_config_match=reused_without_config_match,
             )
             return reusable.stream_id
@@ -963,6 +969,36 @@ class StreamManager:
     def get_stream(self, stream_id: str) -> Optional[StreamState]:
         with self._registry_lock:
             return self._streams.get(stream_id)
+
+    def find_transform_stream(
+        self,
+        *,
+        owner_name: Optional[str] = None,
+        source_stream_id: Optional[str] = None,
+        stream_tag: Optional[str] = None,
+    ) -> Optional[str]:
+        with self._registry_lock:
+            states = list(self._streams.values())
+
+        candidates = sorted(states, key=lambda st: st.created_at, reverse=True)
+        for state in candidates:
+            if state.source_type != "transform" or not state.active:
+                continue
+
+            if stream_tag is not None and (state.stream_tag or "") != stream_tag:
+                continue
+
+            if source_stream_id is not None and state.source_stream_id != source_stream_id:
+                continue
+
+            if owner_name is not None:
+                owner_names = getattr(state, "owner_names", set()) or set()
+                if state.owner_name != owner_name and owner_name not in owner_names:
+                    continue
+
+            return state.stream_id
+
+        return None
 
     def get_latest_frame_with_version(
         self,

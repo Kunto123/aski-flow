@@ -7,6 +7,8 @@ from app.flask.socketio_init import flask_app
 from app.flask.socketio_init import socketio
 import logging
 import json
+import copy
+import time
 
 from flask import g, request, session
 from flask_socketio import emit
@@ -27,6 +29,27 @@ import threading
 
 _ACTIVE_RUNTIME_RUNS = set()
 _ACTIVE_RUNTIME_RUNS_LOCK = threading.Lock()
+_LAST_VALID_FLOW_BY_SESSION = {}
+_LAST_VALID_FLOW_BY_SESSION_LOCK = threading.Lock()
+
+
+def _read_non_negative_float_env(name: str, default_value: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return max(0.0, float(default_value))
+    try:
+        return max(0.0, float(raw))
+    except Exception:
+        return max(0.0, float(default_value))
+
+
+def _cooperative_sleep(seconds: float) -> None:
+    if seconds <= 0:
+        return
+    try:
+        eventlet.sleep(seconds)
+    except Exception:
+        time.sleep(seconds)
 
 
 def _runtime_session_key(runtime_session_id=None):
@@ -37,16 +60,35 @@ def _runtime_session_key(runtime_session_id=None):
     return sid
 
 
-def _acquire_runtime_run_slot(runtime_session_id=None) -> bool:
+def _acquire_runtime_run_slot(runtime_session_id=None, wait_timeout_sec: float = 0.0) -> bool:
     session_key = _runtime_session_key(runtime_session_id)
     if not session_key:
         return True
 
-    with _ACTIVE_RUNTIME_RUNS_LOCK:
-        if session_key in _ACTIVE_RUNTIME_RUNS:
+    deadline = None
+    wait_timeout_sec = max(0.0, float(wait_timeout_sec or 0.0))
+    if wait_timeout_sec > 0:
+        deadline = time.time() + wait_timeout_sec
+
+    poll_interval_sec = _read_non_negative_float_env(
+        "ASKI_RUNTIME_RUN_SLOT_POLL_SEC",
+        0.05,
+    )
+    poll_interval_sec = max(0.005, poll_interval_sec)
+
+    while True:
+        with _ACTIVE_RUNTIME_RUNS_LOCK:
+            if session_key not in _ACTIVE_RUNTIME_RUNS:
+                _ACTIVE_RUNTIME_RUNS.add(session_key)
+                return True
+
+        if deadline is None:
             return False
-        _ACTIVE_RUNTIME_RUNS.add(session_key)
-    return True
+
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            return False
+        _cooperative_sleep(min(poll_interval_sec, remaining))
 
 
 def _release_runtime_run_slot(runtime_session_id=None) -> None:
@@ -56,6 +98,84 @@ def _release_runtime_run_slot(runtime_session_id=None) -> None:
 
     with _ACTIVE_RUNTIME_RUNS_LOCK:
         _ACTIVE_RUNTIME_RUNS.discard(session_key)
+
+
+def _cache_last_valid_flow_data(runtime_session_id, flow_data) -> None:
+    session_key = _runtime_session_key(runtime_session_id)
+    if not session_key:
+        return
+
+    try:
+        flow_copy = copy.deepcopy(flow_data)
+    except Exception:
+        flow_copy = flow_data
+
+    with _LAST_VALID_FLOW_BY_SESSION_LOCK:
+        _LAST_VALID_FLOW_BY_SESSION[session_key] = flow_copy
+
+
+def _get_last_valid_flow_data(runtime_session_id):
+    session_key = _runtime_session_key(runtime_session_id)
+    if not session_key:
+        return None
+
+    with _LAST_VALID_FLOW_BY_SESSION_LOCK:
+        cached = _LAST_VALID_FLOW_BY_SESSION.get(session_key)
+    if cached is None:
+        return None
+
+    try:
+        return copy.deepcopy(cached)
+    except Exception:
+        return cached
+
+
+def _clear_last_valid_flow_data(runtime_session_id) -> None:
+    session_key = _runtime_session_key(runtime_session_id)
+    if not session_key:
+        return
+
+    with _LAST_VALID_FLOW_BY_SESSION_LOCK:
+        _LAST_VALID_FLOW_BY_SESSION.pop(session_key, None)
+
+
+def _parse_flow_payload(data, runtime_session_id=None, node_name=None):
+    raw_flow = data.get("jsonFile")
+
+    if isinstance(raw_flow, (list, dict)):
+        flow_data = raw_flow
+    elif isinstance(raw_flow, str):
+        if not raw_flow.strip():
+            raise ValueError("Missing jsonFile payload")
+        try:
+            flow_data = json.loads(raw_flow)
+        except Exception as parse_error:
+            cached = _get_last_valid_flow_data(runtime_session_id)
+            if cached is not None:
+                logging.warning(
+                    "Invalid jsonFile payload; using cached flow runtime_session_id=%s node=%s error=%s",
+                    runtime_session_id,
+                    node_name,
+                    parse_error,
+                )
+                emit(
+                    "error",
+                    {
+                        "error": (
+                            "Received invalid flow JSON while another update was in progress. "
+                            "Fallback to the previous valid graph."
+                        ),
+                        "nodeName": node_name,
+                        "code": "invalid_json_fallback",
+                    },
+                )
+                return cached
+            raise ValueError("Invalid jsonFile payload") from parse_error
+    else:
+        raise ValueError("Missing jsonFile payload")
+
+    _cache_last_valid_flow_data(runtime_session_id, flow_data)
+    return flow_data
 
 
 def _normalize_event_data(data):
@@ -183,7 +303,14 @@ def handle_process_file(data):
             emit("run_end", {"output": None})
             return
 
-        if not _acquire_runtime_run_slot(runtime_session_id):
+        wait_timeout_sec = _read_non_negative_float_env(
+            "ASKI_PROCESS_FILE_BUSY_WAIT_SEC",
+            2.0,
+        )
+        if not _acquire_runtime_run_slot(
+            runtime_session_id,
+            wait_timeout_sec=wait_timeout_sec,
+        ):
             logging.info(
                 "Rejecting process_file while run in progress sid=%s runtime_session_id=%s",
                 request.sid,
@@ -195,15 +322,16 @@ def handle_process_file(data):
                     "error": (
                         "Run already in progress for this client session. "
                         "Wait until current run finishes."
-                    )
+                    ),
+                    "code": "run_in_progress",
+                    "retryable": True,
                 },
             )
-            emit("run_end", {"output": None})
             return
         run_slot_acquired = True
 
         populate_request_global_object(data)
-        flow_data = json.loads(data.get("jsonFile"))
+        flow_data = _parse_flow_payload(data, runtime_session_id=runtime_session_id)
         launcher = get_root_injector().get(ProcessorLauncher)
         launcher.set_context(
             ProcessorContextFlaskRequest(g, session, runtime_session_id)
@@ -252,7 +380,14 @@ def handle_run_node(data):
             emit("run_end", {"output": None})
             return
 
-        if not _acquire_runtime_run_slot(runtime_session_id):
+        wait_timeout_sec = _read_non_negative_float_env(
+            "ASKI_RUN_NODE_BUSY_WAIT_SEC",
+            4.0,
+        )
+        if not _acquire_runtime_run_slot(
+            runtime_session_id,
+            wait_timeout_sec=wait_timeout_sec,
+        ):
             logging.info(
                 "Rejecting run_node while run in progress sid=%s runtime_session_id=%s node=%s",
                 request.sid,
@@ -267,14 +402,19 @@ def handle_run_node(data):
                         "Wait until current run finishes."
                     ),
                     "nodeName": node_name,
+                    "code": "run_in_progress",
+                    "retryable": True,
                 },
             )
-            emit("run_end", {"output": None})
             return
         run_slot_acquired = True
 
         populate_request_global_object(data)
-        flow_data = json.loads(data.get("jsonFile"))
+        flow_data = _parse_flow_payload(
+            data,
+            runtime_session_id=runtime_session_id,
+            node_name=node_name,
+        )
 
         launcher = get_root_injector().get(ProcessorLauncher)
         launcher.set_context(
@@ -305,7 +445,9 @@ def handle_run_node(data):
 
 @socketio.on("disconnect")
 def handle_disconnect():
-    _release_runtime_run_slot(_resolve_runtime_session_id())
+    runtime_session_id = _resolve_runtime_session_id()
+    _release_runtime_run_slot(runtime_session_id)
+    _clear_last_valid_flow_data(runtime_session_id)
     logging.info("Client disconnected sid=%s", request.sid)
 
 

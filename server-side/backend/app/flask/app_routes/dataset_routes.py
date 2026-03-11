@@ -208,6 +208,8 @@ def create_dataset():
         conn.commit()
 
     row = _get_dataset_row(dataset_id)
+    if not row:
+        return {"error": "Failed to create dataset"}, 500
     return jsonify(_row_to_dataset_payload(dict(row)))
 
 

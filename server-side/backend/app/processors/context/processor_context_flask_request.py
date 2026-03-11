@@ -26,9 +26,9 @@ class ProcessorContextFlaskRequest(ProcessorContext):
 
     def get_parameter_names(self) -> List[str]:
         return [
-            key.replace(self.parameter_prefix, "")
-            for key in dir(self.g_context)
-            if not key.startswith("_") and key not in dir(type(self.g_context))
+            key.replace(self.parameter_prefix, "", 1)
+            for key in self.g_context.keys()
+            if key.startswith(self.parameter_prefix)
         ]
 
     def get_value(self, name) -> Optional[str]:

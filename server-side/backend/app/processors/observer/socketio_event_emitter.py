@@ -40,6 +40,7 @@ class SocketIOEventEmitter(Observer):
 
         if data.error is not None:
             json_event["error"] = str(data.error)
+            json_event["nodeName"] = data.instance_name
 
         try:
             socketio.emit(event, json_event, to=data.session_id)

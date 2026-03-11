@@ -54,7 +54,7 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
         def run(self):
             with self.lock:
                 if self.state != AsyncProcessorLauncher.NodeState.PENDING:
-                    logging.warning(
+                    logging.debug(
                         f"Node {self.id} is already being processed or completed."
                     )
                     return self.output
@@ -104,6 +104,7 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
             processor.add_observer(self)
 
         nodes = self.convert_processors_to_node_dict(processors)
+        nodes_snapshot = dict(nodes)
 
         pool = eventlet.GreenPool(AsyncProcessorLauncher.GREENTHREAD_POOL_SIZE)
 
@@ -192,6 +193,15 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
             logging.error(f"GreenPool.waitall raised: {e}")
             pass
 
+        # Return the last completed output so callers (e.g. sockets.py) can
+        # forward it in the run_end event.
+        latest_output = None
+        for node in initialized_nodes:
+            n = nodes_snapshot.get(node)
+            if n and n.state == AsyncProcessorLauncher.NodeState.COMPLETED and n.output is not None:
+                latest_output = n.output
+        return latest_output
+
     def remove_completed_nodes(self, nodes: List[Node]):
         return {
             id: n
@@ -204,13 +214,18 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
         return all(parent_id not in nodes for parent_id in node.parent_ids)
 
     def launch_processors_for_node(self, processors: List[Processor], node_name=None):
+        target_output = None
         for processor in processors.values():
             if processor.get_output() is None or processor.name == node_name:
                 processor.add_observer(self)
-                self.run_processor(processor)
+                latest_output = self.run_processor(processor)
+            else:
+                latest_output = processor.get_output()
 
             if processor.name == node_name:
+                target_output = latest_output
                 break
+        return target_output
 
     def run_processor(self, processor: "Processor"):
         try:
@@ -234,6 +249,7 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
             end_time = time.time()
             duration = end_time - start_time
             self.notify_progress(processor, latest_output, duration=duration, isDone=True)
+            return latest_output
         except Exception as e:
             self.notify_error(processor, e)
             # IMPORTANT:
@@ -273,6 +289,7 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
                 duration=duration,
                 isDone=True,
             )
+            return latest_output
         except Exception as e:
             node.state = AsyncProcessorLauncher.NodeState.ERROR
             self.notify_error(node.get_processor(), e)

@@ -166,7 +166,6 @@ class RoiProcessor(BasicProcessor):
 
     def _process_stream(self, source_stream_id: str):
         manager = get_stream_manager()
-        manager.stop_streams_by_owner(self.name)
         initial_params = {
             "x": self.x,
             "y": self.y,
@@ -175,6 +174,19 @@ class RoiProcessor(BasicProcessor):
             "width": self.width,
             "height": self.height,
         }
+
+        # Reuse active ROI stream when the source stream is unchanged.
+        # This avoids stop/start churn while users tweak ROI continuously.
+        existing_stream_id = manager.find_transform_stream(
+            owner_name=self.name,
+            source_stream_id=source_stream_id,
+            stream_tag="roi",
+        )
+        if existing_stream_id:
+            manager.update_stream_runtime_params(existing_stream_id, initial_params)
+            return [f"stream://{existing_stream_id}"]
+
+        manager.stop_streams_by_owner(self.name)
         stream_id_ref = {"value": None}
 
         def _transform(frame):
