@@ -794,8 +794,21 @@ class StreamManager:
             stream_id=state.stream_id,
             owner_name=state.owner_name,
         )
+        # FIX: compute frame budget from configured FPS (or default 30).
+        # The camera loop previously had NO sleep on the success path, causing
+        # the thread to spin at CPU-max speed, starving the GIL from the
+        # eventlet event loop that drives the pipeline nodes.
+        _target_fps = float(state.camera_fps or 30.0)
+        _frame_budget = 1.0 / max(_target_fps, 1.0)
+        # Minimum interval between JPEG encodes regardless of camera FPS.
+        # Prevents burning CPU on encode when display FPS is already capped.
+        _jpeg_min_interval = 1.0 / min(_target_fps, 30.0)
+        _last_jpeg_at: float = 0.0
+
         try:
             while state.active and not state.stop_event.is_set():
+                _loop_start = time.perf_counter()
+
                 # grab/retrieve tends to be more cooperative on some backends than read()
                 try:
                     ok = capture.grab()
@@ -817,20 +830,34 @@ class StreamManager:
                 except Exception:
                     should_encode_jpeg = True
 
-                if should_encode_jpeg:
+                # FIX: rate-limit JPEG encoding — only encode when enough time has
+                # elapsed since the last encode. Avoids paying ~3-5ms encode cost
+                # on every frame when the camera runs faster than display FPS.
+                _now = time.perf_counter()
+                if should_encode_jpeg and (_now - _last_jpeg_at) >= _jpeg_min_interval:
                     encoded_ok, encoded = self._encode_jpeg(frame)
                     if not encoded_ok:
                         time.sleep(0.01)
                         continue
                     encoded_bytes = encoded.tobytes()
+                    _last_jpeg_at = _now
 
                 with state.lock:
                     state.latest_frame = frame
-                    state.latest_jpeg = encoded_bytes
+                    if encoded_bytes is not None:
+                        state.latest_jpeg = encoded_bytes
                     state.frame_version += 1
                     state.decoded_frame_version = state.frame_version
                     state.frames_produced += 1
                     state.last_frame_at = time.time()
+
+                # FIX: yield the GIL for the remainder of the frame budget so
+                # eventlet greenthreads (pipeline nodes) can execute without
+                # starvation. This is the primary fix for system-wide lag/FPS drop.
+                _elapsed = time.perf_counter() - _loop_start
+                _sleep_for = _frame_budget - _elapsed
+                if _sleep_for > 0.001:
+                    time.sleep(_sleep_for)
         finally:
             # IMPORTANT (Windows): release inside the capture thread to avoid driver locks.
             try:
@@ -914,16 +941,21 @@ class StreamManager:
                     state.active = False
                     break
 
+                # FIX: pass copy=True so the transform_fn is free to draw/mutate
+                # the frame in-place (e.g. overlay bounding boxes). The copy cost
+                # is unavoidable here since we cannot know whether transform_fn
+                # modifies its input. The camera-loop fix (frame-budget sleep)
+                # is far more impactful for overall system lag.
                 source_frame, source_frame_version = self.get_latest_frame_with_version(
                     source_stream_id,
                     min_version=last_source_frame_version,
+                    copy=True,
                 )
                 if source_frame is None:
                     self._cooperative_sleep(min(delay, 0.03))
                     continue
                 last_source_frame_version = source_frame_version
 
-                # get_latest_frame() already returns a frame copy.
                 transformed = transform_fn(source_frame)
                 predictions: Dict[str, Any] = {}
                 frame = transformed
@@ -1026,7 +1058,16 @@ class StreamManager:
         self,
         stream_id: str,
         min_version: Optional[int] = None,
+        copy: bool = True,
     ) -> Tuple[Optional[Any], int]:
+        """Return the latest decoded frame and its version number.
+
+        Args:
+            copy: When True (default) the returned numpy array is a fresh copy
+                  so the caller is free to mutate it (e.g. draw bounding boxes).
+                  Set to False to receive a direct reference with zero allocation
+                  cost — only safe when the caller will NOT modify the array.
+        """
         state = self.get_stream(stream_id)
         if state is None:
             return None, -1
@@ -1042,11 +1083,12 @@ class StreamManager:
                 and int(state.decoded_frame_version) >= current_version
             ):
                 frame = state.latest_frame
-                try:
-                    frame_copy = frame.copy()
-                except Exception:
-                    frame_copy = frame
-                return frame_copy, current_version
+                if copy:
+                    try:
+                        frame = frame.copy()
+                    except Exception:
+                        pass
+                return frame, current_version
 
             jpeg_bytes = bytes(state.latest_jpeg) if state.latest_jpeg is not None else None
             decode_version = current_version
@@ -1077,11 +1119,12 @@ class StreamManager:
             else:
                 return None, current_version
 
-            try:
-                frame_copy = frame.copy()
-            except Exception:
-                frame_copy = frame
-            return frame_copy, current_version
+            if copy:
+                try:
+                    frame = frame.copy()
+                except Exception:
+                    pass
+            return frame, current_version
 
     def get_latest_frame(self, stream_id: str) -> Optional[Any]:
         frame, _ = self.get_latest_frame_with_version(stream_id)

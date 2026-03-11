@@ -1061,6 +1061,83 @@ body {
   resize: vertical;
 }
 
+/* ── Augmentation panel ── */
+.aski-ws-aug-techniques {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.aski-ws-aug-select-all-row {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 4px;
+}
+
+.aski-ws-aug-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.aski-ws-aug-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px;
+  color: #c9e4ef;
+  font-size: 13px;
+}
+
+.aski-ws-aug-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+}
+
+.aski-ws-aug-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(129, 187, 208, 0.2);
+  background: rgba(17, 53, 68, 0.46);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.aski-ws-aug-card:hover {
+  border-color: rgba(129, 187, 208, 0.45);
+  background: rgba(17, 53, 68, 0.65);
+}
+
+.aski-ws-aug-card.selected {
+  border-color: rgba(78, 205, 196, 0.6);
+  background: rgba(20, 80, 90, 0.55);
+}
+
+.aski-ws-aug-card input[type="checkbox"] {
+  accent-color: #4ecdc4;
+  margin-right: 6px;
+}
+
+.aski-ws-aug-card-label {
+  color: #e1f2f8;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.aski-ws-aug-card-desc {
+  color: rgba(180, 215, 228, 0.7);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
 .aski-ws-danger-btn {
   border-radius: 8px;
   border: 1px solid rgba(255, 126, 126, 0.35);

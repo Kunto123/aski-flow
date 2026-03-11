@@ -23,6 +23,15 @@ import {
   type DatasetSummary,
 } from "../../../api/datasets";
 import {
+  cancelAugmentationJob,
+  createAugmentationJob,
+  deleteAugmentationJob,
+  listAugmentationJobs,
+  listAugmentationTechniques,
+  type AugmentationJob,
+  type AugmentationTechnique,
+} from "../../../api/augmentation";
+import {
   deleteImageAnnotationLabels,
   getImageAnnotationLabels,
   listAnnotationImages,
@@ -54,6 +63,7 @@ export type WorkstationSection =
   | "upload-data"
   | "annotate"
   | "dataset"
+  | "augment"
   | "train"
   | "models";
 
@@ -66,6 +76,7 @@ export const WORKSTATION_ITEMS: WorkstationItem[] = [
   { id: "upload-data", label: "Upload Data" },
   { id: "annotate", label: "Annotate" },
   { id: "dataset", label: "Dataset" },
+  { id: "augment", label: "Augment" },
   { id: "train", label: "Train" },
   { id: "models", label: "Models" },
 ];
@@ -2385,6 +2396,386 @@ function ModelsPanel() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Augment Panel
+// ---------------------------------------------------------------------------
+
+interface AugmentPanelProps {
+  datasets: DatasetSummary[];
+  isLoading: boolean;
+  errorMessage: string;
+  onRefresh: () => Promise<void>;
+}
+
+const TECHNIQUE_GROUP_LABELS: Record<string, string> = {
+  geometric: "Geometric",
+  color: "Color / Brightness",
+  noise: "Noise / Filter",
+};
+
+function AugmentPanel({
+  datasets,
+  isLoading,
+  errorMessage,
+  onRefresh,
+}: AugmentPanelProps) {
+  const [techniques, setTechniques] = useState<AugmentationTechnique[]>([]);
+  const [selectedDatasetId, setSelectedDatasetId] = useState("");
+  const [selectedTechniques, setSelectedTechniques] = useState<Set<string>>(new Set());
+  const [copiesPerTechnique, setCopiesPerTechnique] = useState(1);
+  const [jobs, setJobs] = useState<AugmentationJob[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLoadingJobs, setIsLoadingJobs] = useState(false);
+  const [feedbackMessage, setFeedbackMessage] = useState("");
+  const [errorAugMessage, setErrorAugMessage] = useState("");
+
+  const selectedDataset = useMemo(
+    () => datasets.find((d) => d.id === selectedDatasetId),
+    [datasets, selectedDatasetId],
+  );
+
+  const runningJobs = useMemo(
+    () => jobs.filter((j) => j.status === "queued" || j.status === "running" || j.status === "canceling").length,
+    [jobs],
+  );
+
+  // Group techniques by category
+  const groupedTechniques = useMemo(() => {
+    const groups: Record<string, AugmentationTechnique[]> = {};
+    for (const t of techniques) {
+      if (!groups[t.group]) groups[t.group] = [];
+      groups[t.group].push(t);
+    }
+    return groups;
+  }, [techniques]);
+
+  useEffect(() => {
+    if (!datasets.length) {
+      setSelectedDatasetId("");
+      return;
+    }
+    const stillExists = datasets.some((d) => d.id === selectedDatasetId);
+    if (!stillExists) {
+      setSelectedDatasetId(datasets[0].id);
+    }
+  }, [datasets, selectedDatasetId]);
+
+  const refreshTechniques = useCallback(async () => {
+    try {
+      const items = await listAugmentationTechniques();
+      setTechniques(Array.isArray(items) ? items : []);
+    } catch {
+      setTechniques([]);
+    }
+  }, []);
+
+  const refreshJobs = useCallback(async () => {
+    setIsLoadingJobs(true);
+    try {
+      const items = await listAugmentationJobs();
+      setJobs(Array.isArray(items) ? items : []);
+    } catch {
+      // silent
+    } finally {
+      setIsLoadingJobs(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshTechniques();
+    void refreshJobs();
+  }, [refreshTechniques, refreshJobs]);
+
+  // Auto-refresh while jobs running
+  useEffect(() => {
+    if (!runningJobs) return;
+    const timer = window.setInterval(() => void refreshJobs(), 2000);
+    return () => window.clearInterval(timer);
+  }, [runningJobs, refreshJobs]);
+
+  const toggleTechnique = useCallback((id: string) => {
+    setSelectedTechniques((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const selectAllInGroup = useCallback((group: string) => {
+    setSelectedTechniques((prev) => {
+      const next = new Set(prev);
+      const groupItems = techniques.filter((t) => t.group === group);
+      const allSelected = groupItems.every((t) => next.has(t.id));
+      for (const t of groupItems) {
+        if (allSelected) next.delete(t.id);
+        else next.add(t.id);
+      }
+      return next;
+    });
+  }, [techniques]);
+
+  const selectAll = useCallback(() => {
+    setSelectedTechniques((prev) => {
+      if (prev.size === techniques.length) return new Set();
+      return new Set(techniques.map((t) => t.id));
+    });
+  }, [techniques]);
+
+  const handleStartAugment = async () => {
+    if (!selectedDatasetId) {
+      setErrorAugMessage("Pilih dataset terlebih dahulu.");
+      return;
+    }
+    if (selectedTechniques.size === 0) {
+      setErrorAugMessage("Pilih minimal 1 teknik augmentasi.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setErrorAugMessage("");
+    setFeedbackMessage("");
+    try {
+      const created = await createAugmentationJob({
+        dataset_id: selectedDatasetId,
+        techniques: Array.from(selectedTechniques),
+        copies_per_technique: copiesPerTechnique,
+      });
+      setFeedbackMessage(`Augmentation job dibuat: ${created.id}`);
+      await refreshJobs();
+      await onRefresh();
+    } catch (error: any) {
+      setErrorAugMessage(error?.message || "Gagal membuat augmentation job.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleCancelJob = async (job: AugmentationJob) => {
+    if (job.status === "completed" || job.status === "failed" || job.status === "canceled") return;
+    if (!window.confirm(`Cancel augmentation job '${job.id}'?`)) return;
+
+    try {
+      await cancelAugmentationJob(job.id);
+      setFeedbackMessage(`Cancel dikirim untuk job ${job.id}.`);
+      await refreshJobs();
+    } catch (error: any) {
+      setErrorAugMessage(error?.message || "Gagal cancel job.");
+    }
+  };
+
+  const handleDeleteJob = async (job: AugmentationJob) => {
+    if (job.status === "queued" || job.status === "running") {
+      setErrorAugMessage("Cancel job dulu sebelum delete.");
+      return;
+    }
+    if (!window.confirm(`Hapus augmentation job '${job.id}'?`)) return;
+
+    try {
+      await deleteAugmentationJob(job.id);
+      setFeedbackMessage(`Job ${job.id} dihapus.`);
+      await refreshJobs();
+    } catch (error: any) {
+      setErrorAugMessage(error?.message || "Gagal menghapus job.");
+    }
+  };
+
+  return (
+    <section className="aski-ws-panel">
+      <header className="aski-ws-panel-head aski-ws-panel-head-col">
+        <h2>
+          <FiLayers /> Augment Dataset
+        </h2>
+
+        <div className="aski-ws-filter-row aski-ws-train-toolbar">
+          <label className="aski-ws-train-field" title="Dataset yang akan di-augmentasi.">
+            <span>Dataset</span>
+            <select
+              value={selectedDatasetId}
+              onChange={(e) => setSelectedDatasetId(e.target.value)}
+            >
+              {!datasets.length && <option value="">No dataset</option>}
+              {datasets.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name} ({d.folder_name || d.id})
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="aski-ws-train-field" title="Jumlah copy per teknik per gambar.">
+            <span>Copies / technique</span>
+            <input
+              type="number"
+              min={1}
+              max={10}
+              value={copiesPerTechnique}
+              onChange={(e) => setCopiesPerTechnique(Math.max(1, Math.min(10, Number(e.target.value || 1))))}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={handleStartAugment}
+            disabled={isSubmitting || isLoading || !datasets.length || selectedTechniques.size === 0}
+          >
+            {isSubmitting ? "Processing..." : "Start Augment"}
+          </button>
+          <button
+            type="button"
+            className="aski-ws-ghost-btn"
+            onClick={() => void refreshJobs()}
+          >
+            <FiRefreshCw /> Refresh
+          </button>
+        </div>
+
+        <div className="aski-ws-upload-hint">
+          Dataset: <strong>{selectedDataset?.folder_name || "-"}</strong>
+          {selectedDataset?.stats && (
+            <>
+              {" | "}Images: <strong>{selectedDataset.stats.images}</strong>
+              {" | "}Labels: <strong>{selectedDataset.stats.labels}</strong>
+            </>
+          )}
+          {" | "}Selected: <strong>{selectedTechniques.size}</strong> technique(s)
+          {" | "}Running: <strong>{runningJobs}</strong>
+          {copiesPerTechnique > 1 && (
+            <>
+              {" | "}Est. output: <strong>~{(selectedDataset?.stats?.images || 0) * selectedTechniques.size * copiesPerTechnique}</strong> images
+            </>
+          )}
+          {copiesPerTechnique === 1 && selectedDataset?.stats && (
+            <>
+              {" | "}Est. output: <strong>~{selectedDataset.stats.images * selectedTechniques.size}</strong> images
+            </>
+          )}
+        </div>
+      </header>
+
+      {errorMessage && <p className="aski-ws-inline-error">{errorMessage}</p>}
+      {errorAugMessage && <p className="aski-ws-inline-error">{errorAugMessage}</p>}
+      {feedbackMessage && <div className="aski-ws-upload-feedback">{feedbackMessage}</div>}
+
+      {/* Technique selection grid */}
+      <div className="aski-ws-aug-techniques">
+        <div className="aski-ws-aug-select-all-row">
+          <button type="button" className="aski-ws-ghost-btn" onClick={selectAll}>
+            {selectedTechniques.size === techniques.length ? "Deselect All" : "Select All"}
+          </button>
+        </div>
+
+        {Object.entries(groupedTechniques).map(([group, items]) => (
+          <div key={group} className="aski-ws-aug-group">
+            <div className="aski-ws-aug-group-header">
+              <strong>{TECHNIQUE_GROUP_LABELS[group] || group}</strong>
+              <button
+                type="button"
+                className="aski-ws-ghost-btn"
+                onClick={() => selectAllInGroup(group)}
+              >
+                {items.every((t) => selectedTechniques.has(t.id)) ? "Deselect" : "Select"} group
+              </button>
+            </div>
+            <div className="aski-ws-aug-grid">
+              {items.map((t) => (
+                <label
+                  key={t.id}
+                  className={`aski-ws-aug-card ${selectedTechniques.has(t.id) ? "selected" : ""}`}
+                  title={t.description}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedTechniques.has(t.id)}
+                    onChange={() => toggleTechnique(t.id)}
+                  />
+                  <span className="aski-ws-aug-card-label">{t.label}</span>
+                  <span className="aski-ws-aug-card-desc">{t.description}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Jobs table */}
+      <div className="aski-ws-models-table-wrap aski-ws-train-table-wrap">
+        <table className="aski-ws-models-table aski-ws-train-table">
+          <thead>
+            <tr>
+              <th>Job ID</th>
+              <th>Dataset</th>
+              <th>Techniques</th>
+              <th>Status</th>
+              <th>Progress</th>
+              <th>Generated</th>
+              <th>Errors</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {!isLoadingJobs && jobs.length === 0 ? (
+              <tr>
+                <td colSpan={8}>Belum ada augmentation job.</td>
+              </tr>
+            ) : (
+              jobs.map((job) => {
+                const pct = job.total > 0 ? Math.round((job.progress / job.total) * 100) : 0;
+                return (
+                  <tr key={job.id}>
+                    <td>{job.id}</td>
+                    <td>{job.dataset_id}</td>
+                    <td className="aski-ws-model-path-cell" title={job.techniques.join(", ")}>
+                      {job.techniques.length} technique(s)
+                    </td>
+                    <td className={`aski-ws-train-status ${job.status}`}>
+                      {job.status}
+                    </td>
+                    <td>
+                      {job.status === "running" ? `${pct}%` : job.status === "completed" ? "100%" : "-"}
+                    </td>
+                    <td>{job.generated || 0}</td>
+                    <td>{job.errors || 0}</td>
+                    <td className="aski-ws-model-actions aski-ws-train-actions">
+                      <button
+                        type="button"
+                        className="aski-ws-ghost-btn"
+                        disabled={
+                          job.status === "completed"
+                          || job.status === "failed"
+                          || job.status === "canceled"
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleCancelJob(job);
+                        }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        className="aski-ws-danger-btn"
+                        disabled={
+                          job.status === "queued"
+                          || job.status === "running"
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleDeleteJob(job);
+                        }}
+                      >
+                        <FiTrash2 /> Delete
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 export function WorkstationMain({ activeSection }: WorkstationMainProps) {
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
   const [isDatasetLoading, setIsDatasetLoading] = useState(false);
@@ -2408,6 +2799,7 @@ export function WorkstationMain({ activeSection }: WorkstationMainProps) {
       activeSection !== "dataset"
       && activeSection !== "upload-data"
       && activeSection !== "annotate"
+      && activeSection !== "augment"
       && activeSection !== "train"
     ) {
       return;
@@ -2418,6 +2810,16 @@ export function WorkstationMain({ activeSection }: WorkstationMainProps) {
   if (activeSection === "annotate") {
     return (
       <AnnotatePanel
+        datasets={datasets}
+        isLoading={isDatasetLoading}
+        errorMessage={datasetErrorMessage}
+        onRefresh={refreshDatasets}
+      />
+    );
+  }
+  if (activeSection === "augment") {
+    return (
+      <AugmentPanel
         datasets={datasets}
         isLoading={isDatasetLoading}
         errorMessage={datasetErrorMessage}

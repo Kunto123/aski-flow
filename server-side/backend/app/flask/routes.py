@@ -68,6 +68,7 @@ if is_local_environment():
     from .app_routes.model_routes import models_blueprint
     from .app_routes.stream_routes import stream_blueprint
     from .app_routes.training_routes import training_blueprint
+    from .app_routes.augmentation_routes import augmentation_blueprint
 
     logging.info("Environment set to LOCAL")
     register_blueprint_with_v1_alias(asset_blueprint, "asset_blueprint")
@@ -77,3 +78,4 @@ if is_local_environment():
     register_blueprint_with_v1_alias(datasets_blueprint, "datasets_blueprint")
     register_blueprint_with_v1_alias(annotation_blueprint, "annotation_blueprint")
     register_blueprint_with_v1_alias(training_blueprint, "training_blueprint")
+    register_blueprint_with_v1_alias(augmentation_blueprint, "augmentation_blueprint")
