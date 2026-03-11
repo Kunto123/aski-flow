@@ -65,6 +65,7 @@ class StreamState:
     last_frame_at: Optional[float] = None
     mjpeg_clients: int = 0
     mjpeg_total_clients: int = 0
+    had_consumers: bool = False
     last_error: Optional[str] = None
     stop_reason: Optional[str] = None
     # Per-stream mutable runtime parameters (e.g. live ROI box coordinates).
@@ -686,6 +687,11 @@ class StreamManager:
 
         with self._registry_lock:
             self._streams[stream_id] = state
+            # Mark the source stream as having consumers so its no_consumers
+            # grace period reverts to the shorter default.
+            if source is not None:
+                with source.lock:
+                    source.had_consumers = True
 
         self._debug_event(
             "create_transform_stream",
@@ -867,17 +873,33 @@ class StreamManager:
             fps=fps,
         )
         consumer_grace_sec = float(os.getenv("ASKI_STREAM_CONSUMER_GRACE_SEC", "6"))
+        # Extended grace period for streams that have never had any consumer.
+        # This covers the case where a downstream node (e.g. Main Vision Model)
+        # needs time to warm up before it subscribes as a dependent.
+        consumer_initial_grace_sec = float(
+            os.getenv("ASKI_STREAM_CONSUMER_INITIAL_GRACE_SEC", "60")
+        )
         no_consumer_idle_sec = float(os.getenv("ASKI_STREAM_NO_CONSUMERS_IDLE_SEC", "1"))
         last_source_frame_version = -1
         while state.active and not state.stop_event.is_set():
             loop_started_at = time.perf_counter()
             now = time.time()
-            if (now - state.created_at) >= consumer_grace_sec:
+            # Use a longer grace period if the stream has never had any
+            # consumer (MJPEG client or dependent transform stream).
+            has_dependents = self._has_dependents(state.stream_id)
+            with state.lock:
+                ever_had_consumers = state.had_consumers
+            effective_grace = (
+                consumer_grace_sec
+                if ever_had_consumers or has_dependents
+                else consumer_initial_grace_sec
+            )
+            if (now - state.created_at) >= effective_grace:
                 try:
                     with state.lock:
                         mjpeg_clients = state.mjpeg_clients
                         last_access_at = state.last_access_at
-                    if mjpeg_clients <= 0 and (not self._has_dependents(state.stream_id)) and (now - last_access_at) >= no_consumer_idle_sec:
+                    if mjpeg_clients <= 0 and (not has_dependents) and (now - last_access_at) >= no_consumer_idle_sec:
                         state.stop_reason = "no_consumers"
                         state.active = False
                         state.stop_event.set()
@@ -1358,6 +1380,7 @@ class StreamManager:
                     with state.lock:
                         state.mjpeg_clients += 1
                         state.mjpeg_total_clients += 1
+                        state.had_consumers = True
                     self._debug_event(
                         "mjpeg_client_connected",
                         stream_id=stream_id,
