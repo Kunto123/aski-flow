@@ -402,6 +402,15 @@ class MainVisionModelProcessor(BasicProcessor):
     def _process_stream(self, source_stream_id: str):
         manager = get_stream_manager()
         manager.stop_streams_by_owner(self.name)
+
+        # Give orphaned transform threads a moment to fully exit after
+        # stop_streams_by_owner().  The join timeout (1.2s) may not be
+        # enough when the transform function is blocked on model inference.
+        # A brief sleep lets eventlet/OS reclaim the thread before we
+        # create a replacement stream on the same source.
+        import eventlet
+        eventlet.sleep(0.1)
+
         runtime = get_ultralytics_runtime()
 
         source_stream_fps = None
@@ -440,6 +449,10 @@ class MainVisionModelProcessor(BasicProcessor):
         }
         startup_state_lock = threading.Lock()
 
+        # Track the raw classes value so _transform() can detect when it changes
+        # and re-resolve indices dynamically instead of using a stale warmup cache.
+        _last_classes_raw: Dict[str, Any] = {"value": self.classes, "indices": None}
+
         def _warmup_model():
             resolved_class_indices: Optional[List[int]] = None
             startup_error: Optional[str] = None
@@ -466,6 +479,8 @@ class MainVisionModelProcessor(BasicProcessor):
                     startup_state["error"] = startup_error
                     startup_state["status"] = "error" if startup_error else "ready"
                     startup_state["ready_at"] = time.monotonic()
+                    _last_classes_raw["value"] = self.classes
+                    _last_classes_raw["indices"] = resolved_class_indices
                 startup_ready.set()
 
         threading.Thread(
@@ -488,8 +503,19 @@ class MainVisionModelProcessor(BasicProcessor):
                 return overlay, last_predictions
 
             with startup_state_lock:
-                class_indices = startup_state.get("class_indices")
                 startup_error = startup_state.get("error")
+                # Re-resolve class indices dynamically when the raw classes
+                # parameter has changed since the last resolution.  This makes
+                # clearing/changing the "classes" field take effect immediately
+                # without requiring a full stream restart.
+                current_classes_raw = self.get_input_by_name("classes", self.classes)
+                if current_classes_raw != _last_classes_raw["value"]:
+                    try:
+                        _last_classes_raw["indices"] = self._resolve_class_indices(runtime)
+                    except Exception:
+                        _last_classes_raw["indices"] = None
+                    _last_classes_raw["value"] = current_classes_raw
+                class_indices = _last_classes_raw["indices"]
 
             if startup_error:
                 if not startup_error_raised:

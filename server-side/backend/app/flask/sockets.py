@@ -448,6 +448,17 @@ def handle_disconnect():
     runtime_session_id = _resolve_runtime_session_id()
     _release_runtime_run_slot(runtime_session_id)
     _clear_last_valid_flow_data(runtime_session_id)
+
+    # Stop orphaned transform streams left behind by this session.
+    # Without this, transform threads keep running after a refresh, holding
+    # references to the source camera stream and preventing recovery.
+    try:
+        from app.streaming import get_stream_manager
+        manager = get_stream_manager()
+        manager.stop_all_transform_streams()
+    except Exception as e:
+        logging.warning("Failed to cleanup transform streams on disconnect: %s", e)
+
     logging.info("Client disconnected sid=%s", request.sid)
 
 

@@ -1183,10 +1183,15 @@ class StreamManager:
 
         # 3) Join this stream thread (best-effort). For camera streams, this should
         # release the OS device handle in the capture thread finally block.
+        # Transform streams that run heavy inference (e.g. YOLO) may need a longer
+        # timeout than camera capture threads to finish the current frame.
+        join_timeout = self._stop_join_timeout_sec
+        if state.source_type == "transform":
+            join_timeout = max(join_timeout, 5.0)
         try:
             thread = state.thread
             if thread is not None and thread.is_alive():
-                thread.join(timeout=self._stop_join_timeout_sec)
+                thread.join(timeout=join_timeout)
         except Exception:
             pass
 
@@ -1335,6 +1340,31 @@ class StreamManager:
         )
         return stopped
 
+    def stop_all_transform_streams(self) -> int:
+        """Stop all transform streams (non-camera).
+
+        Useful for cleaning up orphaned transform threads after a client
+        disconnect/refresh.  Camera streams are intentionally left alive
+        so the device doesn't needlessly restart.
+        """
+        with self._registry_lock:
+            transform_ids = [
+                stream_id
+                for stream_id, state in self._streams.items()
+                if state.source_type == "transform" and state.active
+            ]
+
+        stopped = 0
+        for stream_id in transform_ids:
+            if self.stop_stream(stream_id, reason="disconnect_cleanup"):
+                stopped += 1
+        self._debug_event(
+            "stop_all_transform_streams",
+            target_ids=transform_ids,
+            stopped=stopped,
+        )
+        return stopped
+
     def stop_camera_streams_by_index(
         self,
         camera_index: int,
@@ -1402,10 +1432,14 @@ class StreamManager:
                         state.last_access_at = time.time()
 
                 if frame is None or frame_version == last_sent_frame_version:
-                    wait_sec = 0.03
+                    # Use a short poll interval to minimise display latency.
+                    # For client-camera streams (frames arrive over HTTP) the
+                    # bottleneck is already the network, so 5-10 ms polls don't
+                    # add meaningful CPU cost but cut perceived lag.
+                    wait_sec = 0.005
                     try:
                         if target_fps and float(target_fps) > 0:
-                            wait_sec = min(0.1, max(0.005, 1.0 / float(target_fps)))
+                            wait_sec = min(0.03, max(0.003, 0.5 / float(target_fps)))
                     except Exception:
                         pass
                     self._cooperative_sleep(wait_sec)
