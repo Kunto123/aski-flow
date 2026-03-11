@@ -26,7 +26,16 @@ node_modules/
 
 # Native packaging/artifacts
 client-native/winui/artifacts/
-client-native/winui/embedded/
+# Track the embedded legacy editor source, but keep generated bundle/output ignored.
+client-native/winui/embedded/*
+!client-native/winui/embedded/legacy-editor-src/
+!client-native/winui/embedded/legacy-editor-src/**
+client-native/winui/embedded/flow-editor/
+client-native/winui/embedded/legacy-editor-src/build/
+client-native/winui/embedded/legacy-editor-src/dist/
+client-native/winui/embedded/legacy-editor-src/coverage/
+client-native/winui/embedded/legacy-editor-src/.pnp/
+client-native/winui/embedded/legacy-editor-src/.pnp.js
 *.msix
 *.msixbundle
 *.appx

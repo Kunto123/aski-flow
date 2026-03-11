@@ -1,0 +1,954 @@
+import { useTranslation } from "react-i18next";
+import { OptionSelector, OptionButton } from "../components/nodes/Node.styles";
+import InputNameBar from "../components/nodes/node-button/InputNameBar";
+import { Field } from "../nodes-configuration/types";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { generateIdForHandle } from "../utils/flowUtils";
+import { Autocomplete, Pill, PillsInput, Slider } from "@mantine/core";
+import { Switch } from "@mantine/core";
+import NodeField from "../components/nodes/node-input/NodeField";
+import SelectAutocomplete from "../components/selectors/SelectAutocomplete";
+import NodeTextField from "../components/nodes/node-input/NodeTextField";
+import useIsTouchDevice from "./useIsTouchDevice";
+import _ from "lodash";
+import NodeTextarea from "../components/nodes/node-input/NodeTextarea";
+import { KeyValueInputList } from "../components/nodes/node-input/KeyValueInputList";
+import ImageMaskCreatorFieldFlowAware from "../components/nodes/node-input/ImageMaskCreatorFieldFlowAware";
+import { evaluateCondition } from "../utils/evaluateConditions";
+import FileUploadField from "../components/nodes/node-input/FileUploadField";
+import { getServerModelFiles, ServerModelFile } from "../api/models";
+import { getServerOcrLanguages, OcrLanguagesResponse } from "../api/ocr";
+
+const OCR_PRESET_FIELD_DEFAULTS: Record<string, Record<string, any>> = {
+  general: {
+    psm: "6",
+    oem: "3",
+    preprocess: "auto",
+    scale_factor: 1.8,
+    min_confidence: 15,
+    stream_fps: 10,
+    ocr_fps: 2,
+    draw_boxes: true,
+    draw_text: true,
+    tesseract_config: "",
+  },
+  "ui-screenshot": {
+    psm: "11",
+    oem: "3",
+    preprocess: "adaptive",
+    scale_factor: 2.5,
+    min_confidence: 8,
+    stream_fps: 10,
+    ocr_fps: 1.5,
+    draw_boxes: true,
+    draw_text: true,
+    tesseract_config: "",
+  },
+  document: {
+    psm: "6",
+    oem: "3",
+    preprocess: "auto",
+    scale_factor: 2.0,
+    min_confidence: 20,
+    stream_fps: 10,
+    ocr_fps: 2,
+    draw_boxes: true,
+    draw_text: true,
+    tesseract_config: "",
+  },
+  "single-line": {
+    psm: "7",
+    oem: "3",
+    preprocess: "auto",
+    scale_factor: 2.2,
+    min_confidence: 5,
+    stream_fps: 10,
+    ocr_fps: 2,
+    draw_boxes: true,
+    draw_text: true,
+    tesseract_config: "",
+  },
+};
+const OCR_ADVANCED_FIELD_NAMES = new Set([
+  "psm",
+  "oem",
+  "preprocess",
+  "scale_factor",
+  "min_confidence",
+  "stream_fps",
+  "ocr_fps",
+  "draw_boxes",
+  "draw_text",
+  "tesseract_config",
+]);
+
+/**
+ * Commit-based model path autocomplete.
+ * Changes are buffered locally and only propagated to node data on:
+ *   - blur (focus lost)
+ *   - Enter key
+ *   - selecting an option from the dropdown
+ * This prevents per-keystroke model validation and the resulting
+ * "model not found" spam while the operator is still typing.
+ */
+function ModelPathAutocomplete({
+  field,
+  data,
+  isTouchDevice,
+  isLoadingServerModelFiles,
+  serverModelFiles,
+  getServerModelAutocompleteOptions,
+  handleNodeFieldChange,
+  t,
+}: {
+  field: any;
+  data: any;
+  isTouchDevice: boolean;
+  isLoadingServerModelFiles: boolean;
+  serverModelFiles: ServerModelFile[];
+  getServerModelAutocompleteOptions: (fieldName: string) => string[];
+  handleNodeFieldChange: (fieldName: string, value: any, target?: any) => void;
+  t: (key: string) => string;
+}) {
+  const [localValue, setLocalValue] = useState<string>(
+    String(data[field.name] ?? ""),
+  );
+  const committedRef = useRef<string>(String(data[field.name] ?? ""));
+
+  // Sync external changes (e.g. profile load) into local state.
+  useEffect(() => {
+    const external = String(data[field.name] ?? "");
+    if (external !== committedRef.current) {
+      committedRef.current = external;
+      setLocalValue(external);
+    }
+  }, [data[field.name]]);
+
+  const commitValue = useCallback(
+    (value: string) => {
+      const trimmed = value.trim();
+      if (trimmed && trimmed !== committedRef.current) {
+        committedRef.current = trimmed;
+        handleNodeFieldChange(field.name, trimmed);
+      }
+    },
+    [field.name, handleNodeFieldChange],
+  );
+
+  const options = getServerModelAutocompleteOptions(field.name);
+  const basePlaceholder = field.placeholder ? String(t(field.placeholder)) : "";
+  const placeholder =
+    isLoadingServerModelFiles && options.length === 0
+      ? "Loading model list from server..."
+      : basePlaceholder;
+
+  return (
+    <div
+      className="nowheel nodrag nopan w-full"
+      onMouseDown={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <Autocomplete
+        className={`nowheel ${!isTouchDevice ? "nodrag" : ""}`}
+        value={localValue}
+        onChange={(value) => setLocalValue(value)}
+        onOptionSubmit={(value) => commitValue(value)}
+        onBlur={() => commitValue(localValue)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            commitValue(localValue);
+          }
+        }}
+        data={options}
+        placeholder={placeholder}
+        limit={50}
+        maxDropdownHeight={280}
+        comboboxProps={{
+          withinPortal: false,
+          zIndex: 50,
+        }}
+      />
+      <p className="mt-1 px-1 text-xs text-slate-300">
+        {isLoadingServerModelFiles
+          ? "Loading model list from server..."
+          : `Server models: ${serverModelFiles.length} found`}
+      </p>
+    </div>
+  );
+}
+
+export interface DisplayParams {
+  showHandles?: boolean;
+  showLabels?: boolean;
+  showOnlyConnectedFields?: boolean;
+  specificFields?: string[];
+}
+
+export function useFormFields(
+  data: any,
+  id: string,
+  handleNodeFieldChange: (fieldName: string, value: any, target?: any) => void,
+  setDefaultOptions?: Function,
+  hasParent?: Function,
+  displayParams?: DisplayParams,
+  handleNodeDataChange?: (data: any) => void,
+) {
+  const { t } = useTranslation("flow");
+  const isTouchDevice = useIsTouchDevice();
+
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [serverModelFiles, setServerModelFiles] = useState<ServerModelFile[]>([]);
+  const [isLoadingServerModelFiles, setIsLoadingServerModelFiles] =
+    useState(false);
+  const [serverOcrLanguages, setServerOcrLanguages] =
+    useState<OcrLanguagesResponse | null>(null);
+  const [isLoadingServerOcrLanguages, setIsLoadingServerOcrLanguages] =
+    useState(false);
+
+  const getFields = () => {
+    let fields;
+    if (!!data?.config?.fields) {
+      fields = data.config.fields;
+    } else if (!!data?.dynamicValues?.fields) {
+      fields = data.dynamicValues.fields;
+    }
+    return fields;
+  };
+
+  const fields = getFields();
+  const isMainVisionModelNode = data?.processorType === "main-vision-model";
+  const isOcrReaderNode = data?.processorType === "ocr-reader";
+
+  useEffect(() => {
+    if (!setDefaultOptions) return;
+    setDefaultOptions();
+  }, []);
+
+  useEffect(() => {
+    if (!isMainVisionModelNode) return;
+
+    let isCancelled = false;
+    setIsLoadingServerModelFiles(true);
+
+    getServerModelFiles()
+      .then((response) => {
+        if (isCancelled) return;
+        setServerModelFiles(Array.isArray(response?.files) ? response.files : []);
+      })
+      .catch((error) => {
+        if (isCancelled) return;
+        console.error("Error fetching server model files:", error);
+        setServerModelFiles([]);
+      })
+      .finally(() => {
+        if (isCancelled) return;
+        setIsLoadingServerModelFiles(false);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isMainVisionModelNode]);
+
+  useEffect(() => {
+    if (!isOcrReaderNode) return;
+
+    let isCancelled = false;
+    setIsLoadingServerOcrLanguages(true);
+
+    getServerOcrLanguages()
+      .then((response) => {
+        if (isCancelled) return;
+        setServerOcrLanguages(response ?? null);
+      })
+      .catch((error) => {
+        if (isCancelled) return;
+        console.error("Error fetching server OCR languages:", error);
+        setServerOcrLanguages(null);
+      })
+      .finally(() => {
+        if (isCancelled) return;
+        setIsLoadingServerOcrLanguages(false);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isOcrReaderNode]);
+
+  const handleEventNodeDataChange = (
+    event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
+  ) => {
+    handleNodeFieldChange(event.target.name, event.target.value, event.target);
+  };
+
+  function calculateStep(min?: number, max?: number, allowDecimal?: boolean) {
+    if (min == null || max == null) return 1;
+
+    const range = max - min;
+    let step;
+
+    if (range <= 1 && allowDecimal) {
+      step = 0.01;
+    } else if (range <= 10 && allowDecimal) {
+      step = 0.1;
+    } else if (range <= 100) {
+      step = 1;
+    } else if (range <= 1000) {
+      step = 10;
+    } else {
+      step = 100;
+    }
+
+    return step;
+  }
+
+  function renderList(data: any, field: Field) {
+    const values = data[field.name] ?? [];
+
+    return (
+      <div className="w-full items-center">
+        <PillsInput size="lg">
+          <Pill.Group>
+            {values.map((value: string, index: number) => (
+              <Pill
+                key={`${id}-${field.name}-${index}`}
+                withRemoveButton
+                onRemove={() => {
+                  const nextValues = values.filter((_: string, i: number) => i !== index);
+                  handleNodeFieldChange(field.name, nextValues);
+                }}
+              >
+                {value}
+              </Pill>
+            ))}
+            <PillsInput.Field
+              placeholder={
+                t(field.placeholder ?? "") ?? t("DefaultListPlaceholder") ?? ""
+              }
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  const rawValue = String(e.currentTarget.value ?? "").trim();
+                  if (!rawValue) return;
+                  const nextValues = [...values, rawValue];
+                  handleNodeFieldChange(field.name, nextValues);
+                  e.currentTarget.value = "";
+                }
+              }}
+              onBlur={(e) => {
+                const rawValue = String(e.currentTarget.value ?? "").trim();
+                if (!rawValue) return;
+                const nextValues = [...values, rawValue];
+                handleNodeFieldChange(field.name, nextValues);
+                e.currentTarget.value = "";
+              }}
+            />
+          </Pill.Group>
+        </PillsInput>
+      </div>
+    );
+  }
+
+  function getServerModelAutocompleteOptions(fieldName: string): string[] {
+    const preferPose = fieldName === "ergonomic_pose_model_path";
+
+    const rankKind = (kind?: string) => {
+      const normalized = (kind ?? "").toLowerCase();
+      if (preferPose) {
+        return normalized === "pose" ? 0 : 1;
+      }
+      return normalized === "pose" ? 1 : 0;
+    };
+
+    const rankExt = (ext?: string) => ((ext ?? "").toLowerCase() === ".pt" ? 0 : 1);
+
+    const sorted = [...serverModelFiles].sort((a, b) => {
+      const kindDelta = rankKind(a.kind) - rankKind(b.kind);
+      if (kindDelta !== 0) return kindDelta;
+
+      const extDelta = rankExt(a.extension) - rankExt(b.extension);
+      if (extDelta !== 0) return extDelta;
+
+      const nameDelta = (a.basename ?? "").localeCompare(b.basename ?? "");
+      if (nameDelta !== 0) return nameDelta;
+
+      return (a.path ?? "").localeCompare(b.path ?? "");
+    });
+
+    return sorted.map((item) => item.path);
+  }
+
+  function getServerOcrLanguageAutocompleteOptions(): string[] {
+    const response = serverOcrLanguages;
+    if (!response) {
+      return ["eng", "ind", "eng+ind"];
+    }
+
+    const combined = [
+      ...(Array.isArray(response.recommended) ? response.recommended : []),
+      ...(Array.isArray(response.languages) ? response.languages : []),
+    ];
+    return Array.from(
+      new Set(
+        combined
+          .map((item) => String(item ?? "").trim())
+          .filter((item) => item && item.toLowerCase() !== "osd"),
+      ),
+    );
+  }
+
+  function getFieldDisplayValue(field: Field) {
+    const currentValue = data?.[field.name];
+    if (currentValue != null && currentValue !== "") {
+      return currentValue;
+    }
+
+    if (isOcrReaderNode && OCR_ADVANCED_FIELD_NAMES.has(field.name)) {
+      const profileKey = String(data?.ocr_profile ?? "general").trim() || "general";
+      const profileDefaults =
+        OCR_PRESET_FIELD_DEFAULTS[profileKey] ?? OCR_PRESET_FIELD_DEFAULTS.general;
+      if (Object.prototype.hasOwnProperty.call(profileDefaults, field.name)) {
+        return profileDefaults[field.name];
+      }
+    }
+
+    return field.defaultValue;
+  }
+
+  const renderField = (field: Field, isLoopField?: boolean) => {
+    if (isLoopField) {
+      return renderList(data, field);
+    }
+
+    const isServerModelAutocompleteField =
+      isMainVisionModelNode &&
+      (field.name === "model_path" || field.name === "ergonomic_pose_model_path");
+    const isOcrLanguageAutocompleteField =
+      isOcrReaderNode && field.name === "lang";
+
+    if (isServerModelAutocompleteField) {
+      return (
+        <ModelPathAutocomplete
+          key={field.name}
+          field={field}
+          data={data}
+          isTouchDevice={isTouchDevice}
+          isLoadingServerModelFiles={isLoadingServerModelFiles}
+          serverModelFiles={serverModelFiles}
+          getServerModelAutocompleteOptions={getServerModelAutocompleteOptions}
+          handleNodeFieldChange={handleNodeFieldChange}
+          t={t}
+        />
+      );
+    }
+
+    if (isOcrLanguageAutocompleteField) {
+      const options = getServerOcrLanguageAutocompleteOptions();
+      const basePlaceholder = field.placeholder ? String(t(field.placeholder)) : "";
+      const placeholder =
+        isLoadingServerOcrLanguages && options.length === 0
+          ? "Loading OCR languages from server..."
+          : basePlaceholder;
+      const serverCount = Number(serverOcrLanguages?.count ?? 0);
+      const hasError = !!serverOcrLanguages?.error;
+
+      return (
+        <div
+          className="nowheel nodrag nopan w-full"
+          onMouseDown={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <Autocomplete
+            className={`nowheel ${!isTouchDevice ? "nodrag" : ""}`}
+            value={String(data[field.name] ?? "")}
+            onChange={(value) => handleNodeFieldChange(field.name, value)}
+            data={options}
+            placeholder={placeholder}
+            limit={20}
+            maxDropdownHeight={240}
+            comboboxProps={{
+              withinPortal: false,
+              zIndex: 50,
+            }}
+          />
+          <p className="mt-1 px-1 text-xs text-slate-300">
+            {isLoadingServerOcrLanguages
+              ? "Loading OCR languages from server..."
+              : hasError
+                ? "Could not read server OCR languages. You can still type manually (e.g. eng+ind)."
+                : `OCR languages (server): ${serverCount} found. Suggestions available.`}
+          </p>
+        </div>
+      );
+    }
+
+    switch (field.type) {
+      case "textToDisplay":
+        return <p>{field.defaultValue}</p>;
+      case "input":
+      case "textfield":
+        return (
+          <NodeTextField
+            value={String(getFieldDisplayValue(field) ?? "")}
+            placeholder={field.placeholder ? String(t(field.placeholder)) : ""}
+            isTouchDevice={isTouchDevice}
+            onChange={(event) => {
+              handleNodeFieldChange(
+                field.name,
+                event.target.value,
+                event.target,
+              );
+            }}
+            onChangeValue={(value) => {
+              handleNodeFieldChange(field.name, value);
+            }}
+            fieldName={field?.name}
+            withEditPopup={field?.withModalEdit ?? true}
+          />
+        );
+      case "inputInt":
+      case "numericfield":
+        return (
+          <NodeTextField
+            value={String(getFieldDisplayValue(field) ?? "")}
+            placeholder={field.placeholder ? String(t(field.placeholder)) : ""}
+            isTouchDevice={isTouchDevice}
+            onChange={(event) => {
+              const value = event.target.value;
+
+              if (value === "") {
+                handleNodeFieldChange(field.name, undefined);
+                return;
+              }
+
+              const defaultValue =
+                field.defaultValue != null ? +field.defaultValue : 0;
+
+              let numericValue = isNaN(+value) ? defaultValue : +value;
+
+              if (field.min != null && numericValue < +field.min) {
+                numericValue = +field.min;
+              }
+              if (field.max != null && numericValue > +field.max) {
+                numericValue = +field.max;
+              }
+              handleNodeFieldChange(field.name, numericValue);
+            }}
+            error={isNaN(data[field.name])}
+          />
+        );
+      case "textarea":
+        return (
+          <NodeTextarea
+            key={`${id}-${field.name}`}
+            textareaRef={textareaRef}
+            field={field}
+            data={data}
+            withMinHeight
+            isTouchDevice={isTouchDevice}
+            onEventNodeDataChange={handleEventNodeDataChange}
+            onNodeDataChange={handleNodeFieldChange}
+            id={id}
+          />
+        );
+      case "select":
+        return (
+          <SelectAutocomplete
+            key={`${id}-${field.name}`}
+            onChange={(value) => handleNodeFieldChange(field.name, value)}
+            selectedValue={(getFieldDisplayValue(field) ?? "") as string}
+            values={
+              !!field.options
+                ? field.options?.map((option) => {
+                    return {
+                      name: option.label,
+                      value: option.value,
+                    };
+                  })
+                : []
+            }
+          />
+        );
+      case "option":
+        return (
+          <div className="my-1 flex w-full items-center justify-center">
+            <OptionSelector key={`${id}-${field.name}`}>
+              {field.options?.map((option) => (
+                <OptionButton
+                  key={`${id}-${option.value}`}
+                  selected={data[field.name] === option.value}
+                  onClick={() =>
+                    handleNodeFieldChange(field.name, option.value)
+                  }
+                  onTouchEnd={() =>
+                    handleNodeFieldChange(field.name, option.value)
+                  }
+                >
+                  {t(option.label)}
+                </OptionButton>
+              ))}
+            </OptionSelector>
+          </div>
+        );
+      case "inputNameBar":
+        return (
+          data.config.inputNames && (
+            <InputNameBar
+              key={`${id}-${field.name}`}
+              inputNames={data.config.inputNames}
+              textareaRef={textareaRef}
+              fieldToUpdate={field.associatedField}
+              onNameClick={(value: string) => {
+                if (!field.associatedField) return;
+                const currentValue = data[field.associatedField] ?? "";
+                handleNodeFieldChange(
+                  field.associatedField,
+                  currentValue + value,
+                );
+              }}
+              addNewInput={() => {
+                const currentInputs = data.config.inputNames ?? [];
+                const newInput = "input-" + (currentInputs.length + 1);
+                const newInputs = [...currentInputs, newInput];
+                const newConfig = {
+                  ...data.config,
+                  inputNames: newInputs,
+                };
+                handleNodeFieldChange("config", newConfig);
+              }}
+              removeInput={() => {
+                const currentInputs = data.config.inputNames ?? [];
+                if (currentInputs.length <= 2) return;
+                const newInputs = currentInputs.slice(0, -1);
+                const newConfig = {
+                  ...data.config,
+                  inputNames: newInputs,
+                };
+                handleNodeFieldChange("config", newConfig);
+              }}
+            />
+          )
+        );
+      case "slider":
+        return (
+          <div className="flex w-full flex-row items-center justify-center">
+            <p className="w-1/12 text-left text-sm text-blue-700 dark:text-blue-200">
+              {getFieldDisplayValue(field)}
+            </p>
+            <Slider
+              className="nodrag track w-11/12"
+              value={getFieldDisplayValue(field)}
+              onChange={(value) => handleNodeFieldChange(field.name, value)}
+              onChangeEnd={(value) => handleNodeFieldChange(field.name, value)}
+              styles={{
+                track: {
+                  backgroundColor: "rgba(54, 54, 54, 0.8)",
+                  borderColor: "rgba(54, 54, 54, 0.8)",
+                  height: "0.35em",
+                },
+                bar: {
+                  backgroundColor: "rgba(29, 193, 226, 0.85)",
+                },
+                thumb: {
+                  backgroundColor: "rgba(94, 209, 232, 1)",
+                  borderColor: "rgba(94, 209, 232, 1)",
+                },
+              }}
+              min={field.min}
+              max={field.max}
+              step={
+                !!field.step
+                  ? field.step
+                  : calculateStep(
+                      field.min,
+                      field.max,
+                      field.allowDecimal ?? true,
+                    )
+              }
+            />
+          </div>
+        );
+      case "switch":
+      case "boolean":
+        return (
+          <div className="flex w-full flex-row items-center">
+            <Switch
+              onChange={(e) =>
+                handleNodeFieldChange(field.name, e.currentTarget.checked)
+              }
+              checked={Boolean(getFieldDisplayValue(field))}
+              className={`nowheel ${!isTouchDevice ? "nodrag" : ""}`}
+              size="lg"
+              color="rgba(29, 193, 226, 0.95)"
+              onLabel="ON"
+              offLabel="OFF"
+            />
+          </div>
+        );
+
+      case "list":
+        return renderList(data, field);
+
+      case "dictionnary":
+        return (
+          <KeyValueInputList
+            pairs={data[field.name] ?? []}
+            onChange={(pairs: any) => handleNodeFieldChange(field.name, pairs)}
+          />
+        );
+
+      case "imageMaskCreator":
+        return (
+          <ImageMaskCreatorFieldFlowAware
+            key={`${id}-${field.name}`}
+            onChange={(value) => handleNodeFieldChange(field.name, value)}
+          />
+        );
+
+      case "fileUpload":
+        return (
+          <div className="text-md w-full">
+            <FileUploadField
+              value={data[field.name]}
+              onFileUpload={(info) => {
+                handleNodeFieldChange(field.name, info.url);
+              }}
+              onUrlSubmit={(url) => {
+                handleNodeFieldChange(field.name, url);
+              }}
+              isRenderForNode
+            />
+          </div>
+        );
+
+      default:
+        return (
+          <p>
+            {t("FieldNotSupportedInCurrentVersion")} {field.type}
+          </p>
+        );
+    }
+  };
+
+  if (!data || !data.config || !fields) {
+    return null;
+  }
+
+  return fields
+    .filter((field: Field) =>
+      !!hasParent && hasParent(id) && field.hideIfParent != null
+        ? !field.hideIfParent
+        : true,
+    )
+    .filter((field: Field) =>
+      displayParams?.specificFields
+        ? displayParams.specificFields.includes(field.name)
+        : true,
+    )
+    .filter((field: Field) => {
+      if (!field.condition) return true;
+
+      return evaluateCondition(field.condition, data);
+    })
+    .map((field: Field, index: number) => {
+      if (displayParams?.showOnlyConnectedFields && !field.isLinked) {
+        return null;
+      }
+
+      if (field.hidden) {
+        return null;
+      }
+
+      return (
+        <NodeField
+          key={`${id}-${field.name}`}
+          nodeId={id}
+          field={field}
+          label={t(field.label ?? field.name)}
+          renderField={renderField}
+          handleId={generateIdForHandle(index)}
+          displayParams={displayParams}
+          onAddNewField={
+            field.canAddChildrenFields
+              ? () => {
+                  // Get the current input names list (or empty if not set)
+                  const currentInputs = data.config.inputNames ?? [];
+                  // Find the index of the current field in the list
+                  const currentIndex = currentInputs.findIndex(
+                    (name: string) => name === field.name,
+                  );
+                  // Generate new field name: if parent's name is "file_url", new name becomes "file_url_2"
+                  let newFieldName;
+                  const match = field.name.match(/^(.*?)(?:_(\d+))?$/);
+                  if (match) {
+                    const baseName = match[1];
+                    const suffix = match[2] ? parseInt(match[2], 10) : 1;
+                    newFieldName = `${baseName}_${suffix + 1}`;
+                  } else {
+                    newFieldName = field.name + "_2";
+                  }
+                  // Insert the new field name right after the current field
+                  const newInputs = [
+                    ...currentInputs.slice(0, currentIndex + 1),
+                    newFieldName,
+                    ...currentInputs.slice(currentIndex + 1),
+                  ];
+
+                  // Update fields: disable the parent's add button and add the new child field
+                  let updatedFields = [...data.config.fields];
+                  const parentFieldIndex = updatedFields.findIndex(
+                    (f) => f.name === field.name,
+                  );
+                  if (parentFieldIndex !== -1) {
+                    // Disable parent's add button
+                    updatedFields[parentFieldIndex] = {
+                      ...updatedFields[parentFieldIndex],
+                      canAddChildrenFields: false,
+                    };
+                  }
+                  // Create new child field with its add button enabled
+                  const newChildField: Field = {
+                    ...field,
+                    name: newFieldName,
+                    isChild: true,
+                    isLinked: false,
+                    required: false,
+                    canAddChildrenFields: true,
+                  };
+                  // Insert new child field right after the parent
+                  updatedFields.splice(parentFieldIndex + 1, 0, newChildField);
+
+                  // Update config with the new input names and fields order
+                  const newConfig = {
+                    ...data.config,
+                    inputNames: newInputs,
+                    fields: updatedFields,
+                  };
+
+                  const newNodeData = {
+                    ...data,
+                    config: newConfig,
+                  };
+
+                  if (!!handleNodeDataChange) {
+                    handleNodeDataChange(newNodeData);
+                  }
+                }
+              : undefined
+          }
+          onDeleteField={
+            field.isChild && field.canAddChildrenFields
+              ? () => {
+                  // 1. Remove the deleted child's name from the inputNames list.
+                  const currentInputs = data.config.inputNames ?? [];
+                  const removeIndex = currentInputs.findIndex(
+                    (name: string) => name === field.name,
+                  );
+                  if (removeIndex === -1) return;
+
+                  let newInputs = [
+                    ...currentInputs.slice(0, removeIndex),
+                    ...currentInputs.slice(removeIndex + 1),
+                  ];
+
+                  // 2. Remove the corresponding field from the fields array.
+                  let updatedFields = [...data.config.fields];
+                  const fieldIndex = updatedFields.findIndex(
+                    (f) => f.name === field.name,
+                  );
+                  if (fieldIndex !== -1) {
+                    updatedFields.splice(fieldIndex, 1);
+                  }
+
+                  // 3. Determine the base name (e.g. "file_url") from the deleted field.
+                  const match = field.name.match(/^(.*?)(?:_(\d+))?$/);
+                  if (!match) return;
+                  const baseName = match[1];
+
+                  // 4. Identify the contiguous group in newInputs that belongs to this base name.
+                  // The parent's field should be the first one (with name exactly equal to baseName).
+                  const parentIndex = newInputs.findIndex(
+                    (name) => name === baseName,
+                  );
+                  if (parentIndex === -1) return; // nothing to do if parent is missing
+
+                  // Collect indices for fields in the group (parent and its children)
+                  let groupIndices: number[] = [];
+                  for (let i = parentIndex; i < newInputs.length; i++) {
+                    const regex = new RegExp(`^${baseName}(?:_\\d+)?$`);
+                    if (regex.test(newInputs[i])) {
+                      groupIndices.push(i);
+                    } else {
+                      break;
+                    }
+                  }
+
+                  // 5. Reassign new names sequentially in the group:
+                  // Parent remains as baseName; children become baseName_2, baseName_3, etc.
+                  newInputs = newInputs.map((name, idx) => {
+                    if (groupIndices.includes(idx)) {
+                      const pos = groupIndices.indexOf(idx);
+                      return pos === 0 ? baseName : `${baseName}_${pos + 1}`;
+                    }
+                    return name;
+                  });
+
+                  // 6. Update names in the fields array for those belonging to the group.
+                  let groupCounter = 1;
+                  updatedFields = updatedFields.map((f) => {
+                    const regexField = new RegExp(`^${baseName}(?:_\\d+)?$`);
+                    if (regexField.test(f.name)) {
+                      const newName =
+                        groupCounter === 1
+                          ? baseName
+                          : `${baseName}_${groupCounter}`;
+                      groupCounter++;
+                      return {
+                        ...f,
+                        name: newName,
+                      };
+                    }
+                    return f;
+                  });
+
+                  // 7. Update add button state: disable all in the group then enable it only on the last one.
+                  updatedFields = updatedFields.map((f) => {
+                    const regexField = new RegExp(`^${baseName}(?:_\\d+)?$`);
+                    if (regexField.test(f.name)) {
+                      return { ...f, canAddChildrenFields: false };
+                    }
+                    return f;
+                  });
+                  for (let i = updatedFields.length - 1; i >= 0; i--) {
+                    const regexField = new RegExp(`^${baseName}(?:_\\d+)?$`);
+                    if (regexField.test(updatedFields[i].name)) {
+                      updatedFields[i] = {
+                        ...updatedFields[i],
+                        canAddChildrenFields: true,
+                      };
+                      break;
+                    }
+                  }
+
+                  // 8. Update the config with the new inputNames and fields order.
+                  const newConfig = {
+                    ...data.config,
+                    inputNames: newInputs,
+                    fields: updatedFields,
+                  };
+
+                  const newNodeData = {
+                    ...data,
+                    config: newConfig,
+                  };
+
+                  if (!!handleNodeDataChange) {
+                    handleNodeDataChange(newNodeData);
+                  }
+                }
+              : undefined
+          }
+        />
+      );
+    });
+}

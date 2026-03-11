@@ -1,0 +1,56 @@
+import client from "./client";
+import { isCloudEnabled } from "../config/config";
+
+export async function getNodeExtensions() {
+  let response;
+  try {
+    response = await client.get(`/node/extensions`);
+  } catch (error) {
+    console.error("Error fetching configuration:", error);
+    throw error;
+  }
+  return response.data?.extensions;
+}
+
+export async function getDynamicConfig(processorType: string, data: any) {
+  let response;
+  const dataToSend = {
+    processorType,
+    data,
+  };
+  try {
+    response = await client.post(`/node/extensions/dynamic`, dataToSend);
+  } catch (error) {
+    console.error("Error fetching configuration:", error);
+    throw error;
+  }
+  return response.data;
+}
+
+export async function getModels(providerName: string) {
+  if (!isCloudEnabled()) {
+    throw new Error("Cloud features are disabled (VITE_APP_ENABLE_CLOUD=false).");
+  }
+  let response;
+  try {
+    response = await client.get(`/node/openapi/${providerName}/models`);
+  } catch (error) {
+    console.error("Error fetching configuration:", error);
+    throw error;
+  }
+  return response.data;
+}
+
+export async function getModelConfig(providerName: string, id: string) {
+  if (!isCloudEnabled()) {
+    throw new Error("Cloud features are disabled (VITE_APP_ENABLE_CLOUD=false).");
+  }
+  let response;
+  try {
+    response = await client.get(`/node/openapi/${providerName}/config/${id}`);
+    return response.data;
+  } catch (error) {
+    console.error("Error fetching configuration:", error);
+    throw error;
+  }
+}
