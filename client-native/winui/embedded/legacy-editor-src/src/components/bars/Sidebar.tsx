@@ -99,6 +99,36 @@ const SidebarContainer = styled.div<{ $show: boolean }>`
   transition: transform 0.2s ease-in-out;
   z-index: 60;
 
+  /* UX: Slim teal-tinted scrollbar — invisible at rest, appears on hover */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(96, 149, 165, 0.15) transparent;
+
+  &:hover {
+    scrollbar-color: rgba(96, 149, 165, 0.5) transparent;
+  }
+
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: rgba(96, 149, 165, 0.15);
+    border-radius: 4px;
+    border: none;
+  }
+
+  &:hover::-webkit-scrollbar-thumb {
+    background: rgba(96, 149, 165, 0.5);
+  }
+
+  &::-webkit-scrollbar-thumb:hover {
+    background: rgba(96, 149, 165, 0.85) !important;
+  }
+
   ${({ $show }) =>
     $show &&
     css`
@@ -116,8 +146,17 @@ const SidebarToggle = styled.div`
   background-color: #110a0e;
   border-top-left-radius: 10px;
   border-bottom-left-radius: 10px;
-  transition: opacity 0.2s ease-in-out;
+  /* UX: smooth hover feedback — tab widens slightly to signal interactivity */
+  transition:
+    width 160ms ease,
+    background-color 160ms ease;
   z-index: 61;
+  cursor: pointer;
+
+  &:hover {
+    width: 28px;
+    background-color: #1c4d5c;
+  }
 
   @media screen and (max-width: 768px) {
     display: none;

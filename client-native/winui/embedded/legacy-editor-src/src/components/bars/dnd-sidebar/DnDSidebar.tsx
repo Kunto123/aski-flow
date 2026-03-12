@@ -129,6 +129,18 @@ const DnDSidebar = ({ addNodeFromExt }: DnDSidebarProps) => {
       id="dnd-sidebar"
       className="font-sm md:font-md flex h-full min-h-full flex-col"
     >
+      {/* Sticky search bar — wired to existing searchQuery state */}
+      <div className="aski-sidebar-search-wrap">
+        <input
+          type="search"
+          className="aski-sidebar-search"
+          placeholder={t("SearchNodes") || "Search nodes…"}
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          aria-label="Search nodes"
+        />
+      </div>
+
       {sectionsToRender.map((section, index) => {
         if (!section || !section.nodes || section.nodes.length === 0) {
           return null;

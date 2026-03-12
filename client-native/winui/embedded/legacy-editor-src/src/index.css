@@ -215,6 +215,10 @@ body {
   height: 100%;
   overflow: auto;
   padding: clamp(12px, 1.5vw, 20px);
+  /* FIX: flex column so the annotate panel can fill the full viewport height
+     and scroll its list independently — other panels keep page-scroll via overflow:auto */
+  display: flex;
+  flex-direction: column;
 }
 
 .aski-ws-sidebar {
@@ -272,9 +276,16 @@ body {
 }
 
 .aski-ws-panel-annotate {
+  /* FIX: fill the flex workstation-wrap height (flex:1) so the panel is always
+     exactly viewport-tall. The panel itself NEVER scrolls (overflow:hidden) —
+     only .aski-annotate-list inside scrolls independently. */
+  flex: 1;
   min-height: 0;
   max-height: calc(100dvh - var(--aski-topbar-h) - 44px);
-  overflow: auto;
+  overflow: hidden;
+  /* Internal flex column: header (fixed) → summary (fixed) → layout (flex:1) */
+  display: flex;
+  flex-direction: column;
 }
 
 .aski-ws-panel-head {
@@ -382,8 +393,30 @@ body {
 }
 
 .aski-ws-train-toolbar {
-  grid-template-columns: 1.4fr 1.2fr repeat(5, minmax(110px, 1fr)) auto auto;
-  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.aski-ws-train-toolbar .aski-ws-train-field {
+  flex: 1 1 110px;
+  min-width: 100px;
+}
+
+.aski-ws-train-toolbar .aski-ws-train-field:first-child {
+  flex: 1.6 1 150px;
+  min-width: 140px;
+}
+
+.aski-ws-train-toolbar .aski-ws-train-field:nth-child(2) {
+  flex: 1.3 1 130px;
+  min-width: 120px;
+}
+
+.aski-ws-train-toolbar > button {
+  flex: none;
+  align-self: flex-end;
 }
 
 .aski-ws-train-field {
@@ -484,8 +517,15 @@ body {
 .aski-annotate-layout {
   display: grid;
   grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  /* FIX: explicit 1fr row forces both cells to have a concrete height equal to
+     the grid container's height (which comes from flex:1 in the panel above).
+     Without this, the implicit auto row sizes to content and neither the list
+     nor the editor gets a bounded height — making flex:1 on stage-wrap useless. */
+  grid-template-rows: 1fr;
   gap: 12px;
+  flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
 
 .aski-annotate-list {
@@ -493,7 +533,12 @@ body {
   border: 1px solid rgba(129, 187, 208, 0.25);
   background: rgba(9, 31, 41, 0.7);
   padding: 8px;
-  overflow: auto;
+  /* FIX: min-height:0 lets the grid cell shrink to the grid row height
+     (without it the cell ignores the grid constraint and expands to content).
+     overflow-y:auto now actually scrolls independently because height is bounded. */
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -547,11 +592,16 @@ body {
 }
 
 .aski-annotate-editor {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  /* FASE 2a: flex column — stage-wrap gets flex:1 to fill remaining space.
+     Grid approach was abandoned because minmax(0,1fr) requires the editor to
+     have a definite height; as a grid cell in the layout it now does (1fr row),
+     so flex column distributes that height correctly. */
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 .aski-annotate-controls {
@@ -588,8 +638,14 @@ body {
 }
 
 .aski-annotate-stage-wrap {
-  min-height: min(36vh, 420px);
-  max-height: min(62dvh, 680px);
+  /* FASE 2b: fill all remaining vertical space in the editor flex column.
+     min-height:0 allows flex:1 to shrink below natural content size.
+     container-type:size establishes a CSS Sizing Container so children can
+     use cqh/cqw units that always resolve to this element's concrete height —
+     the only way max-height on the image can reference the runtime container
+     height without a fixed vh/px value. */
+  flex: 1;
+  min-height: 120px;
   border-radius: 12px;
   border: 1px solid rgba(129, 187, 208, 0.25);
   background: rgba(9, 31, 41, 0.7);
@@ -599,6 +655,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  container-type: size;
 }
 
 .aski-annotate-stage {
@@ -609,11 +666,17 @@ body {
 }
 
 .aski-annotate-image {
+  /* FASE 2c: use CSS Container Query units so max dimensions always refer to
+     the stage-wrap's RUNTIME height, not a fixed vh/px value.
+     — max-width/max-height: calc(100cq* - 16px) subtracts the 2×8px padding.
+     — width/height: auto preserves the image's natural aspect ratio.
+     — The stage (.aski-annotate-stage) uses width:fit-content so it matches
+       the rendered image exactly — critical for annotation overlay accuracy. */
   display: block;
+  max-width: calc(100cqw - 16px);
+  max-height: calc(100cqh - 16px);
   width: auto;
   height: auto;
-  max-width: min(100%, 1200px);
-  max-height: min(56vh, 620px);
   border-radius: 8px;
 }
 
@@ -638,8 +701,10 @@ body {
 }
 
 .aski-annotate-stage-wrap.is-maximized .aski-annotate-image {
-  max-width: calc(100vw - 64px);
-  max-height: calc(100vh - 96px);
+  /* Maximized modal: padding is 44px top + 10px bottom + 10px L/R.
+     Subtract total padding so image fills the modal's content area. */
+  max-width: calc(100cqw - 20px);
+  max-height: calc(100cqh - 54px);
 }
 
 .aski-annotate-maximize-close {
@@ -733,23 +798,33 @@ body {
   padding: 8px;
 }
 
+/* FASE 3: Classes panel — horizontal layout so textarea and "Save Classes"
+   button sit side-by-side. The label spans the full row above them.
+   This reduces the panel's vertical footprint and improves visual grouping. */
 .aski-annotate-classes {
   border-radius: 12px;
   border: 1px solid rgba(129, 187, 208, 0.25);
   background: rgba(9, 31, 41, 0.7);
   padding: 10px;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-start;
   gap: 8px;
 }
 
 .aski-annotate-classes label {
+  width: 100%;
   font-size: 12px;
   color: #c5dbe4;
 }
 
 .aski-annotate-classes textarea {
-  min-height: 80px;
+  flex: 1;
+  min-width: 160px;
+  /* Reduced from 80px → 56px to give more vertical space to the image area.
+     Still resizable vertically if the user needs to see more class names. */
+  min-height: 56px;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: rgba(11, 30, 40, 0.92);
@@ -760,14 +835,21 @@ body {
 }
 
 .aski-annotate-classes button {
-  width: fit-content;
+  align-self: flex-end;
+  white-space: nowrap;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.1);
-  color: #f2fbff;
+  border: 1px solid rgba(129, 187, 208, 0.35);
+  background: rgba(30, 100, 125, 0.45);
+  color: #d4effa;
   font-size: 12px;
-  padding: 6px 12px;
+  padding: 6px 14px;
   cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.aski-annotate-classes button:hover {
+  background: rgba(40, 130, 160, 0.6);
+  border-color: rgba(129, 187, 208, 0.6);
 }
 
 .aski-ws-dataset-board {
@@ -916,13 +998,18 @@ body {
 .aski-ws-models-table-wrap {
   border-radius: 12px;
   border: 1px solid rgba(129, 187, 208, 0.25);
-  overflow: hidden;
+  overflow-x: hidden;
+  /* FIX: vertical scroll so long model lists don't push the page down */
+  overflow-y: auto;
+  max-height: clamp(240px, 44vh, 520px);
 }
 
 .aski-ws-train-table-wrap {
   max-width: 100%;
   overflow-x: auto;
-  overflow-y: hidden;
+  /* FIX: vertical scroll so long job lists don't push the whole page down */
+  overflow-y: auto;
+  max-height: clamp(240px, 44vh, 520px);
 }
 
 .aski-ws-models-table {
@@ -1085,9 +1172,11 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 6px;
+  padding: 4px 6px 6px;
   color: #c9e4ef;
   font-size: 13px;
+  border-bottom: 1px solid rgba(129, 187, 208, 0.18);
+  margin-bottom: 2px;
 }
 
 .aski-ws-aug-grid {
@@ -1097,10 +1186,11 @@ body {
 }
 
 .aski-ws-aug-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 3px;
-  padding: 10px 12px;
+  padding: 10px 36px 10px 12px;
   border-radius: 10px;
   border: 1px solid rgba(129, 187, 208, 0.2);
   background: rgba(17, 53, 68, 0.46);
@@ -1119,8 +1209,14 @@ body {
 }
 
 .aski-ws-aug-card input[type="checkbox"] {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 15px;
+  height: 15px;
   accent-color: #4ecdc4;
-  margin-right: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
 .aski-ws-aug-card-label {
@@ -1136,6 +1232,82 @@ body {
   color: rgba(180, 215, 228, 0.7);
   font-size: 11px;
   line-height: 1.3;
+}
+
+.aski-ws-aug-progress {
+  position: relative;
+  height: 16px;
+  min-width: 72px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.aski-ws-aug-progress-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(90deg, #1d8fa0 0%, #4ecdc4 100%);
+  border-radius: 8px;
+  transition: width 0.3s ease;
+}
+
+.aski-ws-aug-progress-label {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-size: 11px;
+  font-weight: 600;
+  color: #e8f8f8;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+/* Primary action button (Start Train / Start Augment) */
+.aski-ws-primary-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 8px;
+  border: 1px solid rgba(78, 205, 196, 0.5);
+  background: linear-gradient(135deg, rgba(29, 143, 160, 0.8) 0%, rgba(18, 90, 112, 0.9) 100%);
+  color: #e8f9fc;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 16px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  white-space: nowrap;
+}
+
+.aski-ws-primary-btn:hover {
+  background: linear-gradient(135deg, rgba(38, 165, 185, 0.9) 0%, rgba(24, 110, 138, 0.95) 100%);
+  border-color: rgba(78, 205, 196, 0.75);
+  box-shadow: 0 0 0 2px rgba(78, 205, 196, 0.2);
+}
+
+.aski-ws-primary-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* Jobs section sub-header */
+.aski-ws-jobs-subheader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(129, 187, 208, 0.22);
+  color: #a8cfe0;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .aski-ws-danger-btn {
@@ -1212,6 +1384,17 @@ body {
   font-weight: 800;
   text-decoration: underline;
   text-underline-offset: 6px;
+  /* UX: Sticky header — section label stays visible while scrolling node list */
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  /* Semi-opaque bg matching sidebar gradient so content doesn't bleed through */
+  background: rgba(28, 77, 92, 0.92);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  padding-top: 5px;
+  padding-bottom: 5px;
+  border-radius: 4px;
 }
 
 .aski-pill-node {
@@ -1302,21 +1485,37 @@ body {
 }
 
 @media (max-width: 980px) {
+  /* On small screens, revert the fixed-layout architecture back to natural
+     page-scroll. A single-column stacked view is easier to use on mobile. */
   .aski-ws-panel-annotate {
+    flex: none;
     max-height: none;
     overflow: visible;
+    display: block;
   }
 
   .aski-annotate-layout {
+    flex: none;
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;   /* revert 1fr row back to auto on mobile */
+    overflow: visible;
   }
 
   .aski-annotate-list {
+    min-height: initial;
     max-height: 220px;
+    overflow-y: auto;
+  }
+
+  .aski-annotate-editor {
+    overflow: visible;
   }
 
   .aski-annotate-stage-wrap {
-    max-height: none;
+    /* Revert to a fixed-height stage on mobile — natural page scroll takes over */
+    flex: none;
+    min-height: min(45vw, 300px);
+    container-type: inline-size;   /* only inline (width) queries on mobile */
   }
 
   .aski-ws-annotate-toolbar {
@@ -1325,6 +1524,12 @@ body {
 
   .aski-annotate-help {
     display: none;
+  }
+
+  /* Also relax table heights on small screens */
+  .aski-ws-train-table-wrap,
+  .aski-ws-models-table-wrap {
+    max-height: none;
   }
 }
 
@@ -1413,6 +1618,210 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background-color: var(--scrollbar-thumb-hover-color);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   UX: Left sidebar — slim, ghost scrollbar that appears only on hover.
+   Replaces the browser default scrollbar with a dark-app–friendly thin bar.
+   ───────────────────────────────────────────────────────────────────────── */
+.aski-sidebar {
+  scrollbar-width: thin;
+  /* Firefox: hidden by default, visible on hover via JS-impossible trick —
+     we just set a very subtle color so it's always barely there */
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+.aski-sidebar:hover {
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+
+.aski-sidebar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.aski-sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.aski-sidebar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  border: none;
+}
+
+.aski-sidebar:hover::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.aski-sidebar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.5) !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   UX: Right properties panel — slim teal-tinted scrollbar on hover.
+   ───────────────────────────────────────────────────────────────────────── */
+.aski-rightpanel {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(96, 149, 165, 0.2) transparent;
+}
+
+.aski-rightpanel:hover {
+  scrollbar-color: rgba(96, 149, 165, 0.5) transparent;
+}
+
+.aski-rightpanel::-webkit-scrollbar {
+  width: 4px;
+}
+
+.aski-rightpanel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.aski-rightpanel::-webkit-scrollbar-thumb {
+  background: rgba(96, 149, 165, 0.2);
+  border-radius: 4px;
+  border: none;
+}
+
+.aski-rightpanel:hover::-webkit-scrollbar-thumb {
+  background: rgba(96, 149, 165, 0.5);
+}
+
+.aski-rightpanel::-webkit-scrollbar-thumb:hover {
+  background: rgba(96, 149, 165, 0.85) !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   UX: Sidebar search input — sticky at top of left sidebar node library.
+   ───────────────────────────────────────────────────────────────────────── */
+.aski-sidebar-search-wrap {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  padding-bottom: 8px;
+  /* Match sidebar background so content behind doesn't bleed through */
+  background: linear-gradient(
+    to bottom,
+    rgba(36, 95, 112, 1) 80%,
+    rgba(36, 95, 112, 0) 100%
+  );
+  margin: 0 calc(-1 * var(--aski-gap));
+  padding-left: var(--aski-gap);
+  padding-right: var(--aski-gap);
+  padding-top: 2px;
+}
+
+.aski-sidebar-search {
+  width: 100%;
+  height: 32px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 12px;
+  padding: 0 10px 0 28px;
+  outline: none;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.45)' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: 8px center;
+}
+
+.aski-sidebar-search::placeholder {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.aski-sidebar-search:focus {
+  background-color: rgba(255, 255, 255, 0.12);
+  border-color: rgba(96, 149, 165, 0.6);
+  box-shadow: 0 0 0 2px rgba(96, 149, 165, 0.2);
+}
+
+/* Hide the native ✕ button added by Chrome/Edge for type="search" */
+.aski-sidebar-search::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   UX: Annotate image list — slim dark scrollbar, cyan-tinted on hover.
+   6px wide (readable but unobtrusive), barely visible at rest.
+   ───────────────────────────────────────────────────────────────────────── */
+.aski-annotate-list {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(130, 206, 234, 0.15) transparent;
+}
+
+.aski-annotate-list:hover {
+  scrollbar-color: rgba(130, 206, 234, 0.45) transparent;
+}
+
+.aski-annotate-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.aski-annotate-list::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 4px;
+}
+
+.aski-annotate-list::-webkit-scrollbar-thumb {
+  background: rgba(130, 206, 234, 0.15);
+  border-radius: 4px;
+  border: none;
+}
+
+.aski-annotate-list:hover::-webkit-scrollbar-thumb {
+  background: rgba(130, 206, 234, 0.45);
+}
+
+.aski-annotate-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(130, 206, 234, 0.75) !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   UX: Train jobs table & Models table — slim dark scrollbar.
+   ───────────────────────────────────────────────────────────────────────── */
+.aski-ws-train-table-wrap,
+.aski-ws-models-table-wrap {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(96, 149, 165, 0.2) transparent;
+}
+
+.aski-ws-train-table-wrap:hover,
+.aski-ws-models-table-wrap:hover {
+  scrollbar-color: rgba(96, 149, 165, 0.5) transparent;
+}
+
+.aski-ws-train-table-wrap::-webkit-scrollbar,
+.aski-ws-models-table-wrap::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.aski-ws-train-table-wrap::-webkit-scrollbar-track,
+.aski-ws-models-table-wrap::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.aski-ws-train-table-wrap::-webkit-scrollbar-thumb,
+.aski-ws-models-table-wrap::-webkit-scrollbar-thumb {
+  background: rgba(96, 149, 165, 0.2);
+  border-radius: 4px;
+  border: none;
+}
+
+.aski-ws-train-table-wrap:hover::-webkit-scrollbar-thumb,
+.aski-ws-models-table-wrap:hover::-webkit-scrollbar-thumb {
+  background: rgba(96, 149, 165, 0.5);
+}
+
+.aski-ws-train-table-wrap::-webkit-scrollbar-thumb:hover,
+.aski-ws-models-table-wrap::-webkit-scrollbar-thumb:hover {
+  background: rgba(96, 149, 165, 0.85) !important;
 }
 
 .custom-handle.react-flow__handle {

@@ -1122,6 +1122,11 @@ function TrainPanel({
     [datasets, selectedDatasetId],
   );
 
+  const datasetNameMap = useMemo(
+    () => Object.fromEntries(datasets.map((d) => [d.id, d.name || d.folder_name || d.id])),
+    [datasets],
+  );
+
   const runningJobs = useMemo(
     () =>
       jobs.filter(
@@ -1432,6 +1437,7 @@ function TrainPanel({
           </label>
           <button
             type="button"
+            className="aski-ws-primary-btn"
             onClick={handleStartTraining}
             disabled={isSubmitting || isLoading || !datasets.length}
           >
@@ -1467,6 +1473,7 @@ function TrainPanel({
         <div className="aski-ws-upload-feedback">{feedbackMessage}</div>
       )}
 
+      <div className="aski-ws-jobs-subheader">Training Jobs</div>
       <div className="aski-ws-models-table-wrap aski-ws-train-table-wrap">
         <table className="aski-ws-models-table aski-ws-train-table">
           <thead>
@@ -1496,7 +1503,7 @@ function TrainPanel({
                   }
                 >
                   <td>{job.id}</td>
-                  <td>{job.dataset_id}</td>
+                  <td title={job.dataset_id}>{datasetNameMap[job.dataset_id] || job.dataset_id}</td>
                   <td>{job.architecture_variant || "-"}</td>
                   <td className={`aski-ws-train-status ${job.status}`}>
                     {job.status}
@@ -2434,6 +2441,11 @@ function AugmentPanel({
     [datasets, selectedDatasetId],
   );
 
+  const datasetNameMap = useMemo(
+    () => Object.fromEntries(datasets.map((d) => [d.id, d.name || d.folder_name || d.id])),
+    [datasets],
+  );
+
   const runningJobs = useMemo(
     () => jobs.filter((j) => j.status === "queued" || j.status === "running" || j.status === "canceling").length,
     [jobs],
@@ -2614,6 +2626,7 @@ function AugmentPanel({
           </label>
           <button
             type="button"
+            className="aski-ws-primary-btn"
             onClick={handleStartAugment}
             disabled={isSubmitting || isLoading || !datasets.length || selectedTechniques.size === 0}
           >
@@ -2697,6 +2710,7 @@ function AugmentPanel({
       </div>
 
       {/* Jobs table */}
+      <div className="aski-ws-jobs-subheader">Augmentation Jobs</div>
       <div className="aski-ws-models-table-wrap aski-ws-train-table-wrap">
         <table className="aski-ws-models-table aski-ws-train-table">
           <thead>
@@ -2719,10 +2733,12 @@ function AugmentPanel({
             ) : (
               jobs.map((job) => {
                 const pct = job.total > 0 ? Math.round((job.progress / job.total) * 100) : 0;
+                const isActive = job.status === "running" || job.status === "canceling";
+                const displayPct = isActive ? pct : job.status === "completed" ? 100 : null;
                 return (
                   <tr key={job.id}>
                     <td>{job.id}</td>
-                    <td>{job.dataset_id}</td>
+                    <td title={job.dataset_id}>{datasetNameMap[job.dataset_id] || job.dataset_id}</td>
                     <td className="aski-ws-model-path-cell" title={job.techniques.join(", ")}>
                       {job.techniques.length} technique(s)
                     </td>
@@ -2730,7 +2746,15 @@ function AugmentPanel({
                       {job.status}
                     </td>
                     <td>
-                      {job.status === "running" ? `${pct}%` : job.status === "completed" ? "100%" : "-"}
+                      {displayPct !== null ? (
+                        <div className="aski-ws-aug-progress">
+                          <div
+                            className="aski-ws-aug-progress-bar"
+                            style={{ width: `${displayPct}%` }}
+                          />
+                          <span className="aski-ws-aug-progress-label">{displayPct}%</span>
+                        </div>
+                      ) : "-"}
                     </td>
                     <td>{job.generated || 0}</td>
                     <td>{job.errors || 0}</td>

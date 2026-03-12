@@ -624,6 +624,16 @@ const Flow = forwardRef((props: FlowProps, ref) => {
             minZoom={0.2}
             maxZoom={1.5}
             onLoad={props.onLoaded}
+            // UX: enable middle-mouse (button 1) and right-mouse (button 2) drag to pan.
+            // Left-mouse drag (button 0) on empty canvas continues to pan by default.
+            panOnDrag={[0, 1, 2]}
+            // UX: Spacebar activates pan mode — hold Space + drag to pan from anywhere.
+            panActivationKeyCode="Space"
+            // UX: Scroll wheel zooms centered on the cursor (ReactFlow default).
+            // zoomOnScroll is already true by default; explicit here for clarity.
+            zoomOnScroll={true}
+            // UX: Prevent accidental zoom while panning with two fingers on trackpad.
+            zoomActivationKeyCode="Meta"
           >
             {minimap.isVisible && (
               <MiniMapStyled
