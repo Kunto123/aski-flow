@@ -43,6 +43,10 @@ jwcrypto>=1.5.0
 python-jose>=3.3.0
 openapi-spec-validator>=0.7.1
 
+# Auth – SQL Server + password hashing (required for login/role system)
+pyodbc>=5.0.0
+bcrypt>=4.0.0
+
 # Cloud model SDKs (will only be used if you add those nodes)
 openai==1.76.0
 anthropic==0.49.0

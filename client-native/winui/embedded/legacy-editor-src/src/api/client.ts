@@ -43,4 +43,26 @@ const apiClient = axios.create({
   },
 });
 
+// Sisipkan JWT token ke setiap request jika tersedia
+apiClient.interceptors.request.use((config) => {
+  const token = localStorage.getItem("aski_auth_token");
+  if (token) {
+    config.headers = config.headers ?? {};
+    config.headers["Authorization"] = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// Jika server mengembalikan 401, hapus token dan reload agar LoginPage muncul
+apiClient.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    if (err?.response?.status === 401) {
+      localStorage.removeItem("aski_auth_token");
+      window.location.reload();
+    }
+    return Promise.reject(err);
+  },
+);
+
 export default apiClient;

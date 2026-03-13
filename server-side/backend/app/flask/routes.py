@@ -13,6 +13,12 @@ from app.storage.db import init_db
 
 init_db()
 
+# Auth blueprint (SQL Server) – selalu didaftarkan
+from .app_routes.auth_routes import auth_blueprint
+
+flask_app.register_blueprint(auth_blueprint)
+flask_app.register_blueprint(auth_blueprint, url_prefix="/v1", name="v1_auth_blueprint")
+
 
 @flask_app.route("/healthcheck", methods=["GET"])
 def healthcheck():

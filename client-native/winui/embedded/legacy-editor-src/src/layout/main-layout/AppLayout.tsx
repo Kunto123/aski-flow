@@ -3,6 +3,8 @@ import Flow from "../../components/Flow";
 import { Node, Edge } from "reactflow";
 import { useTranslation } from "react-i18next";
 import { FaPlus } from "react-icons/fa";
+import { useAuth } from "../../providers/AuthProvider";
+import PermissionsManager from "../../components/auth/PermissionsManager";
 import {
   convertFlowToJson,
   formatFlow,
@@ -82,7 +84,9 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
     useState<WorkstationSection>("annotate");
   const [selectedEdgeType, setSelectedEdgeType] = useState("default");
   const [isTabletOrMobile, setIsTabletOrMobile] = useState(false);
-  const useAuth = import.meta.env.VITE_APP_USE_AUTH === "true";
+  const { user, isAdmin, hasPermission, logout } = useAuth();
+  const [showPermManager, setShowPermManager] = useState(false);
+  const canEditCanvas = isAdmin || hasPermission("canvas.edit_flow");
   const { getElement } = useVisibility();
   const [loading, startLoadingWith] = useLoading();
   const configPopup = getElement("configPopup");
@@ -336,6 +340,33 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
     <div
       className={`aski-app ${isSidebarOpen ? "" : "sidebar-collapsed"} ${activeTopTab === "workstation" ? "is-workstation" : ""}`}
     >
+      {/* Baris info user + tombol logout (selalu tampil di atas) */}
+      <div className="aski-user-bar">
+        <span className="aski-user-bar-info">
+          <span className={`aski-role-badge ${user?.role ?? ""}`}>
+            {user?.role === "admin" ? "Admin" : "Operator"}
+          </span>
+          {user?.username}
+        </span>
+        <div className="aski-user-bar-actions">
+          {isAdmin && (
+            <button
+              className="aski-user-bar-btn"
+              onClick={() => setShowPermManager(true)}
+            >
+              Permissions
+            </button>
+          )}
+          <button className="aski-user-bar-btn danger" onClick={logout}>
+            Logout
+          </button>
+        </div>
+      </div>
+
+      {/* Modal Permissions Manager */}
+      {showPermManager && (
+        <PermissionsManager onClose={() => setShowPermManager(false)} />
+      )}
       <TabHeader
         onToggleSidebar={handleToggleSidebar}
         activeTopTab={activeTopTab}
@@ -388,13 +419,15 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
                     }
                   />
                 ))}
-                <button
-                  onClick={addNewFlowTab}
-                  className="aski-add-tab ml-1"
-                  aria-label="Add flow tab"
-                >
-                  <FaPlus />
-                </button>
+                {canEditCanvas && (
+                  <button
+                    onClick={addNewFlowTab}
+                    className="aski-add-tab ml-1"
+                    aria-label="Add flow tab"
+                  >
+                    <FaPlus />
+                  </button>
+                )}
               </div>
               <div className="ml-3 flex items-center">
                 <ButtonRunAll
@@ -404,7 +437,7 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
               </div>
             </div>
 
-            <div className="aski-canvas-body">
+            <div className={`aski-canvas-body${canEditCanvas ? "" : " canvas-readonly"}`}>
               <FlowDataProvider
                 flowTab={flowTabs.tabs[currentTab]}
                 onFlowChange={handleFlowChange}

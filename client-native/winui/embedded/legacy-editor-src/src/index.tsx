@@ -8,6 +8,7 @@ import { createTheme, MantineProvider } from "@mantine/core";
 import "react-toastify/dist/ReactToastify.css";
 import reportWebVitals from "./reportWebVitals";
 import { ThemeProvider } from "./providers/ThemeProvider";
+import { AuthProvider } from "./providers/AuthProvider";
 import { GlobalStyle } from "./components/nodes/Node.styles";
 import { Fallback } from "./components/tools/Fallback";
 import "./i18n";
@@ -25,10 +26,12 @@ root.render(
     <GlobalStyle />
     <MantineProvider theme={theme} forceColorScheme="dark">
       <ThemeProvider>
-        <Suspense fallback={<Fallback />}>
-          <ToastContainer />
-          <Main />
-        </Suspense>
+        <AuthProvider>
+          <Suspense fallback={<Fallback />}>
+            <ToastContainer />
+            <Main />
+          </Suspense>
+        </AuthProvider>
       </ThemeProvider>
     </MantineProvider>
   </>,

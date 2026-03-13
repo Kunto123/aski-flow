@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAuth } from "../../../providers/AuthProvider";
 import {
   FiDatabase,
   FiEdit3,
@@ -179,6 +180,8 @@ function AnnotatePanel({
   errorMessage,
   onRefresh,
 }: AnnotatePanelProps) {
+  const { isAdmin, hasPermission } = useAuth();
+  const canAnnotate = isAdmin || hasPermission("workstation.annotate");
   const [selectedDatasetId, setSelectedDatasetId] = useState("");
   const [statusFilter, setStatusFilter] = useState<AnnotationStatusFilter>("all");
   const [images, setImages] = useState<AnnotateImageItem[]>([]);
@@ -1004,7 +1007,7 @@ function AnnotatePanel({
               type="button"
               className="aski-ws-ghost-btn"
               onClick={handleSaveLabels}
-              disabled={isSavingLabels || !selectedImageName || isLabelsLoading}
+              disabled={!canAnnotate || isSavingLabels || !selectedImageName || isLabelsLoading}
             >
               {isSavingLabels ? "Saving..." : "Save Labels"}
             </button>
@@ -1097,6 +1100,8 @@ function TrainPanel({
   errorMessage,
   onRefresh,
 }: TrainPanelProps) {
+  const { isAdmin, hasPermission } = useAuth();
+  const canTrain = isAdmin || hasPermission("workstation.train");
   const [architectures, setArchitectures] = useState<TrainingArchitectureItem[]>(
     DEFAULT_FALLBACK_ARCHITECTURES,
   );
@@ -1439,7 +1444,7 @@ function TrainPanel({
             type="button"
             className="aski-ws-primary-btn"
             onClick={handleStartTraining}
-            disabled={isSubmitting || isLoading || !datasets.length}
+            disabled={!canTrain || isSubmitting || isLoading || !datasets.length}
           >
             {isSubmitting ? "Starting..." : "Start Train"}
           </button>
@@ -1588,6 +1593,8 @@ function DatasetPanel({
   errorMessage,
   onRefresh,
 }: DatasetPanelProps) {
+  const { isAdmin, hasPermission } = useAuth();
+  const canManageDatasets = isAdmin || hasPermission("workstation.manage_datasets");
   const hasDatasets = datasets.length > 0;
   const [selectedDatasetId, setSelectedDatasetId] = useState("");
   const [selectedTarget, setSelectedTarget] =
@@ -1825,7 +1832,7 @@ function DatasetPanel({
             onClick={() => {
               void handleDeleteSelectedFiles();
             }}
-            disabled={isBusy || selectedFileKeys.length === 0}
+            disabled={!canManageDatasets || isBusy || selectedFileKeys.length === 0}
           >
             <FiTrash2 /> {isDeletingFiles ? "Deleting Files..." : `Delete Selected (${selectedFileKeys.length})`}
           </button>
@@ -1943,6 +1950,8 @@ function UploadDataPanel({
   errorMessage,
   onRefresh,
 }: UploadDataPanelProps) {
+  const { isAdmin, hasPermission } = useAuth();
+  const canUpload = isAdmin || hasPermission("workstation.upload_data");
   const [newDatasetName, setNewDatasetName] = useState("");
   const [selectedDatasetId, setSelectedDatasetId] = useState("");
   const [uploadKind, setUploadKind] = useState<DatasetUploadKind>("image");
@@ -2063,7 +2072,7 @@ function UploadDataPanel({
           <button
             type="button"
             onClick={handleCreateDataset}
-            disabled={isCreating}
+            disabled={!canUpload || isCreating}
           >
             {isCreating ? "Creating..." : "Buat Folder Dataset"}
           </button>
@@ -2111,7 +2120,7 @@ function UploadDataPanel({
           <button
             type="button"
             onClick={handleUpload}
-            disabled={isUploading || !selectedDatasetId}
+            disabled={!canUpload || isUploading || !selectedDatasetId}
           >
             {isUploading ? "Uploading..." : "Upload ke Dataset"}
           </button>
@@ -2143,6 +2152,8 @@ function UploadDataPanel({
 }
 
 function ModelsPanel() {
+  const { isAdmin, hasPermission } = useAuth();
+  const canManageModels = isAdmin || hasPermission("workstation.manage_models");
   const [models, setModels] = useState<ServerModelFile[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -2294,7 +2305,7 @@ function ModelsPanel() {
             <button
               type="button"
               onClick={handleUploadModels}
-              disabled={isUploading}
+              disabled={!canManageModels || isUploading}
             >
               {isUploading ? "Uploading..." : "Add Models"}
             </button>
@@ -2387,7 +2398,7 @@ function ModelsPanel() {
                       onClick={() => {
                         void handleDeleteModel(model);
                       }}
-                      disabled={isBusy}
+                      disabled={!canManageModels || isBusy}
                     >
                       <FiTrash2 /> Delete
                     </button>
@@ -2426,6 +2437,8 @@ function AugmentPanel({
   errorMessage,
   onRefresh,
 }: AugmentPanelProps) {
+  const { isAdmin, hasPermission } = useAuth();
+  const canAugment = isAdmin || hasPermission("workstation.augment");
   const [techniques, setTechniques] = useState<AugmentationTechnique[]>([]);
   const [selectedDatasetId, setSelectedDatasetId] = useState("");
   const [selectedTechniques, setSelectedTechniques] = useState<Set<string>>(new Set());
@@ -2628,7 +2641,7 @@ function AugmentPanel({
             type="button"
             className="aski-ws-primary-btn"
             onClick={handleStartAugment}
-            disabled={isSubmitting || isLoading || !datasets.length || selectedTechniques.size === 0}
+            disabled={!canAugment || isSubmitting || isLoading || !datasets.length || selectedTechniques.size === 0}
           >
             {isSubmitting ? "Processing..." : "Start Augment"}
           </button>

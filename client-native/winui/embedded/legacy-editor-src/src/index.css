@@ -1234,6 +1234,448 @@ body {
   line-height: 1.3;
 }
 
+/* ============================================================
+   AUTH – Login Page
+   ============================================================ */
+.aski-login-bg {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #060f14 0%, #0b1e2a 60%, #0d2534 100%);
+  z-index: 9999;
+}
+.aski-login-card {
+  width: 360px;
+  background: rgba(11, 30, 42, 0.95);
+  border: 1px solid rgba(129, 187, 208, 0.2);
+  border-radius: 16px;
+  padding: 36px 32px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+.aski-login-header {
+  text-align: center;
+  margin-bottom: 4px;
+}
+.aski-login-logo {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 4px;
+  color: #e03333;
+}
+.aski-login-subtitle {
+  font-size: 12px;
+  color: #5a8fa6;
+  margin-top: 4px;
+  letter-spacing: 1px;
+}
+.aski-login-error {
+  background: rgba(220, 50, 50, 0.12);
+  border: 1px solid rgba(220, 50, 50, 0.35);
+  color: #f08080;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+.aski-login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.aski-login-field label {
+  font-size: 12px;
+  color: #7ab4c8;
+  font-weight: 500;
+}
+.aski-login-field input {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(129, 187, 208, 0.22);
+  border-radius: 8px;
+  color: #e8f4fa;
+  font-size: 14px;
+  padding: 10px 12px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.aski-login-field input:focus {
+  border-color: rgba(129, 187, 208, 0.55);
+}
+.aski-login-field input::placeholder {
+  color: #3a6070;
+}
+.aski-login-btn {
+  background: linear-gradient(90deg, #1a7a90 0%, #23a0ba 100%);
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 11px;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+  margin-top: 4px;
+}
+.aski-login-btn:hover:not(:disabled) {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+.aski-login-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ============================================================
+   AUTH – User Bar (top strip shown when logged in)
+   ============================================================ */
+.aski-user-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 4px 14px;
+  background: rgba(6, 18, 26, 0.85);
+  border-bottom: 1px solid rgba(129, 187, 208, 0.1);
+  font-size: 12px;
+  color: #7ab4c8;
+  height: 34px;
+  flex-shrink: 0;
+  z-index: 200;
+}
+.aski-user-bar-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: auto;
+}
+.aski-user-bar-actions {
+  display: flex;
+  gap: 8px;
+}
+.aski-user-bar-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(129, 187, 208, 0.2);
+  border-radius: 6px;
+  color: #9ecfdf;
+  font-size: 11px;
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.aski-user-bar-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(129, 187, 208, 0.4);
+}
+.aski-user-bar-btn.danger {
+  border-color: rgba(220, 60, 60, 0.3);
+  color: #f09090;
+}
+.aski-user-bar-btn.danger:hover {
+  background: rgba(220, 60, 60, 0.12);
+  border-color: rgba(220, 60, 60, 0.55);
+}
+
+/* ============================================================
+   AUTH – Role Badge
+   ============================================================ */
+.aski-role-badge {
+  display: inline-block;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.aski-role-badge.admin {
+  background: rgba(220, 60, 60, 0.18);
+  color: #f09090;
+  border: 1px solid rgba(220, 60, 60, 0.35);
+}
+.aski-role-badge.operator {
+  background: rgba(30, 130, 160, 0.18);
+  color: #7acfe8;
+  border: 1px solid rgba(30, 130, 160, 0.35);
+}
+
+/* ============================================================
+   AUTH – Canvas Read-Only overlay
+   ============================================================ */
+.aski-canvas-body.canvas-readonly .react-flow__node {
+  pointer-events: none;
+  cursor: default;
+}
+.aski-canvas-body.canvas-readonly .react-flow__handle {
+  display: none;
+}
+.aski-canvas-body.canvas-readonly .react-flow__edge-path {
+  pointer-events: none;
+}
+.aski-canvas-body.canvas-readonly::after {
+  content: "Read-only  ·  Operator tidak memiliki izin edit canvas";
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(10, 28, 40, 0.82);
+  border: 1px solid rgba(129, 187, 208, 0.2);
+  border-radius: 20px;
+  color: #5a8fa6;
+  font-size: 11px;
+  padding: 5px 16px;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 10;
+}
+
+/* ============================================================
+   AUTH – Permissions Manager Modal
+   ============================================================ */
+.aski-perm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+.aski-perm-modal {
+  width: min(680px, 94vw);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  background: rgba(9, 24, 34, 0.98);
+  border: 1px solid rgba(129, 187, 208, 0.22);
+  border-radius: 16px;
+  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+.aski-perm-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px 14px;
+  border-bottom: 1px solid rgba(129, 187, 208, 0.1);
+}
+.aski-perm-modal-header h2 {
+  font-size: 16px;
+  font-weight: 700;
+  color: #c8e8f5;
+  margin: 0;
+}
+.aski-perm-close {
+  background: none;
+  border: none;
+  color: #5a8fa6;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 6px;
+  line-height: 1;
+  transition: color 0.15s, background 0.15s;
+}
+.aski-perm-close:hover {
+  color: #f08080;
+  background: rgba(220, 60, 60, 0.1);
+}
+.aski-perm-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 10px 22px 0;
+  border-bottom: 1px solid rgba(129, 187, 208, 0.1);
+}
+.aski-perm-tabs button {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #5a8fa6;
+  font-size: 13px;
+  padding: 6px 14px 10px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.aski-perm-tabs button.active {
+  color: #9ecfdf;
+  border-bottom-color: #23a0ba;
+}
+.aski-perm-tabs button:hover:not(.active) {
+  color: #7ab4c8;
+}
+.aski-perm-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.aski-perm-desc {
+  font-size: 12px;
+  color: #5a8fa6;
+  margin: 0;
+}
+.aski-perm-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.aski-perm-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(129, 187, 208, 0.1);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+.aski-perm-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.aski-perm-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #c8e8f5;
+}
+.aski-perm-desc-small {
+  font-size: 11px;
+  color: #456070;
+}
+.aski-perm-toggle {
+  min-width: 52px;
+  border-radius: 20px;
+  border: 1px solid;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  letter-spacing: 0.5px;
+}
+.aski-perm-toggle.on {
+  background: rgba(30, 160, 80, 0.18);
+  border-color: rgba(30, 160, 80, 0.4);
+  color: #6de0a0;
+}
+.aski-perm-toggle.off {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #486070;
+}
+.aski-perm-toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.aski-perm-toggle.sm {
+  min-width: 68px;
+  font-size: 10px;
+  padding: 3px 8px;
+}
+.aski-perm-loading {
+  color: #5a8fa6;
+  font-size: 13px;
+}
+/* Create user form */
+.aski-perm-create {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(129, 187, 208, 0.1);
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.aski-perm-create h3,
+.aski-perm-body > h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: #9ecfdf;
+  margin: 0;
+}
+.aski-perm-create-error {
+  background: rgba(220, 50, 50, 0.1);
+  border: 1px solid rgba(220, 50, 50, 0.3);
+  color: #f08080;
+  border-radius: 7px;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+.aski-perm-create-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.aski-perm-create-row input,
+.aski-perm-create-row select {
+  flex: 1;
+  min-width: 120px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(129, 187, 208, 0.2);
+  border-radius: 7px;
+  color: #c8e8f5;
+  font-size: 12px;
+  padding: 7px 10px;
+  outline: none;
+}
+.aski-perm-create-row select option {
+  background: #0b1e2a;
+}
+.aski-perm-create-btn {
+  background: rgba(30, 100, 125, 0.45);
+  border: 1px solid rgba(129, 187, 208, 0.3);
+  border-radius: 7px;
+  color: #9ecfdf;
+  font-size: 12px;
+  padding: 7px 16px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.aski-perm-create-btn:hover:not(:disabled) {
+  background: rgba(30, 130, 160, 0.5);
+}
+.aski-perm-create-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+/* Users table */
+.aski-perm-user-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.aski-perm-user-table th {
+  text-align: left;
+  padding: 6px 10px;
+  color: #5a8fa6;
+  border-bottom: 1px solid rgba(129, 187, 208, 0.12);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.aski-perm-user-table td {
+  padding: 8px 10px;
+  color: #b0d8ec;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.aski-perm-user-table tr.inactive td {
+  opacity: 0.45;
+}
+.aski-perm-user-table td.muted {
+  color: #3a6070;
+  font-size: 11px;
+}
+
+/* ============================================================
+   Existing augmentation progress (unchanged)
+   ============================================================ */
 .aski-ws-aug-progress {
   position: relative;
   height: 16px;
