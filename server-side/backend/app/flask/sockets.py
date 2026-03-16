@@ -455,6 +455,7 @@ def handle_disconnect():
     try:
         from app.streaming import get_stream_manager
         manager = get_stream_manager()
+        manager.stop_camera_streams(client_session_id=runtime_session_id)
         manager.stop_all_transform_streams()
     except Exception as e:
         logging.warning("Failed to cleanup transform streams on disconnect: %s", e)

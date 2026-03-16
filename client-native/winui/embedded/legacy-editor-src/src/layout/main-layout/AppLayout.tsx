@@ -33,7 +33,17 @@ import {
 import { useLoading } from "../../hooks/useLoading";
 import DnDSidebar from "../../components/bars/dnd-sidebar/DnDSidebar";
 import Tab from "./header/Tab";
-import { prewarmClientCameraPublishers } from "../../services/clientCameraPublishers";
+import {
+  prewarmClientCameraPublishers,
+  stopAllClientCameraPublishers,
+  stopClientCameraPublisherByIndex,
+} from "../../services/clientCameraPublishers";
+import {
+  stopAllCameraStreams,
+  stopCameraStreamsByIndex,
+  stopStream,
+  stopStreamsByOwner,
+} from "../../api/stream";
 import {
   WorkstationMain,
   WorkstationSection,
@@ -66,6 +76,48 @@ export interface FlowTabsProps {
 
 export type ApplicationMode = "flow";
 export type ApplicationMenu = "template" | "config" | "help";
+
+function extractStreamIdsFromValue(value: any): string[] {
+  const streamIds = new Set<string>();
+
+  const parseString = (raw: string) => {
+    if (!raw) return;
+    if (raw.startsWith("stream://")) {
+      streamIds.add(raw.replace("stream://", ""));
+      return;
+    }
+
+    const streamMatch = raw.match(/\/stream\/([^/.?]+)\.(mjpg|mjpeg)/i);
+    if (streamMatch?.[1]) {
+      streamIds.add(streamMatch[1]);
+    }
+  };
+
+  if (typeof value === "string") {
+    parseString(value);
+  } else if (Array.isArray(value)) {
+    value.forEach((item) => {
+      if (typeof item === "string") parseString(item);
+    });
+  }
+
+  return Array.from(streamIds);
+}
+
+function isLikelyCameraNode(node: any): boolean {
+  const processorType = String(node?.data?.processorType || "").toLowerCase();
+  const nodeName = String(node?.data?.name || "").toLowerCase();
+  const hasCameraIndex =
+    node?.data?.camera_index !== undefined &&
+    node?.data?.camera_index !== null &&
+    node?.data?.camera_index !== "";
+  return (
+    processorType === "camera-input" ||
+    processorType.includes("camera") ||
+    nodeName.endsWith("#camera-input") ||
+    hasCameraIndex
+  );
+}
 
 const FlowTabs = ({ tabs }: FlowTabsProps) => {
   const { t } = useTranslation("flow");
@@ -306,35 +358,80 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
   };
 
   const handleRefreshApp = useCallback(() => {
-    // Clear runtime state from all nodes so they return to idle after refresh.
-    // Configuration (positions, parameters, edges) is preserved.
-    const RUNTIME_KEYS = [
-      "outputData",
-      "lastRun",
-      "isDone",
-      "isRunning",
-      "startup_status",
-      "startup_deferred",
-      "error",
-      "warning",
-    ];
-    setFlowTabs((prev) => ({
-      ...prev,
-      tabs: prev.tabs.map((tab) => ({
-        ...tab,
-        nodes: tab.nodes.map((node) => {
-          const cleanData = { ...node.data };
-          for (const key of RUNTIME_KEYS) {
-            delete (cleanData as any)[key];
-          }
-          return { ...node, data: cleanData };
-        }),
-      })),
-    }));
-    setRefresh((prev) => !prev);
-    updateSocket();
-    toastFastInfoMessage("Frontend dan koneksi backend direfresh.");
-  }, [updateSocket]);
+    const snapshotTabs = flowTabsRef.current.tabs ?? [];
+
+    void (async () => {
+      try {
+        const activeSocket = getSocket();
+        const clientSessionId = activeSocket?.getId();
+        const nodes = snapshotTabs.flatMap((tab) => tab.nodes ?? []);
+
+        stopAllClientCameraPublishers(activeSocket);
+
+        await Promise.all(
+          nodes.map(async (node) => {
+            const nodeName = String(node?.data?.name || "").trim();
+            const outputStreamIds = extractStreamIdsFromValue(node?.data?.outputData);
+            const configStreamIds = extractStreamIdsFromValue(node?.data?.stream_ref);
+            const streamIds = [...new Set([...outputStreamIds, ...configStreamIds])];
+            const isCameraNode = isLikelyCameraNode(node);
+
+            if (isCameraNode) {
+              stopClientCameraPublisherByIndex(node?.data?.camera_index, activeSocket);
+            }
+
+            if (nodeName) {
+              await stopStreamsByOwner(nodeName);
+            }
+
+            await Promise.all(streamIds.map((streamId) => stopStream(streamId)));
+
+            if (isCameraNode && clientSessionId) {
+              await stopCameraStreamsByIndex(
+                node?.data?.camera_index,
+                clientSessionId,
+              );
+            }
+          }),
+        );
+
+        if (clientSessionId) {
+          await stopAllCameraStreams(clientSessionId);
+        }
+      } catch (error) {
+        console.warn("Refresh cleanup failed:", error);
+      } finally {
+        // Clear runtime state from all nodes so they return to idle after refresh.
+        // Configuration (positions, parameters, edges) is preserved.
+        const RUNTIME_KEYS = [
+          "outputData",
+          "lastRun",
+          "isDone",
+          "isRunning",
+          "startup_status",
+          "startup_deferred",
+          "error",
+          "warning",
+        ];
+        setFlowTabs((prev) => ({
+          ...prev,
+          tabs: prev.tabs.map((tab) => ({
+            ...tab,
+            nodes: tab.nodes.map((node) => {
+              const cleanData = { ...node.data };
+              for (const key of RUNTIME_KEYS) {
+                delete (cleanData as any)[key];
+              }
+              return { ...node, data: cleanData };
+            }),
+          })),
+        }));
+        setRefresh((prev) => !prev);
+        updateSocket();
+        toastFastInfoMessage("Frontend dan koneksi backend direfresh.");
+      }
+    })();
+  }, [getSocket, updateSocket]);
 
   return (
     <div
