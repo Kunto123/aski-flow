@@ -4,6 +4,8 @@ using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 using System.Diagnostics;
 using System.Net;
+using System.Net.Http;
+using System.Text.Json;
 
 namespace Aski.NativeClient.Host;
 
@@ -30,6 +32,10 @@ public sealed class FlowCanvasForm : Form
     private string? _bootstrapScriptId;
     private Uri? _currentUri;
     private bool _busy;
+    // Resolved from GET /native-config at first canvas load.
+    // true  = DevTools button visible, F12/Ctrl+Shift+I active.
+    // false = DevTools fully hidden (set ASKI_NATIVE_WEBVIEW2_DEVTOOLS=false in .env).
+    private bool _devToolsEnabled = true;
 
     public FlowCanvasForm(
         IClientSettingsStore settingsStore,
@@ -357,13 +363,41 @@ public sealed class FlowCanvasForm : Form
             return;
         }
 
+        // Fetch devtools flag from .env via backend API.
+        // Falls back to Windows env var if the backend is unreachable.
+        _devToolsEnabled = await FetchDevToolsEnabledAsync();
+
         await _webView.EnsureCoreWebView2Async();
         var core = _webView.CoreWebView2
             ?? throw new InvalidOperationException("WebView2 initialization failed.");
         core.NavigationStarting += HandleNavigationStarting;
         core.NavigationCompleted += HandleNavigationCompleted;
-        core.Settings.AreDevToolsEnabled = IsWebViewDevToolsEnabled();
-        _openDevToolsButton.Enabled = true;
+        core.Settings.AreDevToolsEnabled = _devToolsEnabled;
+        _openDevToolsButton.Visible = _devToolsEnabled;
+        _openDevToolsButton.Enabled = _devToolsEnabled;
+    }
+
+    private async Task<bool> FetchDevToolsEnabledAsync()
+    {
+        try
+        {
+            var scheme = _settings.UseHttps ? "https" : "http";
+            var url = $"{scheme}://{_settings.ServerHost}:{_settings.ServerPort}/native-config";
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            var json = await client.GetStringAsync(url);
+            var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("devtools_enabled", out var prop))
+            {
+                return prop.GetBoolean();
+            }
+        }
+        catch
+        {
+            // Backend not reachable or returned unexpected data —
+            // fall back to Windows environment variable (legacy behaviour).
+        }
+
+        return IsWebViewDevToolsEnabled();
     }
 
     private async Task ApplyBootstrapScriptAsync(string script)
@@ -483,6 +517,11 @@ public sealed class FlowCanvasForm : Form
 
     private void OpenDevTools()
     {
+        if (!_devToolsEnabled)
+        {
+            return;
+        }
+
         var core = _webView.CoreWebView2;
         if (core is null)
         {
@@ -722,7 +761,11 @@ public sealed class FlowCanvasForm : Form
     {
         if (keyData == Keys.F12 || keyData == (Keys.Control | Keys.Shift | Keys.I))
         {
-            OpenDevTools();
+            if (_devToolsEnabled)
+            {
+                OpenDevTools();
+            }
+
             return true;
         }
 

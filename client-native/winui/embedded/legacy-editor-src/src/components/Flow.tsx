@@ -139,6 +139,17 @@ const Flow = forwardRef((props: FlowProps, ref) => {
     useRef<Map<string, FlowOnProgressEventData>>(new Map());
   const skipNextOnFlowChangeRef = useRef(false);
   const shouldAutoFitRef = useRef(true);
+  // Guard: skip re-syncing nodes from parent props while a node drag is active.
+  // Without this, the loop: onNodesChange → onFlowChange → props.nodes → setNodes
+  // causes the node to oscillate between current-drag position and previous-frame
+  // position at 60 fps, producing the "text earthquake" visual glitch.
+  const isDraggingRef = useRef(false);
+  // Guard: when we emit onFlowChange ourselves, AppLayout.setFlowTabs always creates
+  // a new object reference → props.nodes changes → useEffect([props.nodes]) fires.
+  // That echo would overwrite internal state with the parent snapshot, causing
+  // oscillation for ANY internal update (node drag, ROI resize, data change, etc.).
+  // Setting this flag before each onFlowChange call suppresses exactly that echo.
+  const skipNextPropsSyncRef = useRef(false);
 
   const { getElement } = useVisibility();
   const { socket } = useContext(SocketContext);
@@ -153,6 +164,16 @@ const Flow = forwardRef((props: FlowProps, ref) => {
   }, [currentNodesRunning, props.isRunning, props.onRunChange]);
 
   useEffect(() => {
+    // Skip if this props update is an echo of our own onFlowChange call.
+    // AppLayout.handleFlowChange always creates new object references, so
+    // every internal change (drag, ROI resize, data update) would otherwise
+    // overwrite internal state with a stale parent snapshot — causing oscillation.
+    if (skipNextPropsSyncRef.current) {
+      skipNextPropsSyncRef.current = false;
+      return;
+    }
+    // Secondary guard: also skip during active ReactFlow node drag.
+    if (isDraggingRef.current) return;
     setNodes(props.nodes ?? []);
     setEdges(props.edges ?? []);
   }, [props.nodes, props.edges]);
@@ -394,6 +415,10 @@ const Flow = forwardRef((props: FlowProps, ref) => {
         skipNextOnFlowChangeRef.current = false;
         return;
       }
+      // Mark that the next props.nodes/edges update is an echo of this call.
+      // Without this, AppLayout.setFlowTabs always produces a new reference
+      // which re-triggers useEffect([props.nodes]) and overwrites internal state.
+      skipNextPropsSyncRef.current = true;
       props.onFlowChange(nodes, edges, props.metadata);
     }
   }, [nodes, edges, props.metadata, props.onFlowChange]);
@@ -669,6 +694,8 @@ const Flow = forwardRef((props: FlowProps, ref) => {
             edgeTypes={edgeTypes}
             onNodesChange={onNodesChange}
             onNodesDelete={onNodesDelete}
+            onNodeDragStart={() => { isDraggingRef.current = true; }}
+            onNodeDragStop={() => { isDraggingRef.current = false; }}
             edges={edges}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}

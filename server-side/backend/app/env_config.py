@@ -115,6 +115,15 @@ def is_cloud_features_enabled() -> bool:
     return _env_flag("ASKI_ENABLE_CLOUD", "false")
 
 
+def is_native_webview2_devtools_enabled() -> bool:
+    """
+    Controls whether the DevTools button and keyboard shortcuts (F12 / Ctrl+Shift+I)
+    are available in the native WinForms/WebView2 host.
+    Reads ASKI_NATIVE_WEBVIEW2_DEVTOOLS from .env; defaults to true.
+    """
+    return _env_flag("ASKI_NATIVE_WEBVIEW2_DEVTOOLS", "true")
+
+
 def is_s3_enabled() -> bool:
     # Enable S3 only if bucket is explicitly configured.
     # This avoids false positives when env vars exist but are empty strings.

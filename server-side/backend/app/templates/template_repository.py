@@ -29,6 +29,15 @@ CANVAS_COORDINATE_KEYS = {
     "canvasY",
 }
 
+ROI_GEOMETRY_FIELDS = {
+    "x",
+    "y",
+    "w",
+    "h",
+    "width",
+    "height",
+}
+
 
 def ensure_template_schema() -> None:
     with db_cursor() as cur:
@@ -525,6 +534,26 @@ def _canonicalize_node(node_definition: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _resolve_editable_fields(
+    template_node: dict[str, Any],
+    editable_fields: list[Any],
+) -> set[str]:
+    resolved = {
+        str(field_name).strip()
+        for field_name in editable_fields
+        if str(field_name).strip()
+    }
+
+    processor_type = str(template_node.get("processorType") or "").strip().lower()
+    if processor_type == "roi" and resolved.intersection(ROI_GEOMETRY_FIELDS):
+        # ROI box interaction updates normalized geometry (`x/y/w/h`) together with
+        # pixel dimensions (`width/height`). Treat them as one logical permission set
+        # so operator edits from the visual ROI box do not violate template policy.
+        resolved.update(ROI_GEOMETRY_FIELDS)
+
+    return resolved
+
+
 def validate_operator_flow(
     *,
     template_flow: list[dict[str, Any]],
@@ -551,12 +580,10 @@ def validate_operator_flow(
         submitted_node = submitted_nodes[node_name]
         node_policy = policy_nodes.get(node_name) if isinstance(policy_nodes.get(node_name), dict) else {}
         editable_fields = node_policy.get("editableFields") if isinstance(node_policy.get("editableFields"), list) else []
+        resolved_editable_fields = _resolve_editable_fields(template_node, editable_fields)
 
         comparable_submitted_node = copy.deepcopy(submitted_node)
-        for field_name in editable_fields:
-            normalized_field_name = str(field_name).strip()
-            if not normalized_field_name:
-                continue
+        for normalized_field_name in resolved_editable_fields:
             if normalized_field_name in template_node:
                 comparable_submitted_node[normalized_field_name] = template_node[normalized_field_name]
             else:

@@ -46,6 +46,11 @@ def register_blueprint_with_v1_alias(blueprint, legacy_name: str):
     )
 
 
+# Native config – public, no auth
+from .app_routes.native_config_routes import native_config_blueprint
+
+register_blueprint_with_v1_alias(native_config_blueprint, "native_config_blueprint")
+
 from .app_routes.node_routes import node_blueprint
 
 register_blueprint_with_v1_alias(node_blueprint, "node_blueprint")

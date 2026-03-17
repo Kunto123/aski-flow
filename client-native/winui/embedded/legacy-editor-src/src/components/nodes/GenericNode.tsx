@@ -40,6 +40,7 @@ import {
 } from "../../utils/nodeConfigurationUtils";
 import { evaluateCondition } from "../../utils/evaluateConditions";
 import { useTemplateMode } from "../../providers/TemplateModeProvider";
+import { isStreamUrl } from "./node-output/outputUtils";
 
 interface GenericNodeProps extends NodeProps {
   data: GenericNodeData;
@@ -47,6 +48,20 @@ interface GenericNodeProps extends NodeProps {
   selected: boolean;
   nodeFields?: Field[];
   iconComponent?: FC;
+}
+
+function hasStreamLikeOutput(value: any): boolean {
+  if (typeof value === "string") {
+    return isStreamUrl(value.trim());
+  }
+
+  if (Array.isArray(value)) {
+    return value.some(
+      (item) => typeof item === "string" && isStreamUrl(item.trim()),
+    );
+  }
+
+  return false;
 }
 
 const GenericNode: React.FC<GenericNodeProps> = React.memo(
@@ -80,6 +95,7 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
     );
     const lastAutoRunKeyRef = useRef<string>("");
     const hasInitializedAutoRunRef = useRef<boolean>(false);
+    const hasSeenExistingOutputRef = useRef<boolean>(false);
     const [fields, setFields] = useState<Field[]>(
       !!data.config?.fields
         ? data.config.fields
@@ -190,9 +206,12 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
       const hasExistingOutput = Array.isArray(data.outputData)
         ? data.outputData.length > 0
         : !!data.outputData;
+      if (!hasExistingOutput) {
+        hasSeenExistingOutputRef.current = false;
+        return;
+      }
       // Avoid surprise execution on first wire-up. Auto-run is only for nodes
       // that have already produced output at least once.
-      if (!hasExistingOutput) return;
 
       const incoming = getIncomingEdges(id) ?? [];
       const inputEdge =
@@ -204,10 +223,11 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
         const sourceNode = findNode?.(inputEdge.source);
         const sourceOutput = sourceNode?.data?.outputData;
         const sourceLastRun = sourceNode?.data?.lastRun;
+        const sourceUsesStreamOutput = hasStreamLikeOutput(sourceOutput);
         upstreamSignature = JSON.stringify({
           source: inputEdge.source,
           output: sourceOutput,
-          lastRun: sourceLastRun,
+          lastRun: sourceUsesStreamOutput ? undefined : sourceLastRun,
         });
       } else {
         const manualInput = data.input_url ?? "";
@@ -244,8 +264,9 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
 
       const key = `${data.processorType}|${data.name}|${upstreamSignature}|${processingParams}`;
       // Do not auto-run immediately when the node is first mounted on canvas.
-      if (isFirstAutoRunPass) {
+      if (isFirstAutoRunPass || !hasSeenExistingOutputRef.current) {
         lastAutoRunKeyRef.current = key;
+        hasSeenExistingOutputRef.current = true;
         return;
       }
       if (lastAutoRunKeyRef.current === key) return;
@@ -257,6 +278,7 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
         // so the next effect cycle will retry.
         if (dispatched !== false) {
           lastAutoRunKeyRef.current = key;
+          hasSeenExistingOutputRef.current = true;
         }
       } catch (e) {
         // ignore auto-run errors; manual run path remains available

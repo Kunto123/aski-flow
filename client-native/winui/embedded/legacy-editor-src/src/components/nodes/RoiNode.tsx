@@ -39,6 +39,7 @@ import {
 } from "./node-output/outputUtils";
 import { roiNodeConfig } from "../../nodes-configuration/roiNode";
 import { updateRoiStreamParams } from "../../api/stream";
+import { useTemplateMode } from "../../providers/TemplateModeProvider";
 
 interface RoiNodeProps extends NodeProps {
   data: GenericNodeData;
@@ -51,6 +52,11 @@ type BoxPosition = {
   y: number;
 };
 
+type BoxSize = {
+  width: number;
+  height: number;
+};
+
 type MediaBox = {
   width: number;
   height: number;
@@ -61,6 +67,7 @@ type MediaBox = {
 const DEFAULT_WIDTH = 120;
 const DEFAULT_HEIGHT = 120;
 const LIVE_ROI_UPDATE_INTERVAL_MS = 120;
+const ROI_GEOMETRY_FIELDS = ["x", "y", "w", "h", "width", "height"] as const;
 
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, value));
@@ -125,6 +132,7 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
   const { onUpdateNodeData, getIncomingEdges, getOutgoingEdges, findNode, runNode, runNodeIfIdle } = useContext(NodeContext);
   const { isRunning, currentNodesRunning } = useContext(NodeRuntimeContext);
   const { getViewport } = useReactFlow();
+  const { isTemplateLocked, isFieldEditable } = useTemplateMode();
   const updateNodeInternals = useUpdateNodeInternals();
   const [isPlaying, setIsPlaying] = useIsPlaying();
   const [showPreview, setShowPreview] = useState<boolean>(false);
@@ -135,9 +143,9 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
     width: 0,
     height: 0,
   });
-  const dataRef = useRef<GenericNodeData>(data);
   const lastAutoRunRef = useRef<string>("");
   const hasInitializedAutoRunRef = useRef<boolean>(false);
+  const hasSeenExistingOutputRef = useRef<boolean>(false);
   const liveUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingLiveParamsRef = useRef<{
     x: number;
@@ -148,6 +156,7 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
     height?: number;
   } | null>(null);
   const lastLiveParamsKeyRef = useRef<string>("");
+  const lastPersistedGeometryKeyRef = useRef<string>("");
   const dragStateRef = useRef<
     | {
         mode: "move" | "resize";
@@ -170,6 +179,15 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
     offsetY: 0,
   });
   const [boxPosition, setBoxPosition] = useState<BoxPosition>({ x: 0, y: 0 });
+  const [boxSize, setBoxSize] = useState<BoxSize>(() => ({
+    width: toPositiveNumber(data.width, DEFAULT_WIDTH),
+    height: toPositiveNumber(data.height, DEFAULT_HEIGHT),
+  }));
+  const canEditRoiGeometry =
+    !isTemplateLocked ||
+    ROI_GEOMETRY_FIELDS.some((fieldName) =>
+      isFieldEditable(data.name ?? id, fieldName),
+    );
 
   const updatePreviewSize = useCallback(() => {
     const element = previewRef.current;
@@ -177,7 +195,11 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
 
     const width = element.clientWidth;
     const height = element.clientHeight;
-    setContainerSize({ width, height });
+    setContainerSize((previous) =>
+      previous.width === width && previous.height === height
+        ? previous
+        : { width, height },
+    );
 
     const intrinsic = mediaIntrinsicRef.current;
     const iw = intrinsic.width;
@@ -186,22 +208,33 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
       const scale = Math.min(width / iw, height / ih);
       const displayedW = Math.max(1, Math.floor(iw * scale));
       const displayedH = Math.max(1, Math.floor(ih * scale));
-      setMediaBox({
+      const nextMediaBox = {
         width: displayedW,
         height: displayedH,
         offsetX: (width - displayedW) / 2,
         offsetY: (height - displayedH) / 2,
-      });
+      };
+      setMediaBox((previous) =>
+        previous.width === nextMediaBox.width &&
+        previous.height === nextMediaBox.height &&
+        Math.abs(previous.offsetX - nextMediaBox.offsetX) < 0.5 &&
+        Math.abs(previous.offsetY - nextMediaBox.offsetY) < 0.5
+          ? previous
+          : nextMediaBox,
+      );
       return;
     }
 
     // Fallback when intrinsic size is not available (e.g., some MJPEG streams).
-    setMediaBox({ width, height, offsetX: 0, offsetY: 0 });
+    setMediaBox((previous) =>
+      previous.width === width &&
+      previous.height === height &&
+      previous.offsetX === 0 &&
+      previous.offsetY === 0
+        ? previous
+        : { width, height, offsetX: 0, offsetY: 0 },
+    );
   }, []);
-
-  useEffect(() => {
-    dataRef.current = data;
-  }, [data]);
 
   useEffect(() => {
     const currentFields = data?.config?.fields ?? [];
@@ -334,9 +367,12 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
     const hasExistingOutput = Array.isArray(data.outputData)
       ? data.outputData.length > 0
       : !!data.outputData;
+    if (!hasExistingOutput) {
+      hasSeenExistingOutputRef.current = false;
+      return;
+    }
     // Avoid surprise execution on first wire-up. Auto-run is only for nodes
     // that have already produced output at least once.
-    if (!hasExistingOutput) return;
 
     // Auto-run ROI when it has a connected downstream and a valid upstream input.
     // This makes Camera → ROI → Display work without requiring manual "play" on ROI.
@@ -355,8 +391,9 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
         ].join("|");
 
     // Do not auto-run immediately when the node is first mounted on canvas.
-    if (isFirstAutoRunPass) {
+    if (isFirstAutoRunPass || !hasSeenExistingOutputRef.current) {
       lastAutoRunRef.current = key;
+      hasSeenExistingOutputRef.current = true;
       return;
     }
 
@@ -367,6 +404,7 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
       // Only mark the key as consumed when the run was actually dispatched.
       if (dispatched !== false) {
         lastAutoRunRef.current = key;
+        hasSeenExistingOutputRef.current = true;
       }
     } catch (e) {
       // ignore
@@ -441,8 +479,24 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
     });
   }, [data, id, getIncomingEdges, onUpdateNodeData]);
 
-  const boxWidth = toPositiveNumber(data.width, DEFAULT_WIDTH);
-  const boxHeight = toPositiveNumber(data.height, DEFAULT_HEIGHT);
+  useEffect(() => {
+    if (dragStateRef.current?.mode === "resize") return;
+
+    const nextWidth = toPositiveNumber(data.width, DEFAULT_WIDTH);
+    const nextHeight = toPositiveNumber(data.height, DEFAULT_HEIGHT);
+    setBoxSize((previous) =>
+      Math.abs(previous.width - nextWidth) < 0.5 &&
+      Math.abs(previous.height - nextHeight) < 0.5
+        ? previous
+        : {
+            width: nextWidth,
+            height: nextHeight,
+          },
+    );
+  }, [data.width, data.height]);
+
+  const boxWidth = Math.max(1, boxSize.width);
+  const boxHeight = Math.max(1, boxSize.height);
 
   const effectiveBoxWidth =
     mediaBox.width > 0 ? Math.min(boxWidth, mediaBox.width) : boxWidth;
@@ -460,6 +514,10 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
     explicitWidth?: number,
     explicitHeight?: number,
   ) => {
+    if (!canEditRoiGeometry) {
+      return;
+    }
+
     const safeWidthForNorm = Math.max(1, widthForNormalization);
     const safeHeightForNorm = Math.max(1, heightForNormalization);
     const normalizedX =
@@ -478,27 +536,38 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
       explicitWidth != null ? Math.max(1, explicitWidth) : undefined;
     const safeExplicitHeight =
       explicitHeight != null ? Math.max(1, explicitHeight) : undefined;
-
-    onUpdateNodeData(id, {
-      ...dataRef.current,
-      ...(safeExplicitWidth != null ? { width: safeExplicitWidth } : {}),
-      ...(safeExplicitHeight != null ? { height: safeExplicitHeight } : {}),
+    const nextGeometry: {
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      width?: number;
+      height?: number;
+    } = {
       x: normalizedX,
       y: normalizedY,
       w: normalizedW,
       h: normalizedH,
-    });
+    };
+
+    if (safeExplicitWidth != null) {
+      nextGeometry.width = safeExplicitWidth;
+    }
+    if (safeExplicitHeight != null) {
+      nextGeometry.height = safeExplicitHeight;
+    }
+
+    const geometryKey = JSON.stringify(nextGeometry);
+    if (lastPersistedGeometryKeyRef.current === geometryKey) {
+      return;
+    }
+    lastPersistedGeometryKeyRef.current = geometryKey;
+
+    onUpdateNodeData(id, nextGeometry);
 
     // Keep the existing ROI output stream alive and update crop params in-place.
     // This avoids stream recreation + downstream reruns during drag/resize.
-    scheduleLiveRoiUpdate({
-      x: normalizedX,
-      y: normalizedY,
-      w: normalizedW,
-      h: normalizedH,
-      ...(safeExplicitWidth != null ? { width: safeExplicitWidth } : {}),
-      ...(safeExplicitHeight != null ? { height: safeExplicitHeight } : {}),
-    });
+    scheduleLiveRoiUpdate(nextGeometry);
   };
 
   useEffect(() => {
@@ -519,10 +588,18 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
       maxTop,
     );
 
-    setBoxPosition({ x: nextX, y: nextY });
+    setBoxPosition((previous) =>
+      Math.abs(previous.x - nextX) < 0.5 && Math.abs(previous.y - nextY) < 0.5
+        ? previous
+        : { x: nextX, y: nextY },
+    );
   }, [data.x, data.y, mediaBox.width, mediaBox.height, maxLeft, maxTop]);
 
   const handleNodeFieldChange = (fieldName: string, value: any) => {
+    if (isTemplateLocked && !isFieldEditable(data.name ?? id, fieldName)) {
+      return;
+    }
+
     if (fieldName === "width" || fieldName === "height") {
       const requestedWidth =
         fieldName === "width" ? toPositiveNumber(value, 1) : boxWidth;
@@ -547,6 +624,10 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
         Math.max(0, mediaBox.height - nextHeight),
       );
 
+      setBoxSize({
+        width: requestedWidth,
+        height: requestedHeight,
+      });
       setBoxPosition({ x: nextX, y: nextY });
       persistRoiData(
         nextX,
@@ -560,7 +641,6 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
     }
 
     onUpdateNodeData(id, {
-      ...dataRef.current,
       [fieldName]: value,
     });
   };
@@ -575,6 +655,10 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
   };
 
   const handleMovePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!canEditRoiGeometry) {
+      return;
+    }
+
     event.preventDefault();
     event.stopPropagation();
 
@@ -627,6 +711,10 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
   };
 
   const handleResizePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!canEditRoiGeometry) {
+      return;
+    }
+
     event.preventDefault();
     event.stopPropagation();
 
@@ -670,6 +758,10 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
 
       const explicitW = Math.max(1, Math.round(nextW));
       const explicitH = Math.max(1, Math.round(nextH));
+      // Store the raw float so the box renders sub-pixel smooth during drag.
+      // Rounding here would cause the box to snap between integers whenever
+      // the pointer crosses a 0.5px boundary, producing the oscillation glitch.
+      setBoxSize({ width: nextW, height: nextH });
       persistRoiData(boxPosition.x, boxPosition.y, nextW, nextH, explicitW, explicitH);
     };
 
@@ -834,17 +926,20 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
                 left: `${mediaBox.offsetX + boxPosition.x}px`,
                 top: `${mediaBox.offsetY + boxPosition.y}px`,
                 touchAction: "none",
+                cursor: canEditRoiGeometry ? "move" : "default",
               }}
-              onPointerDown={handleMovePointerDown}
+              onPointerDown={canEditRoiGeometry ? handleMovePointerDown : undefined}
             >
               <div className="pointer-events-none absolute left-1 top-1 rounded bg-slate-900/60 px-1 py-0.5 text-[10px] text-white">
                 {Math.round(effectiveBoxWidth)}×{Math.round(effectiveBoxHeight)}
               </div>
-              <div
-                className="absolute bottom-[-6px] right-[-6px] h-3 w-3 rounded-sm border border-slate-900 bg-slate-200 cursor-se-resize"
-                style={{ touchAction: "none" }}
-                onPointerDown={handleResizePointerDown}
-              />
+              {canEditRoiGeometry && (
+                <div
+                  className="absolute bottom-[-6px] right-[-6px] h-3 w-3 rounded-sm border border-slate-900 bg-slate-200 cursor-se-resize"
+                  style={{ touchAction: "none" }}
+                  onPointerDown={handleResizePointerDown}
+                />
+              )}
             </div>
           </div>
         )}

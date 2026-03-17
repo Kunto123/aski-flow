@@ -231,9 +231,28 @@ export default function OutputDisplay({
     setLiveTextOverride(null);
   }, [streamPredictionsUrl, effectiveTextFirstProcessorType]);
 
+  const mainVisionOutputs = useMemo(() => {
+    const visualOutput =
+      normalizedOutputs.find(
+        (value) => getOutputExtension(value) !== "markdown",
+      ) ?? "";
+    const metadataOutput =
+      normalizedOutputs.find(
+        (value) =>
+          value !== visualOutput && getOutputExtension(value) === "markdown",
+      ) ??
+      normalizedOutputs.find((value) => value !== visualOutput) ??
+      (visualOutput ? "" : normalizedOutputs[0] ?? "");
+
+    return {
+      metadataOutput,
+      visualOutput,
+    };
+  }, [normalizedOutputs]);
+
   const baseSelectorOutputs = useMemo(() => {
     if (isMainVisionModel && normalizedOutputs.length > 1) {
-      return [normalizedOutputs[0]];
+      return [mainVisionOutputs.metadataOutput || normalizedOutputs[0]];
     }
     if (preferTextFirst && normalizedOutputs.length > 1) {
       const rank = (value: string) =>
@@ -241,7 +260,7 @@ export default function OutputDisplay({
       return [...normalizedOutputs].sort((a, b) => rank(a) - rank(b));
     }
     return normalizedOutputs;
-  }, [isMainVisionModel, normalizedOutputs, preferTextFirst]);
+  }, [isMainVisionModel, normalizedOutputs, preferTextFirst, mainVisionOutputs.metadataOutput]);
 
   const primaryTextCandidate = useMemo(() => {
     if (!preferTextFirst) return "";
@@ -327,14 +346,16 @@ export default function OutputDisplay({
   const getMainVisionCombinedOutput = () => {
     if (normalizedOutputs.length === 0) return <></>;
 
-    const jsonRaw = normalizedOutputs[0] ?? "";
-    const sceneRaw = normalizedOutputs[1] ?? "";
+    const jsonRaw = mainVisionOutputs.metadataOutput ?? "";
+    const sceneRaw = mainVisionOutputs.visualOutput ?? "";
 
     let prettyJson = jsonRaw;
-    try {
-      prettyJson = JSON.stringify(JSON.parse(jsonRaw), null, 2);
-    } catch {
-      // keep raw text
+    if (jsonRaw) {
+      try {
+        prettyJson = JSON.stringify(JSON.parse(jsonRaw), null, 2);
+      } catch {
+        // keep raw text
+      }
     }
 
     const jsonMarkdown = `\`\`\`json\n${prettyJson}\n\`\`\``;
@@ -387,20 +408,22 @@ export default function OutputDisplay({
             {renderScene()}
           </div>
         )}
-        <div
-          className={
-            fitInContainer
-              ? "max-h-[42%] shrink-0 overflow-auto border-t border-slate-700/50 pt-1"
-              : ""
-          }
-        >
-          <MarkdownOutput
-            data={jsonMarkdown}
-            name={data.name}
-            appearance={data.appearance}
-            fitInContainer={fitInContainer}
-          />
-        </div>
+        {jsonRaw && (
+          <div
+            className={
+              fitInContainer
+                ? "max-h-[42%] shrink-0 overflow-auto border-t border-slate-700/50 pt-1"
+                : ""
+            }
+          >
+            <MarkdownOutput
+              data={jsonMarkdown}
+              name={data.name}
+              appearance={data.appearance}
+              fitInContainer={fitInContainer}
+            />
+          </div>
+        )}
       </div>
     );
   };
