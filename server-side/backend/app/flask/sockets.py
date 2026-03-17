@@ -9,6 +9,7 @@ import logging
 import json
 import copy
 import time
+import jwt
 
 from flask import g, request, session
 from flask_socketio import emit
@@ -25,6 +26,11 @@ from ..processors.context.processor_context_flask_request import (
 import traceback
 import os
 import threading
+from app.flask.middleware.auth_middleware import JWT_ALGORITHM, JWT_SECRET_KEY
+from app.templates.template_repository import (
+    get_template_version_detail,
+    validate_operator_flow,
+)
 
 
 _ACTIVE_RUNTIME_RUNS = set()
@@ -208,6 +214,41 @@ def _extract_auth_token(event_data=None):
     return ""
 
 
+def _extract_user_token(event_data=None):
+    payload = _normalize_event_data(event_data)
+
+    payload_token = str(payload.get("user_token") or "").strip()
+    if payload_token:
+        return payload_token
+
+    header_token = (request.headers.get("Authorization") or "").strip()
+    if header_token.lower().startswith("bearer "):
+        return header_token[7:].strip()
+
+    query_token = (request.args.get("user_token") or "").strip()
+    if query_token:
+        return query_token
+
+    return ""
+
+
+def _resolve_socket_user(event_data=None):
+    token = _extract_user_token(event_data)
+    if not token:
+        return None
+
+    try:
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+    except Exception:
+        return None
+
+    return {
+        "user_id": str(payload.get("sub") or "").strip(),
+        "username": str(payload.get("username") or "").strip(),
+        "role": str(payload.get("role") or "").strip(),
+    }
+
+
 def _is_socket_authorized(event_data=None):
     expected = (os.getenv("ASKI_CLIENT_AUTH_TOKEN") or "").strip()
     if not expected:
@@ -237,6 +278,35 @@ def _resolve_runtime_session_id(event_data=None):
     # Prefer stable client_id when provided (native app lifecycle), fallback to socket sid.
     client_id = _extract_client_id(event_data)
     return client_id or request.sid
+
+
+def _enforce_template_run_policy(event_data, flow_data):
+    socket_user = _resolve_socket_user(event_data)
+    if not socket_user:
+        return
+
+    g.user_id = socket_user["user_id"]
+    g.username = socket_user["username"]
+    g.role = socket_user["role"]
+
+    if socket_user["role"] == "admin":
+        return
+
+    metadata = event_data.get("metadata") if isinstance(event_data.get("metadata"), dict) else {}
+    template_id = metadata.get("templateId")
+    template_version_id = metadata.get("templateVersionId")
+    if template_id is None or template_version_id is None:
+        raise PermissionError("Operator hanya dapat menjalankan flow dari template yang dipilih.")
+
+    template_detail = get_template_version_detail(int(template_id), int(template_version_id))
+    if not template_detail or not template_detail.get("is_active"):
+        raise PermissionError("Template tidak ditemukan atau sudah tidak aktif.")
+
+    validate_operator_flow(
+        template_flow=template_detail["flow"],
+        template_policy=template_detail["policy"],
+        submitted_flow=flow_data,
+    )
 
 
 def populate_request_global_object(data):
@@ -332,6 +402,7 @@ def handle_process_file(data):
 
         populate_request_global_object(data)
         flow_data = _parse_flow_payload(data, runtime_session_id=runtime_session_id)
+        _enforce_template_run_policy(data, flow_data)
         launcher = get_root_injector().get(ProcessorLauncher)
         launcher.set_context(
             ProcessorContextFlaskRequest(g, session, runtime_session_id)
@@ -415,6 +486,7 @@ def handle_run_node(data):
             runtime_session_id=runtime_session_id,
             node_name=node_name,
         )
+        _enforce_template_run_policy(data, flow_data)
 
         launcher = get_root_injector().get(ProcessorLauncher)
         launcher.set_context(

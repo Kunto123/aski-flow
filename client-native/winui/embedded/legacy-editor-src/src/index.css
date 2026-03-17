@@ -3,7 +3,9 @@
 @tailwind utilities;
 
 :root {
+  --aski-userbar-h: 34px;
   --aski-topbar-h: clamp(52px, 6vh, 72px);
+  --aski-shell-h: calc(var(--aski-userbar-h) + var(--aski-topbar-h));
   --aski-canvasbar-h: clamp(56px, 7vh, 84px);
   --aski-sidebar-w: clamp(220px, 20vw, 320px);
   --aski-gap: clamp(10px, 1.2vw, 18px);
@@ -54,7 +56,7 @@ body {
   height: 100%;
   display: grid;
   grid-template-columns: var(--aski-sidebar-w) 1fr;
-  grid-template-rows: var(--aski-topbar-h) 1fr;
+  grid-template-rows: var(--aski-userbar-h) var(--aski-topbar-h) 1fr;
   overflow: hidden;
   animation: aski-fade-in 420ms ease-out;
 }
@@ -65,13 +67,59 @@ body {
 
 .aski-topbar {
   grid-column: 1 / -1;
+  grid-row: 2;
   height: var(--aski-topbar-h);
   display: flex;
   align-items: center;
-  gap: var(--aski-gap);
+  justify-content: space-between;
+  gap: clamp(12px, 1.8vw, 28px);
   padding: 0 var(--aski-gap);
-  background: linear-gradient(180deg, #245f70 0%, var(--aski-chrome-bg) 100%);
-  border-bottom: 1px solid rgba(229, 57, 53, 0.25);
+  background: linear-gradient(180deg, #275f6e 0%, #225463 100%);
+  border-bottom: 1px solid rgba(145, 198, 214, 0.14);
+  min-width: 0;
+  position: relative;
+  z-index: 20;
+}
+
+.aski-topbar-brand,
+.aski-topbar-center,
+.aski-topbar-actions {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.aski-topbar-brand {
+  gap: clamp(10px, 1vw, 16px);
+  flex: 0 1 auto;
+}
+
+.aski-topbar-logo {
+  height: 36px;
+  max-width: min(140px, 24vw);
+  object-fit: contain;
+  user-select: none;
+}
+
+.aski-topbar-center {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+.aski-topbar-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.aski-topbar-actions {
+  flex: 0 0 auto;
+  justify-content: flex-end;
 }
 
 .aski-hamburger {
@@ -89,9 +137,9 @@ body {
 }
 
 .aski-sidebar {
-  grid-row: 2;
+  grid-row: 3;
   grid-column: 1;
-  height: calc(100dvh - var(--aski-topbar-h));
+  height: calc(100dvh - var(--aski-shell-h));
   overflow-x: hidden;
   overflow-y: auto;
   background: linear-gradient(180deg, #245f70 0%, var(--aski-chrome-bg) 100%);
@@ -103,7 +151,7 @@ body {
 }
 
 .aski-main {
-  grid-row: 2;
+  grid-row: 3;
   grid-column: 2;
   min-width: 0;
   min-height: 0;
@@ -164,24 +212,41 @@ body {
 }
 
 .aski-top-tab {
-  color: rgba(255, 255, 255, 0.65);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 10px 18px;
+  border-radius: 8px;
+  color: rgba(220, 235, 241, 0.76);
+  font-size: 13px;
   font-weight: 800;
+  letter-spacing: 0.01em;
   text-decoration: none;
-  transition: opacity 160ms ease, transform 160ms ease, color 160ms ease;
+  transition:
+    color 120ms ease,
+    background-color 120ms ease,
+    border-color 120ms ease;
   border: 0;
   background: transparent;
+  border-bottom: 2px solid transparent;
 }
 
 .aski-top-tab:hover {
-  color: rgba(255, 255, 255, 0.95);
-  transform: translateY(-1px);
+  color: rgba(255, 255, 255, 0.96);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .aski-top-tab.active {
   color: #fff;
-  text-decoration: underline;
-  text-underline-offset: 6px;
-  text-decoration-color: var(--aski-accent-soft);
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom-color: rgba(255, 125, 121, 0.88);
+}
+
+.aski-top-tab:focus-visible {
+  outline: none;
+  background: rgba(255, 255, 255, 0.06);
+  border-bottom-color: rgba(255, 125, 121, 0.88);
 }
 
 .aski-topbar-refresh {
@@ -189,25 +254,360 @@ body {
   align-items: center;
   gap: 8px;
   padding: 7px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(175, 214, 226, 0.22);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(236, 246, 250, 0.94);
   font-size: 12px;
   font-weight: 700;
   line-height: 1;
   cursor: pointer;
-  transition: transform 140ms ease, background-color 140ms ease, border-color 140ms ease;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
 }
 
 .aski-topbar-refresh:hover {
-  transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.18);
-  border-color: rgba(255, 255, 255, 0.42);
+  background: rgba(255, 255, 255, 0.11);
+  border-color: rgba(175, 214, 226, 0.34);
 }
 
 .aski-topbar-refresh:active {
-  transform: translateY(0);
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.aski-topbar-refresh-label {
+  white-space: nowrap;
+}
+
+.aski-template-current {
+  display: inline-flex;
+  align-items: center;
+  min-height: 42px;
+  padding: 0 2px;
+  color: rgba(244, 249, 251, 0.96);
+  font-size: clamp(18px, 1.6vw, 26px);
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.aski-canvas-header.operator-template {
+  padding-inline: clamp(18px, 2vw, 28px);
+}
+
+.aski-canvas-header.operator-template .aski-tabs-strip {
+  max-width: none;
+  flex: 1 1 auto;
+}
+
+.aski-canvas-header.operator-template .aski-template-current {
+  font-size: clamp(16px, 1.3vw, 22px);
+}
+
+.aski-template-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 14px;
+  border: 1px solid rgba(171, 214, 226, 0.18);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(238, 246, 249, 0.96);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.aski-template-toolbar-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(171, 214, 226, 0.3);
+}
+
+.aski-template-toolbar-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.aski-template-toolbar-btn.ghost {
+  background: transparent;
+}
+
+.aski-template-picker {
+  height: 100%;
+  overflow: auto;
+  padding: clamp(20px, 2.2vw, 30px);
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.aski-template-picker-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.aski-template-picker-title {
+  margin: 0;
+  font-size: clamp(22px, 2vw, 32px);
+  font-weight: 800;
+  color: #f7fbfd;
+}
+
+.aski-template-picker-subtitle {
+  margin: 6px 0 0;
+  color: rgba(184, 214, 224, 0.82);
+  font-size: 13px;
+}
+
+.aski-template-picker-refresh {
+  padding: 7px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(171, 214, 226, 0.18);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(239, 247, 251, 0.94);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.aski-template-picker-refresh:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(171, 214, 226, 0.26);
+}
+
+.aski-template-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 360px));
+  justify-content: flex-start;
+  align-content: flex-start;
+  gap: 18px;
+}
+
+.aski-template-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  text-align: left;
+  width: 100%;
+  min-height: 176px;
+  padding: 18px 18px 16px;
+  border: 1px solid rgba(122, 175, 190, 0.18);
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgba(7, 24, 32, 0.84) 0%, rgba(6, 20, 27, 0.92) 100%);
+  box-shadow:
+    0 16px 30px rgba(0, 0, 0, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease,
+    transform 120ms ease;
+}
+
+.aski-template-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(171, 214, 226, 0.3);
+}
+
+.aski-template-card.active {
+  border-color: rgba(255, 125, 121, 0.55);
+  box-shadow:
+    0 18px 34px rgba(0, 0, 0, 0.2),
+    inset 0 0 0 1px rgba(255, 125, 121, 0.16);
+}
+
+.aski-template-card-topline {
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.aski-template-card-version {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(39, 95, 110, 0.42);
+  color: rgba(204, 231, 239, 0.96);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.aski-template-card-title {
+  margin: 0;
+  color: #f6fbfd;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.aski-template-card-description {
+  margin: 0;
+  color: rgba(190, 216, 224, 0.84);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.aski-template-card-footer {
+  margin-top: auto;
+  width: 100%;
+  display: flex;
+  justify-content: flex-start;
+  padding-top: 8px;
+}
+
+.aski-template-card-action {
+  color: #9fd7e7;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.aski-template-picker-empty,
+.aski-template-picker-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(171, 214, 226, 0.14);
+  color: rgba(206, 229, 236, 0.88);
+}
+
+.aski-template-picker-empty span,
+.aski-template-picker-error span {
+  flex: 1 1 auto;
+}
+
+.aski-template-picker-error {
+  margin-bottom: 18px;
+  border-color: rgba(244, 136, 136, 0.24);
+  color: #ffc3c3;
+}
+
+.aski-template-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.aski-template-modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: rgba(231, 243, 248, 0.96);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.aski-template-modal-field input,
+.aski-template-modal-field textarea {
+  width: 100%;
+  border: 1px solid rgba(171, 214, 226, 0.14);
+  border-radius: 12px;
+  background: rgba(8, 22, 29, 0.78);
+  color: #f3f9fb;
+  padding: 12px 14px;
+  font: inherit;
+}
+
+.aski-template-modal-section {
+  border: 1px solid rgba(171, 214, 226, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 14px;
+}
+
+.aski-template-modal-section-title {
+  color: #f5fafc;
+  font-weight: 800;
+}
+
+.aski-template-modal-section-subtitle {
+  margin-top: 4px;
+  color: rgba(182, 213, 223, 0.78);
+  font-size: 12px;
+}
+
+.aski-template-modal-groups {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.aski-template-modal-group {
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(5, 18, 25, 0.62);
+  border: 1px solid rgba(171, 214, 226, 0.08);
+}
+
+.aski-template-modal-group-title {
+  margin-bottom: 10px;
+  color: #f5fafc;
+  font-weight: 700;
+}
+
+.aski-template-modal-group-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.aski-template-modal-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(211, 231, 238, 0.88);
+  font-size: 13px;
+}
+
+.aski-template-modal-empty {
+  color: rgba(184, 213, 222, 0.8);
+  font-size: 13px;
+}
+
+.aski-template-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.aski-template-modal-btn {
+  padding: 9px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(171, 214, 226, 0.18);
+  background: rgba(255, 255, 255, 0.05);
+  color: #eef7fb;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.aski-template-modal-btn.primary {
+  background: rgba(38, 102, 119, 0.75);
+}
+
+.aski-template-modal-btn.ghost {
+  background: transparent;
+}
+
+.aski-template-field-locked {
+  pointer-events: none;
+  opacity: 0.62;
+  filter: saturate(0.72);
 }
 
 .aski-workstation-wrap {
@@ -281,7 +681,7 @@ body {
      only .aski-annotate-list inside scrolls independently. */
   flex: 1;
   min-height: 0;
-  max-height: calc(100dvh - var(--aski-topbar-h) - 44px);
+  max-height: calc(100dvh - var(--aski-shell-h) - 44px);
   overflow: hidden;
   /* Internal flex column: header (fixed) → summary (fixed) → layout (flex:1) */
   display: flex;
@@ -1332,50 +1732,69 @@ body {
    AUTH – User Bar (top strip shown when logged in)
    ============================================================ */
 .aski-user-bar {
+  grid-column: 1 / -1;
+  grid-row: 1;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 10px;
-  padding: 4px 14px;
-  background: rgba(6, 18, 26, 0.85);
+  width: 100%;
+  padding: 0 var(--aski-gap);
+  background: linear-gradient(180deg, rgba(4, 14, 20, 0.96) 0%, rgba(7, 20, 28, 0.88) 100%);
   border-bottom: 1px solid rgba(129, 187, 208, 0.1);
   font-size: 12px;
   color: #7ab4c8;
-  height: 34px;
+  height: var(--aski-userbar-h);
   flex-shrink: 0;
   z-index: 200;
 }
 .aski-user-bar-info {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-right: auto;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  padding: 3px 10px;
+  border: 1px solid rgba(135, 184, 199, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 .aski-user-bar-actions {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  padding: 3px;
+  border: 1px solid rgba(135, 184, 199, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 .aski-user-bar-btn {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(129, 187, 208, 0.2);
-  border-radius: 6px;
-  color: #9ecfdf;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: #b3d5e2;
   font-size: 11px;
-  padding: 3px 10px;
+  font-weight: 600;
+  padding: 5px 12px;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
 }
 .aski-user-bar-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(129, 187, 208, 0.4);
+  background: rgba(255, 255, 255, 0.08);
+  color: #eef8fb;
 }
 .aski-user-bar-btn.danger {
-  border-color: rgba(220, 60, 60, 0.3);
-  color: #f09090;
+  color: #f0b0b0;
 }
 .aski-user-bar-btn.danger:hover {
   background: rgba(220, 60, 60, 0.12);
-  border-color: rgba(220, 60, 60, 0.55);
+  color: #ffd9d9;
 }
 
 /* ============================================================
@@ -1383,22 +1802,22 @@ body {
    ============================================================ */
 .aski-role-badge {
   display: inline-block;
-  border-radius: 4px;
+  border-radius: 999px;
   font-size: 10px;
   font-weight: 700;
-  padding: 2px 7px;
+  padding: 3px 8px;
   letter-spacing: 0.5px;
   text-transform: uppercase;
 }
 .aski-role-badge.admin {
-  background: rgba(220, 60, 60, 0.18);
-  color: #f09090;
-  border: 1px solid rgba(220, 60, 60, 0.35);
+  background: rgba(220, 60, 60, 0.12);
+  color: #f2afaf;
+  border: 1px solid rgba(220, 60, 60, 0.2);
 }
 .aski-role-badge.operator {
-  background: rgba(30, 130, 160, 0.18);
-  color: #7acfe8;
-  border: 1px solid rgba(30, 130, 160, 0.35);
+  background: rgba(30, 130, 160, 0.12);
+  color: #9cd8ea;
+  border: 1px solid rgba(30, 130, 160, 0.2);
 }
 
 /* ============================================================
@@ -1899,11 +2318,19 @@ body {
 }
 
 @media (max-width: 1200px) {
+  .aski-topbar-refresh-label {
+    display: none;
+  }
+
+  .aski-topbar-refresh {
+    padding-inline: 10px;
+  }
+
   .aski-rightpanel {
     position: fixed;
-    top: var(--aski-topbar-h);
+    top: var(--aski-shell-h);
     right: 0;
-    height: calc(100% - var(--aski-topbar-h));
+    height: calc(100% - var(--aski-shell-h));
     width: min(420px, 92vw);
     transform: translateX(110%);
     transition: transform 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -1920,7 +2347,7 @@ body {
   .aski-rightpanel-backdrop.is-open {
     display: block;
     position: fixed;
-    inset: var(--aski-topbar-h) 0 0 0;
+    inset: var(--aski-shell-h) 0 0 0;
     background: rgba(0, 0, 0, 0.35);
     z-index: 59;
   }
@@ -1986,14 +2413,14 @@ body {
 
   .aski-app {
     grid-template-columns: 1fr;
-    grid-template-rows: var(--aski-topbar-h) 1fr;
+    grid-template-rows: var(--aski-userbar-h) var(--aski-topbar-h) 1fr;
   }
 
   .aski-sidebar {
     position: fixed;
-    top: var(--aski-topbar-h);
+    top: var(--aski-shell-h);
     left: 0;
-    height: calc(100dvh - var(--aski-topbar-h));
+    height: calc(100dvh - var(--aski-shell-h));
     width: var(--aski-sidebar-w);
     transform: translateX(-105%);
     transition: transform 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -2037,9 +2464,27 @@ body {
   .aski-backdrop.is-open {
     display: block;
     position: fixed;
-    inset: var(--aski-topbar-h) 0 0 0;
+    inset: var(--aski-shell-h) 0 0 0;
     background: rgba(0, 0, 0, 0.35);
     z-index: 49;
+  }
+}
+
+@media (max-width: 860px) {
+  .aski-topbar {
+    gap: 10px;
+  }
+
+  .aski-topbar-logo {
+    max-width: 112px;
+  }
+
+  .aski-topbar-tabs {
+    gap: 2px;
+  }
+
+  .aski-top-tab {
+    padding: 8px 12px;
   }
 }
 

@@ -18,6 +18,7 @@ import { evaluateCondition } from "../utils/evaluateConditions";
 import FileUploadField from "../components/nodes/node-input/FileUploadField";
 import { getServerModelFiles, ServerModelFile } from "../api/models";
 import { getServerOcrLanguages, OcrLanguagesResponse } from "../api/ocr";
+import { useTemplateMode } from "../providers/TemplateModeProvider";
 
 const OCR_PRESET_FIELD_DEFAULTS: Record<string, Record<string, any>> = {
   general: {
@@ -195,6 +196,7 @@ export function useFormFields(
 ) {
   const { t } = useTranslation("flow");
   const isTouchDevice = useIsTouchDevice();
+  const { isTemplateLocked, isFieldEditable } = useTemplateMode();
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [serverModelFiles, setServerModelFiles] = useState<ServerModelFile[]>([]);
@@ -765,11 +767,28 @@ export function useFormFields(
           nodeId={id}
           field={field}
           label={t(field.label ?? field.name)}
-          renderField={renderField}
+          renderField={(fieldToRender, isLoopField) => {
+            const editable = isFieldEditable(data.name ?? id, fieldToRender.name);
+            const fieldContent = renderField(fieldToRender, isLoopField);
+
+            if (!isTemplateLocked || editable) {
+              return fieldContent;
+            }
+
+            return (
+              <div
+                className="aski-template-field-locked"
+                title="Field ini dikunci oleh template"
+              >
+                {fieldContent}
+              </div>
+            );
+          }}
           handleId={generateIdForHandle(index)}
           displayParams={displayParams}
           onAddNewField={
-            field.canAddChildrenFields
+            field.canAddChildrenFields &&
+            isFieldEditable(data.name ?? id, field.name)
               ? () => {
                   // Get the current input names list (or empty if not set)
                   const currentInputs = data.config.inputNames ?? [];
@@ -837,7 +856,9 @@ export function useFormFields(
               : undefined
           }
           onDeleteField={
-            field.isChild && field.canAddChildrenFields
+            field.isChild &&
+            field.canAddChildrenFields &&
+            isFieldEditable(data.name ?? id, field.name)
               ? () => {
                   // 1. Remove the deleted child's name from the inputNames list.
                   const currentInputs = data.config.inputNames ?? [];

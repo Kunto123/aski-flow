@@ -13,6 +13,7 @@ interface TabProps {
   onDeleteTab: (index: number) => void;
   onChangeTabName?: (index: number, name: string) => void;
   name: string;
+  canManage?: boolean;
 }
 
 type TabActions = "remove" | "name";
@@ -24,6 +25,7 @@ const Tab = ({
   onDeleteTab,
   onChangeTabName,
   name,
+  canManage = true,
 }: TabProps) => {
   const { t } = useTranslation("flow");
   const [showActions, setShowActions] = useState(false);
@@ -91,7 +93,7 @@ const Tab = ({
           active ? "active" : ""
         }`}
         onClick={() => {
-          if (active) {
+          if (active && canManage) {
             setShowActions(true);
           } else {
             onChangeTab(index);
@@ -118,7 +120,7 @@ const Tab = ({
         ) : (
           <span className="aski-title">{name}</span>
         )}
-        {active && (
+        {active && canManage && (
           <Portal>
             <div
               className={`absolute ${showActions ? "opacity-100" : "pointer-events-none opacity-0"} flex translate-y-2 justify-center transition-all duration-300 ease-in-out`}

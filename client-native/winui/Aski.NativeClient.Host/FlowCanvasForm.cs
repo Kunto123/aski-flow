@@ -21,6 +21,7 @@ public sealed class FlowCanvasForm : Form
     private readonly Button _loadCanvasButton;
     private readonly Button _reloadCanvasButton;
     private readonly Button _openExternalButton;
+    private readonly Button _openDevToolsButton;
     private readonly Label _statusLabel;
     private readonly WebView2 _webView;
     private readonly SplitContainer _layoutSplit;
@@ -46,6 +47,7 @@ public sealed class FlowCanvasForm : Form
         MinimumSize = new Size(1000, 640);
         StartPosition = FormStartPosition.CenterParent;
         AutoScaleMode = AutoScaleMode.Dpi;
+        KeyPreview = true;
 
         _layoutSplit = new SplitContainer
         {
@@ -187,9 +189,28 @@ public sealed class FlowCanvasForm : Form
             Dock = DockStyle.Fill
         };
 
+        _openDevToolsButton = new Button
+        {
+            Text = "DevTools",
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Height = 30,
+            Padding = new Padding(10, 4, 10, 4),
+            Anchor = AnchorStyles.Top | AnchorStyles.Right,
+            BackColor = Color.FromArgb(20, 34, 45),
+            ForeColor = Color.WhiteSmoke,
+            FlatStyle = FlatStyle.Flat,
+            Visible = true
+        };
+        _openDevToolsButton.FlatAppearance.BorderColor = Color.FromArgb(74, 120, 138);
+        _openDevToolsButton.FlatAppearance.MouseOverBackColor = Color.FromArgb(30, 49, 64);
+        _openDevToolsButton.Click += (_, _) => OpenDevTools();
+
         _layoutSplit.Panel1.Controls.Add(_sourceGroup);
         _layoutSplit.Panel1.Controls.Add(_statusLabel);
         _layoutSplit.Panel2.Controls.Add(_webView);
+        _layoutSplit.Panel2.Controls.Add(_openDevToolsButton);
+        _layoutSplit.Panel2.Resize += (_, _) => PositionCanvasOverlayButtons();
         Controls.Add(_layoutSplit);
 
         _editorUrlTextBox.Text = _settings.EditorUrl ?? string.Empty;
@@ -201,6 +222,7 @@ public sealed class FlowCanvasForm : Form
             : _settings.EditorEntryFile;
 
         ApplyLayoutOptions();
+        PositionCanvasOverlayButtons();
 
         if (_options.AutoLoadOnShown)
         {
@@ -341,6 +363,7 @@ public sealed class FlowCanvasForm : Form
         core.NavigationStarting += HandleNavigationStarting;
         core.NavigationCompleted += HandleNavigationCompleted;
         core.Settings.AreDevToolsEnabled = IsWebViewDevToolsEnabled();
+        _openDevToolsButton.Enabled = true;
     }
 
     private async Task ApplyBootstrapScriptAsync(string script)
@@ -456,6 +479,59 @@ public sealed class FlowCanvasForm : Form
                 UseShellExecute = true
             }
         );
+    }
+
+    private void OpenDevTools()
+    {
+        var core = _webView.CoreWebView2;
+        if (core is null)
+        {
+            MessageBox.Show(
+                this,
+                "Canvas belum siap. Load canvas terlebih dahulu sebelum membuka DevTools.",
+                "Open DevTools",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information
+            );
+            return;
+        }
+
+        try
+        {
+            core.Settings.AreDevToolsEnabled = true;
+            core.OpenDevToolsWindow();
+            if (_statusLabel.Visible)
+            {
+                _statusLabel.Text = $"Canvas status: DevTools opened {_currentUri}";
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                this,
+                ex.ToString(),
+                "Open DevTools Failed",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error
+            );
+        }
+    }
+
+    private void PositionCanvasOverlayButtons()
+    {
+        var hostPanel = _layoutSplit.Panel2;
+        if (hostPanel.ClientSize.Width <= 0 || hostPanel.ClientSize.Height <= 0)
+        {
+            return;
+        }
+
+        var topOffset = 12;
+        var rightOffset = 12;
+        _openDevToolsButton.Location = new Point(
+            Math.Max(8, hostPanel.ClientSize.Width - _openDevToolsButton.Width - rightOffset),
+            topOffset
+        );
+        _openDevToolsButton.BringToFront();
     }
 
     private static string? NormalizeOptional(string? value)
@@ -640,6 +716,17 @@ public sealed class FlowCanvasForm : Form
             .Trim()
             .ToLowerInvariant();
         return raw is "1" or "true" or "yes" or "on";
+    }
+
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        if (keyData == Keys.F12 || keyData == (Keys.Control | Keys.Shift | Keys.I))
+        {
+            OpenDevTools();
+            return true;
+        }
+
+        return base.ProcessCmdKey(ref msg, keyData);
     }
 
     private void UpdateButtons()

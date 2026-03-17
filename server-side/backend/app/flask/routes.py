@@ -10,8 +10,10 @@ from app.flask.socketio_init import flask_app
 from .utils.constants import HTTP_OK
 
 from app.storage.db import init_db
+from app.templates import ensure_template_schema
 
 init_db()
+ensure_template_schema()
 
 # Auth blueprint (SQL Server) – selalu didaftarkan
 from .app_routes.auth_routes import auth_blueprint
@@ -51,6 +53,10 @@ register_blueprint_with_v1_alias(node_blueprint, "node_blueprint")
 from .app_routes.upload_routes import upload_blueprint
 
 register_blueprint_with_v1_alias(upload_blueprint, "upload_blueprint")
+
+from .app_routes.template_routes import template_blueprint
+
+register_blueprint_with_v1_alias(template_blueprint, "template_blueprint")
 
 if is_server_static_files_enabled():
     # Only register static UI serving if the build folder exists.

@@ -6,6 +6,7 @@ import { ApplicationMenu, ApplicationMode } from "../AppLayout";
 import HelpPopup from "../../../components/popups/HelpPopup";
 import FlowErrorBoundary from "./FlowErrorBoundary";
 import { useVisibility } from "../../../providers/VisibilityProvider";
+import { useTemplateMode } from "../../../providers/TemplateModeProvider";
 
 interface FlowWrapperProps {
   children?: ReactNode;
@@ -29,6 +30,7 @@ function FlowWrapper({
   );
 
   const { getElement } = useVisibility();
+  const { isTemplateLocked } = useTemplateMode();
   const configPopup = getElement("configPopup");
 
   const handleMenuChange = useCallback((menu: ApplicationMenu) => {
@@ -39,22 +41,26 @@ function FlowWrapper({
   return (
     <>
       <FlowErrorBoundary>
-        <RightIconButton onClick={() => configPopup.show()} />
-        <RightIconButton
-          onClick={() => handleMenuChange("help")}
-          color="linear-gradient(135deg, rgba(88, 124, 136, 0.95) 0%, rgba(30, 55, 68, 0.95) 100%)"
-          bottom="80px"
-          icon={<FiHelpCircle />}
-        />
+        {!isTemplateLocked && (
+          <>
+            <RightIconButton onClick={() => configPopup.show()} />
+            <RightIconButton
+              onClick={() => handleMenuChange("help")}
+              color="linear-gradient(135deg, rgba(88, 124, 136, 0.95) 0%, rgba(30, 55, 68, 0.95) 100%)"
+              bottom="80px"
+              icon={<FiHelpCircle />}
+            />
 
-        <ConfigPopup
-          isOpen={configPopup.isVisible}
-          onClose={() => configPopup.hide()}
-        />
-        <HelpPopup
-          isOpen={menuState["help"]}
-          onClose={() => handleMenuChange("help")}
-        />
+            <ConfigPopup
+              isOpen={configPopup.isVisible}
+              onClose={() => configPopup.hide()}
+            />
+            <HelpPopup
+              isOpen={menuState["help"]}
+              onClose={() => handleMenuChange("help")}
+            />
+          </>
+        )}
         {children}
       </FlowErrorBoundary>
     </>

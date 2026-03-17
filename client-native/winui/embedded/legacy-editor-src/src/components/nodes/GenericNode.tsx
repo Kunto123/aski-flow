@@ -39,6 +39,7 @@ import {
   hasDiscriminatorChanged,
 } from "../../utils/nodeConfigurationUtils";
 import { evaluateCondition } from "../../utils/evaluateConditions";
+import { useTemplateMode } from "../../providers/TemplateModeProvider";
 
 interface GenericNodeProps extends NodeProps {
   data: GenericNodeData;
@@ -64,6 +65,7 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
       runNodeIfIdle,
     } = useContext(NodeContext);
     const { currentNodesRunning } = useContext(NodeRuntimeContext);
+    const { isTemplateLocked, isFieldEditable, canEditStructure } = useTemplateMode();
 
     const updateNodeInternals = useUpdateNodeInternals();
 
@@ -322,6 +324,9 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
     };
 
     function handleNodeDataChange(data: GenericNodeData) {
+      if (!canEditStructure && isTemplateLocked) {
+        return;
+      }
       onUpdateNodeData(id, data);
       updateNodeInternals(id);
       if (data.config.fields) {
@@ -334,6 +339,10 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
       value: any,
       target?: any,
     ) {
+      if (!isFieldEditable(data.name ?? id, fieldName)) {
+        return;
+      }
+
       const selectionStart = target?.selectionStart;
       const selectionEnd = target?.selectionEnd;
 

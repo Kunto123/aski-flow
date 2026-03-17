@@ -96,12 +96,81 @@ BEGIN
      'Memulai dan menghentikan training job', 0),
 
     ('workstation.manage_models',  'Kelola Model',
-     'Hapus dan kelola model terlatih', 0);
+     'Hapus dan kelola model terlatih', 0),
+
+    ('template.manage',            'Kelola Template Flow',
+     'Membuat dan memperbarui template flow untuk operator', 0),
+
+    ('template.use',               'Gunakan Template Flow',
+     'Memilih dan menjalankan template flow yang disediakan admin', 0);
 
     PRINT 'Default permissions inserted.';
 END
 ELSE
     PRINT 'Permissions already exist (skipped).';
+GO
+
+IF NOT EXISTS (SELECT 1 FROM aski_operator_permissions WHERE permission_key = 'template.manage')
+BEGIN
+    INSERT INTO aski_operator_permissions (permission_key, label, description, is_allowed)
+    VALUES ('template.manage', 'Kelola Template Flow',
+            'Membuat dan memperbarui template flow untuk operator', 0);
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM aski_operator_permissions WHERE permission_key = 'template.use')
+BEGIN
+    INSERT INTO aski_operator_permissions (permission_key, label, description, is_allowed)
+    VALUES ('template.use', 'Gunakan Template Flow',
+            'Memilih dan menjalankan template flow yang disediakan admin', 0);
+END
+GO
+
+-- ============================================================
+-- TABLE: aski_flow_templates
+-- ============================================================
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'aski_flow_templates')
+BEGIN
+    CREATE TABLE aski_flow_templates (
+        id                 INT IDENTITY(1,1) PRIMARY KEY,
+        name               NVARCHAR(200)     NOT NULL,
+        description        NVARCHAR(1000)    NULL,
+        is_active          BIT               NOT NULL DEFAULT 1,
+        current_version_id INT               NULL,
+        created_by         INT               NULL,
+        updated_by         INT               NULL,
+        created_at         DATETIME2         NOT NULL DEFAULT GETDATE(),
+        updated_at         DATETIME2         NOT NULL DEFAULT GETDATE()
+    );
+    PRINT 'Table aski_flow_templates created.';
+END
+ELSE
+    PRINT 'Table aski_flow_templates already exists (skipped).';
+GO
+
+-- ============================================================
+-- TABLE: aski_flow_template_versions
+-- ============================================================
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'aski_flow_template_versions')
+BEGIN
+    CREATE TABLE aski_flow_template_versions (
+        id             INT IDENTITY(1,1) PRIMARY KEY,
+        template_id    INT               NOT NULL,
+        version_number INT               NOT NULL,
+        flow_json      NVARCHAR(MAX)     NOT NULL,
+        policy_json    NVARCHAR(MAX)     NOT NULL,
+        flow_hash      NVARCHAR(64)      NOT NULL,
+        created_by     INT               NULL,
+        created_at     DATETIME2         NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT FK_aski_flow_template_versions_template
+            FOREIGN KEY (template_id) REFERENCES aski_flow_templates(id),
+        CONSTRAINT UQ_aski_flow_template_versions_template_version
+            UNIQUE (template_id, version_number)
+    );
+    PRINT 'Table aski_flow_template_versions created.';
+END
+ELSE
+    PRINT 'Table aski_flow_template_versions already exists (skipped).';
 GO
 
 PRINT '=== ASKI Auth setup complete! ===';

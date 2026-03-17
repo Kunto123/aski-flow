@@ -9,6 +9,7 @@ interface TabHeaderProps {
   activeTopTab: TopWorkspaceTab;
   onChangeTopTab: (tab: TopWorkspaceTab) => void;
   onRefresh: () => void;
+  showWorkstation?: boolean;
 }
 
 const TabHeader = ({
@@ -16,60 +17,69 @@ const TabHeader = ({
   activeTopTab,
   onChangeTopTab,
   onRefresh,
+  showWorkstation = true,
 }: TabHeaderProps) => {
   const logoSrc = useMemo(() => {
     return `${import.meta.env.BASE_URL}img/aski_logo.png`;
   }, []);
 
   return (
-    <TabsContainer className="aski-topbar z-30">
-      <button
-        type="button"
-        className="aski-hamburger"
-        aria-label="Toggle sidebar"
-        onClick={onToggleSidebar}
-      >
-        <FiMenu />
-      </button>
+    <TabsContainer className="aski-topbar">
+      <div className="aski-topbar-brand">
+        <button
+          type="button"
+          className="aski-hamburger"
+          aria-label="Toggle sidebar"
+          onClick={onToggleSidebar}
+        >
+          <FiMenu />
+        </button>
 
-      <div className="flex items-center gap-x-3">
-        <div className="flex items-center gap-x-3">
-          <img
-            src={logoSrc}
-            alt="ASKI"
-            className="h-9 select-none"
-          />
+        <img
+          src={logoSrc}
+          alt="ASKI"
+          className="aski-topbar-logo"
+        />
+      </div>
+
+      <div className="aski-topbar-center">
+        <div
+          className="aski-topbar-tabs"
+          role="tablist"
+          aria-label="Workspace navigation"
+        >
+          <button
+            className={`aski-top-tab ${activeTopTab === "canvas" ? "active" : ""}`}
+            onClick={() => onChangeTopTab("canvas")}
+            type="button"
+          >
+            Canvas
+          </button>
+          {showWorkstation && (
+            <button
+              className={`aski-top-tab ${
+                activeTopTab === "workstation" ? "active" : ""
+              }`}
+              onClick={() => onChangeTopTab("workstation")}
+              type="button"
+            >
+              Workstation
+            </button>
+          )}
         </div>
       </div>
 
-      <div className="mx-auto flex items-center gap-x-6">
+      <div className="aski-topbar-actions">
         <button
-          className={`aski-top-tab ${activeTopTab === "canvas" ? "active" : ""}`}
-          onClick={() => onChangeTopTab("canvas")}
           type="button"
+          className="aski-topbar-refresh"
+          aria-label="Refresh frontend and backend connection"
+          onClick={onRefresh}
         >
-          Canvas
-        </button>
-        <button
-          className={`aski-top-tab ${
-            activeTopTab === "workstation" ? "active" : ""
-          }`}
-          onClick={() => onChangeTopTab("workstation")}
-          type="button"
-        >
-          WorkStation
+          <FiRefreshCw />
+          <span className="aski-topbar-refresh-label">Refresh</span>
         </button>
       </div>
-
-      <button
-        type="button"
-        className="aski-topbar-refresh"
-        aria-label="Refresh frontend and backend connection"
-        onClick={onRefresh}
-      >
-        <FiRefreshCw />
-        Refresh
-      </button>
     </TabsContainer>
   );
 };

@@ -85,7 +85,7 @@ const Sidebar: React.FC<SidebarProps> = ({ nodes, edges, onChangeFlow }) => {
 const SidebarContainer = styled.div<{ $show: boolean }>`
   position: fixed;
   right: 0;
-  top: var(--aski-topbar-h);
+  top: var(--aski-shell-h);
   bottom: 0;
   width: min(420px, 36vw);
   color: ${({ theme }) => theme.text};

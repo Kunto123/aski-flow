@@ -6,9 +6,11 @@ import { FaPlus } from "react-icons/fa";
 import { useAuth } from "../../providers/AuthProvider";
 import PermissionsManager from "../../components/auth/PermissionsManager";
 import {
+  convertJsonToFlow,
   convertFlowToJson,
-  formatFlow,
   nodesTopologicalSort,
+  shiftNodesIntoViewport,
+  stripRuntimeStateFromNodes,
 } from "../../utils/flowUtils";
 import {
   toastErrorMessage,
@@ -49,6 +51,16 @@ import {
   WorkstationSection,
   WorkstationSidebar,
 } from "./workstation/WorkstationDummy";
+import {
+  FlowTemplateDetail,
+  FlowTemplatePolicy,
+  FlowTemplateSummary,
+  getFlowTemplate,
+  listFlowTemplates,
+} from "../../api/templates";
+import TemplatePickerPanel from "../../components/templates/TemplatePickerPanel";
+import TemplateSaveModal from "../../components/templates/TemplateSaveModal";
+import { TemplateModeProvider } from "../../providers/TemplateModeProvider";
 
 export interface FlowTab {
   nodes: Node[];
@@ -64,6 +76,10 @@ export interface FlowMetadata {
   hostUrl?: string;
   lastSave?: number;
   isPublic?: boolean;
+  templateId?: number;
+  templateVersionId?: number;
+  templateName?: string;
+  templatePolicy?: FlowTemplatePolicy;
 }
 
 export interface FlowManagerState {
@@ -119,11 +135,42 @@ function isLikelyCameraNode(node: any): boolean {
   );
 }
 
+function createEmptyFlowTab(): FlowTab {
+  return {
+    nodes: [],
+    edges: [],
+    metadata: { version: "1.0.0" },
+  };
+}
+
+function alignTemplateNodesForViewport(nodes: Node[]): Node[] {
+  if (nodes.length === 0) {
+    return [];
+  }
+
+  const normalizedNodes = stripRuntimeStateFromNodes(nodes).map((node) => {
+    const resolvedX = Number(node.position?.x);
+    const resolvedY = Number(node.position?.y);
+    return {
+      ...node,
+      position: {
+        x: Number.isFinite(resolvedX) ? resolvedX : 0,
+        y: Number.isFinite(resolvedY) ? resolvedY : 0,
+      },
+    };
+  });
+
+  // Template admin bisa tersimpan jauh ke kiri/atas maupun kanan/bawah.
+  // Saat operator memuat template, selalu geser graph ke area viewport awal
+  // agar node tetap terlihat walaupun fitView terlambat atau belum sempat berjalan.
+  return shiftNodesIntoViewport(normalizedNodes, 96, 72);
+}
+
 const FlowTabs = ({ tabs }: FlowTabsProps) => {
   const { t } = useTranslation("flow");
 
   const [flowTabs, setFlowTabs] = useState<FlowManagerState>({
-    tabs: tabs,
+    tabs: tabs.length > 0 ? tabs : [createEmptyFlowTab()],
   });
   const [currentTab, setCurrentTab] = useState(0);
   const [refresh, setRefresh] = useState(false);
@@ -134,18 +181,30 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
   const [activeTopTab, setActiveTopTab] = useState<TopWorkspaceTab>("canvas");
   const [workstationSection, setWorkstationSection] =
     useState<WorkstationSection>("annotate");
-  const [selectedEdgeType, setSelectedEdgeType] = useState("default");
   const [isTabletOrMobile, setIsTabletOrMobile] = useState(false);
-  const { user, isAdmin, hasPermission, logout } = useAuth();
+  const { user, isAdmin, isOperator, hasPermission, logout } = useAuth();
   const [showPermManager, setShowPermManager] = useState(false);
   const canEditCanvas = isAdmin || hasPermission("canvas.edit_flow");
+  const canUseTemplates = isAdmin || isOperator;
+  const isOperatorTemplateExperience = isOperator;
   const { getElement } = useVisibility();
   const [loading, startLoadingWith] = useLoading();
-  const configPopup = getElement("configPopup");
   const dndSidebar = getElement("dragAndDropSidebar");
+  const [templates, setTemplates] = useState<FlowTemplateSummary[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templatesError, setTemplatesError] = useState("");
+  const [showTemplateSaveModal, setShowTemplateSaveModal] = useState(false);
 
   const currentTabRef = useRef(currentTab);
   const flowTabsRef = useRef(flowTabs);
+  const currentFlowTab = flowTabs.tabs[currentTab] ?? createEmptyFlowTab();
+  const hasSelectedTemplate =
+    !!currentFlowTab.metadata?.templateId &&
+    !!currentFlowTab.metadata?.templateVersionId;
+  const isTemplateLocked = isOperatorTemplateExperience && hasSelectedTemplate;
+  const showWorkstation = !isOperatorTemplateExperience;
+  const shouldShowReadonlyCanvasState =
+    !canEditCanvas && !isOperatorTemplateExperience && !isTemplateLocked;
 
   useEffect(() => {
     connect();
@@ -162,7 +221,11 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
   useEffect(() => {
     const init = async () => {
       const savedCurrentTab = getCurrentTabIndex();
-      await handleChangeTab(parseInt(savedCurrentTab || "0"));
+      const parsedTab = parseInt(savedCurrentTab || "0", 10);
+      const safeTab = Number.isFinite(parsedTab)
+        ? Math.max(0, Math.min(parsedTab, Math.max(0, flowTabsRef.current.tabs.length - 1)))
+        : 0;
+      await handleChangeTab(safeTab);
       setRefresh((prev) => !prev);
     };
     init();
@@ -183,22 +246,57 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
   }, []);
 
   useEffect(() => {
-    saveTabsLocally(flowTabs.tabs);
-  }, [flowTabs]);
+    if (!isOperatorTemplateExperience) {
+      saveTabsLocally(flowTabs.tabs);
+    }
+  }, [flowTabs, isOperatorTemplateExperience]);
 
   useEffect(() => {
-    saveCurrentTabIndex(currentTab);
-  }, [currentTab]);
+    if (!isOperatorTemplateExperience) {
+      saveCurrentTabIndex(currentTab);
+    }
+  }, [currentTab, isOperatorTemplateExperience]);
+
+  useEffect(() => {
+    if (!showWorkstation && activeTopTab !== "canvas") {
+      setActiveTopTab("canvas");
+    }
+  }, [activeTopTab, showWorkstation]);
+
+  const loadTemplates = useCallback(async () => {
+    if (!canUseTemplates) {
+      setTemplates([]);
+      return;
+    }
+
+    setTemplatesLoading(true);
+    setTemplatesError("");
+    try {
+      const nextTemplates = await listFlowTemplates();
+      setTemplates(nextTemplates);
+    } catch (error: any) {
+      const message =
+        error?.response?.data?.error ??
+        error?.message ??
+        "Gagal memuat daftar template.";
+      setTemplates([]);
+      setTemplatesError(message);
+    } finally {
+      setTemplatesLoading(false);
+    }
+  }, [canUseTemplates]);
+
+  useEffect(() => {
+    if (isOperatorTemplateExperience) {
+      void loadTemplates();
+    }
+  }, [isOperatorTemplateExperience, loadTemplates]);
 
   const addNewFlowTab = () => {
     setFlowTabs((prevFlowTabs) => {
-      const newFlowTab = { ...prevFlowTabs };
-      newFlowTab.tabs.push({
-        nodes: [],
-        edges: [],
-        metadata: { version: "1.0.0" },
-      });
-      return newFlowTab;
+      const nextTabs = [...prevFlowTabs.tabs, createEmptyFlowTab()];
+      setCurrentTab(nextTabs.length - 1);
+      return { ...prevFlowTabs, tabs: nextTabs };
     });
   };
 
@@ -238,9 +336,77 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
     });
   };
 
+  const replaceCurrentTab = useCallback((nextTab: FlowTab) => {
+    setFlowTabs((prevFlowTabs) => {
+      const safeTabs =
+        prevFlowTabs.tabs.length > 0 ? [...prevFlowTabs.tabs] : [createEmptyFlowTab()];
+      safeTabs[currentTabRef.current] = nextTab;
+      return { ...prevFlowTabs, tabs: safeTabs };
+    });
+    setRefresh((prev) => !prev);
+  }, []);
+
+  const handleApplyTemplate = useCallback(
+    async (templateId: number) => {
+      try {
+        const detail = await startLoadingWith(getFlowTemplate, templateId);
+        const parsedFlow = convertJsonToFlow(detail.flow);
+        if (parsedFlow.nodes.length === 0) {
+          throw new Error("Template tidak memiliki node yang valid.");
+        }
+        const templateNodes = alignTemplateNodesForViewport(
+          parsedFlow.nodes as Node[],
+        );
+        replaceCurrentTab({
+          nodes: templateNodes,
+          edges: parsedFlow.edges as Edge[],
+          metadata: {
+            version: "1.0.0",
+            name: detail.name,
+            templateId: detail.id,
+            templateVersionId: detail.version_id ?? undefined,
+            templateName: detail.name,
+            templatePolicy: detail.policy,
+          },
+        });
+        toastInfoMessage(`Template '${detail.name}' dimuat.`);
+      } catch (error: any) {
+        const message =
+          error?.response?.data?.error ??
+          error?.message ??
+          "Gagal memuat template.";
+        toastErrorMessage(message);
+      }
+    },
+    [replaceCurrentTab, startLoadingWith],
+  );
+
+  const handleClearTemplateSelection = useCallback(() => {
+    if (isRunning) {
+      toastFastInfoMessage(t("CannotChangeTabWhileRunning"));
+      return;
+    }
+
+    replaceCurrentTab(createEmptyFlowTab());
+  }, [isRunning, replaceCurrentTab, t]);
+
+  const handleTemplateSaved = useCallback(
+    (template: FlowTemplateDetail) => {
+      handleMetadataChange({
+        ...currentFlowTab.metadata,
+        templateId: template.id,
+        templateVersionId: template.version_id ?? undefined,
+        templateName: template.name,
+        templatePolicy: template.policy,
+      });
+      toastInfoMessage(`Template '${template.name}' berhasil disimpan.`);
+    },
+    [currentFlowTab.metadata],
+  );
+
   const handleRunAllCurrentFlow = () => {
-    const nodes = flowTabs.tabs[currentTab].nodes;
-    const edges = flowTabs.tabs[currentTab].edges;
+    const nodes = currentFlowTab.nodes;
+    const edges = currentFlowTab.edges;
 
     if (nodes.length === 0) {
       toastFastInfoMessage(t("NoNodesToRun"));
@@ -263,7 +429,7 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
       name: "process_file",
       data: {
         jsonFile: JSON.stringify(flowFile),
-        metadata: flowTabs.tabs[currentTab].metadata,
+        metadata: currentFlowTab.metadata,
       },
     };
     void (async () => {
@@ -288,7 +454,8 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
   const handleChangeTab = useCallback(
     async (index: number) => {
       if (!isRunning) {
-        setCurrentTab(index);
+        const maxIndex = Math.max(0, flowTabsRef.current.tabs.length - 1);
+        setCurrentTab(Math.max(0, Math.min(index, maxIndex)));
       } else {
         toastFastInfoMessage(t("CannotChangeTabWhileRunning"));
       }
@@ -319,11 +486,10 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
 
   const handleAddNewFlow = (flowData: any) => {
     setFlowTabs((prevFlowTabs) => {
-      const newFlowTab = { ...prevFlowTabs };
-      newFlowTab.tabs.push(flowData);
-      return newFlowTab;
+      const nextTabs = [...prevFlowTabs.tabs, flowData];
+      setCurrentTab(nextTabs.length - 1);
+      return { ...prevFlowTabs, tabs: nextTabs };
     });
-    setCurrentTab(flowTabs.tabs.length - 1);
   };
 
   const handleChangeTabName = (index: number, name: string) => {
@@ -343,16 +509,18 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
     });
   };
 
-  const isSidebarOpen = !isTabletOrMobile || dndSidebar.isVisible;
+  const shouldRenderSidebar =
+    activeTopTab === "workstation" || !isOperatorTemplateExperience;
+  const isSidebarOpen = shouldRenderSidebar && (!isTabletOrMobile || dndSidebar.isVisible);
 
   const handleToggleSidebar = () => {
-    if (isTabletOrMobile) {
+    if (isTabletOrMobile && shouldRenderSidebar) {
       dndSidebar.toggle();
     }
   };
 
   const handleCloseSidebar = () => {
-    if (isTabletOrMobile && dndSidebar.isVisible) {
+    if (isTabletOrMobile && shouldRenderSidebar && dndSidebar.isVisible) {
       dndSidebar.hide();
     }
   };
@@ -464,28 +632,45 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
       {showPermManager && (
         <PermissionsManager onClose={() => setShowPermManager(false)} />
       )}
+      {showTemplateSaveModal && (
+        <TemplateSaveModal
+          isOpen={showTemplateSaveModal}
+          nodes={currentFlowTab.nodes}
+          edges={currentFlowTab.edges}
+          defaultName={
+            currentFlowTab.metadata?.templateName ||
+            currentFlowTab.metadata?.name ||
+            `${t("Flow")} ${currentTab + 1}`
+          }
+          onClose={() => setShowTemplateSaveModal(false)}
+          onSaved={handleTemplateSaved}
+        />
+      )}
       <TabHeader
         onToggleSidebar={handleToggleSidebar}
         activeTopTab={activeTopTab}
         onChangeTopTab={setActiveTopTab}
         onRefresh={handleRefreshApp}
+        showWorkstation={showWorkstation}
       />
 
-      <aside className={`aski-sidebar ${isSidebarOpen ? "is-open" : ""}`}>
-        {activeTopTab === "canvas" ? (
-          <DnDSidebar />
-        ) : (
-          <WorkstationSidebar
-            activeSection={workstationSection}
-            onSelect={(section) => {
-              setWorkstationSection(section);
-              if (isTabletOrMobile) {
-                dndSidebar.hide();
-              }
-            }}
-          />
-        )}
-      </aside>
+      {shouldRenderSidebar && (
+        <aside className={`aski-sidebar ${isSidebarOpen ? "is-open" : ""}`}>
+          {activeTopTab === "canvas" ? (
+            <DnDSidebar />
+          ) : (
+            <WorkstationSidebar
+              activeSection={workstationSection}
+              onSelect={(section) => {
+                setWorkstationSection(section);
+                if (isTabletOrMobile) {
+                  dndSidebar.hide();
+                }
+              }}
+            />
+          )}
+        </aside>
+      )}
 
       <div
         className={`aski-backdrop ${isSidebarOpen ? "is-open" : ""}`}
@@ -497,70 +682,130 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
       >
         {activeTopTab === "canvas" ? (
           <>
-            <div className="aski-canvas-header">
+            <div
+              className={`aski-canvas-header${
+                isOperatorTemplateExperience ? " operator-template" : ""
+              }`}
+            >
               <div className="aski-tabs-strip flex max-w-[72%] items-center">
-                {flowTabs.tabs.map((tab: any, index: number) => (
-                  <Tab
-                    key={index}
-                    index={index}
-                    active={index === currentTab}
-                    onChangeTab={handleChangeTab}
-                    onDeleteTab={handleDeleteFlow}
-                    onChangeTabName={handleChangeTabName}
-                    name={
-                      !!tab.metadata?.name
-                        ? tab.metadata.name
-                        : !!tab.name
-                          ? tab.name
-                          : t("Flow") + " " + (index + 1)
-                    }
-                  />
-                ))}
-                {canEditCanvas && (
-                  <button
-                    onClick={addNewFlowTab}
-                    className="aski-add-tab ml-1"
-                    aria-label="Add flow tab"
-                  >
-                    <FaPlus />
-                  </button>
+                {isOperatorTemplateExperience ? (
+                  <div className="aski-template-current">
+                    {hasSelectedTemplate
+                      ? currentFlowTab.metadata?.templateName || "Template Active"
+                      : "Choose Template"}
+                  </div>
+                ) : (
+                  <>
+                    {flowTabs.tabs.map((tab: any, index: number) => (
+                      <Tab
+                        key={index}
+                        index={index}
+                        active={index === currentTab}
+                        onChangeTab={handleChangeTab}
+                        onDeleteTab={handleDeleteFlow}
+                        onChangeTabName={handleChangeTabName}
+                        canManage={canEditCanvas}
+                        name={
+                          !!tab.metadata?.name
+                            ? tab.metadata.name
+                            : !!tab.name
+                              ? tab.name
+                              : t("Flow") + " " + (index + 1)
+                        }
+                      />
+                    ))}
+                    {canEditCanvas && (
+                      <button
+                        onClick={addNewFlowTab}
+                        className="aski-add-tab ml-1"
+                        aria-label="Add flow tab"
+                      >
+                        <FaPlus />
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
-              <div className="ml-3 flex items-center">
-                <ButtonRunAll
-                  onClick={handleRunAllCurrentFlow}
-                  isRunning={isRunning}
-                />
+              <div className="ml-3 flex items-center gap-3">
+                {isAdmin && (
+                  <button
+                    type="button"
+                    className="aski-template-toolbar-btn"
+                    onClick={() => setShowTemplateSaveModal(true)}
+                    disabled={currentFlowTab.nodes.length === 0}
+                  >
+                    Save Template
+                  </button>
+                )}
+                {isOperatorTemplateExperience && hasSelectedTemplate && (
+                  <button
+                    type="button"
+                    className="aski-template-toolbar-btn ghost"
+                    onClick={handleClearTemplateSelection}
+                  >
+                    Change Template
+                  </button>
+                )}
+                {(!isOperatorTemplateExperience || hasSelectedTemplate) && (
+                  <ButtonRunAll
+                    onClick={handleRunAllCurrentFlow}
+                    isRunning={isRunning}
+                  />
+                )}
               </div>
             </div>
 
-            <div className={`aski-canvas-body${canEditCanvas ? "" : " canvas-readonly"}`}>
-              <FlowDataProvider
-                flowTab={flowTabs.tabs[currentTab]}
-                onFlowChange={handleFlowChange}
-              >
-                <FlowWrapper
-                  key={`flow-${currentTab}`}
-                  mode={mode}
-                  onChangeMode={handleChangeMode}
-                  onAddNewFlow={handleAddNewFlow}
+            <div
+              className={`aski-canvas-body${
+                shouldShowReadonlyCanvasState ? " canvas-readonly" : ""
+              }`}
+            >
+              {isOperatorTemplateExperience && !hasSelectedTemplate ? (
+                <TemplatePickerPanel
+                  templates={templates}
+                  isLoading={templatesLoading || loading}
+                  errorMessage={templatesError}
+                  selectedTemplateId={currentFlowTab.metadata?.templateId ?? null}
+                  onRefresh={() => {
+                    void loadTemplates();
+                  }}
+                  onSelect={(templateId) => {
+                    void handleApplyTemplate(templateId);
+                  }}
+                />
+              ) : (
+                <TemplateModeProvider
+                  templatePolicy={currentFlowTab.metadata?.templatePolicy}
+                  isTemplateLocked={isTemplateLocked}
                 >
-                  {mode === "flow" && (
-                    <Flow
-                      key={`flow-${currentTab}-${refresh}`}
-                      nodes={flowTabs.tabs[currentTab]?.nodes ?? []}
-                      edges={flowTabs.tabs[currentTab]?.edges ?? []}
-                      metadata={flowTabs.tabs[currentTab]?.metadata ?? {}}
-                      onFlowChange={handleFlowChange}
-                      onUpdateMetadata={handleMetadataChange}
-                      showOnlyOutput={showOnlyOutput}
-                      isRunning={isRunning}
-                      onRunChange={handleChangeRun}
-                      onLoaded={() => {}}
-                    />
-                  )}
-                </FlowWrapper>
-              </FlowDataProvider>
+                  <FlowDataProvider
+                    flowTab={currentFlowTab}
+                    onFlowChange={handleFlowChange}
+                  >
+                    <FlowWrapper
+                      key={`flow-${currentTab}`}
+                      mode={mode}
+                      onChangeMode={handleChangeMode}
+                      onAddNewFlow={handleAddNewFlow}
+                    >
+                      {mode === "flow" && (
+                        <Flow
+                          key={`flow-${currentTab}-${currentFlowTab.metadata?.templateVersionId ?? "draft"}-${refresh}`}
+                          nodes={currentFlowTab.nodes ?? []}
+                          edges={currentFlowTab.edges ?? []}
+                          metadata={currentFlowTab.metadata ?? {}}
+                          onFlowChange={handleFlowChange}
+                          onUpdateMetadata={handleMetadataChange}
+                          showOnlyOutput={showOnlyOutput}
+                          isRunning={isRunning}
+                          onRunChange={handleChangeRun}
+                          onLoaded={() => {}}
+                        />
+                      )}
+                    </FlowWrapper>
+                  </FlowDataProvider>
+                </TemplateModeProvider>
+              )}
             </div>
           </>
         ) : (

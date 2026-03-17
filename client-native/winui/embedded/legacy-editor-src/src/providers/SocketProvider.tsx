@@ -79,6 +79,13 @@ export const SocketProvider = ({ children }: SocketProviderProps) => {
     return String(window.askiDesktop?.authToken || "").trim();
   }, []);
 
+  const getUserAuthToken = useCallback((): string => {
+    if (typeof window === "undefined") {
+      return "";
+    }
+    return String(localStorage.getItem("aski_auth_token") || "").trim();
+  }, []);
+
   const createNewSocket = useCallback((configuration?: WSConfiguration) => {
     if (configuration) {
       configRef.current = configuration;
@@ -90,14 +97,17 @@ export const SocketProvider = ({ children }: SocketProviderProps) => {
     }
 
     const authToken = getDesktopAuthToken();
+    const userToken = getUserAuthToken();
     const connectionOptions =
-      authToken.length > 0
+      authToken.length > 0 || userToken.length > 0
         ? {
             auth: {
-              auth_token: authToken,
+              ...(authToken.length > 0 ? { auth_token: authToken } : {}),
+              ...(userToken.length > 0 ? { user_token: userToken } : {}),
             },
             query: {
-              auth_token: authToken,
+              ...(authToken.length > 0 ? { auth_token: authToken } : {}),
+              ...(userToken.length > 0 ? { user_token: userToken } : {}),
             },
           }
         : undefined;
@@ -117,6 +127,9 @@ export const SocketProvider = ({ children }: SocketProviderProps) => {
       if (authToken.length > 0) {
         (appConfig as any).auth_token = authToken;
       }
+      if (userToken.length > 0) {
+        (appConfig as any).user_token = userToken;
+      }
       newSocket.emit("update_app_config", appConfig);
     };
 
@@ -126,7 +139,7 @@ export const SocketProvider = ({ children }: SocketProviderProps) => {
     socketRef.current = newSocket;
     setSocket(newSocket);
     return newSocket;
-  }, [getDesktopAuthToken]);
+  }, [getDesktopAuthToken, getUserAuthToken]);
 
   const getActiveSocket = useCallback((): FlowSocket | null => {
     if (socketRef.current) {
@@ -161,6 +174,7 @@ export const SocketProvider = ({ children }: SocketProviderProps) => {
     }
 
     const authToken = getDesktopAuthToken();
+    const userToken = getUserAuthToken();
     const payload: Record<string, any> = {
       ...event.data,
       parameters: getConfigParametersFlat(),
@@ -168,10 +182,13 @@ export const SocketProvider = ({ children }: SocketProviderProps) => {
     if (authToken.length > 0) {
       payload.auth_token = authToken;
     }
+    if (userToken.length > 0) {
+      payload.user_token = userToken;
+    }
 
     activeSocket.emit(event.name, payload);
     return true;
-  }, [getActiveSocket, getDesktopAuthToken]);
+  }, [getActiveSocket, getDesktopAuthToken, getUserAuthToken]);
 
   const connect = useCallback(() => {
     const activeSocket = getActiveSocket();

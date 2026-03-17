@@ -15,12 +15,14 @@ import { getAllTabs } from "./services/tabStorage";
 import { convertJsonToFlow } from "./utils/flowUtils";
 import { UserMessage } from "./components/popups/UserMessagePopup";
 import { useTranslation } from "react-i18next";
+import { useAuth } from "./providers/AuthProvider";
 
 interface AppProps {
   onLoadingComplete: () => void;
 }
 const App = ({ onLoadingComplete }: AppProps) => {
   const { dark } = useContext(ThemeContext);
+  const { user } = useAuth();
   const [runTour, setRunTour] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [showApp, setShowApp] = useState(false);
@@ -40,7 +42,7 @@ const App = ({ onLoadingComplete }: AppProps) => {
 
   useEffect(() => {
     loadAppData();
-  }, []);
+  }, [user?.role]);
 
   useEffect(() => {
     if (showApp) {
@@ -49,6 +51,10 @@ const App = ({ onLoadingComplete }: AppProps) => {
   }, [showApp]);
 
   const loadIntroFile = async () => {
+    if (user?.role === "operator") {
+      return [];
+    }
+
     const firstVisit = localStorage.getItem("firstVisit") !== "false";
     const savedFlowTabs = localStorage.getItem("flowTabs");
 
@@ -72,14 +78,23 @@ const App = ({ onLoadingComplete }: AppProps) => {
     return [];
   };
 
+  const createEmptyTab = (): FlowTab => ({
+    nodes: [],
+    edges: [],
+    metadata: { version: "1.0.0" },
+  });
+
   async function loadAppData() {
     try {
       await loadParameters();
       await loadExtensions();
       const defaultTabs = await loadIntroFile();
-      const allTabs = await getAllTabs();
+      const allTabs = user?.role === "operator" ? [] : await getAllTabs();
       if (allTabs.length === 0) {
         allTabs.push(...defaultTabs);
+      }
+      if (allTabs.length === 0) {
+        allTabs.push(createEmptyTab());
       }
       setAllTabs(allTabs);
     } catch (error) {
@@ -100,7 +115,7 @@ const App = ({ onLoadingComplete }: AppProps) => {
     <>
       {configLoaded && (
         <div
-          className={`${showApp ? "opacity-100" : "opacity-0"} transition-opacity duration-300 ease-in-out`}
+          className={`${showApp ? "opacity-100" : "opacity-0"} h-full w-full transition-opacity duration-300 ease-in-out`}
           id="main-content"
         >
           <VisibilityProvider>

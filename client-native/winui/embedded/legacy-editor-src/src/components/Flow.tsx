@@ -53,6 +53,7 @@ import {
   stopClientCameraPublisherByIndex,
   stopAllClientCameraPublishers,
 } from "../services/clientCameraPublishers";
+import { useTemplateMode } from "../providers/TemplateModeProvider";
 
 // ~15 FPS cap for intermediate stream preview updates (final completion is not throttled)
 const STREAM_PROGRESS_UI_MIN_INTERVAL_MS = 66;
@@ -137,9 +138,11 @@ const Flow = forwardRef((props: FlowProps, ref) => {
   const streamProgressPendingDataRef =
     useRef<Map<string, FlowOnProgressEventData>>(new Map());
   const skipNextOnFlowChangeRef = useRef(false);
+  const shouldAutoFitRef = useRef(true);
 
   const { getElement } = useVisibility();
   const { socket } = useContext(SocketContext);
+  const { canEditStructure, isTemplateLocked } = useTemplateMode();
   const minimap = getElement("minimap");
 
   useEffect(() => {
@@ -148,6 +151,17 @@ const Flow = forwardRef((props: FlowProps, ref) => {
       props.onRunChange(areNodesRunning);
     }
   }, [currentNodesRunning, props.isRunning, props.onRunChange]);
+
+  useEffect(() => {
+    setNodes(props.nodes ?? []);
+    setEdges(props.edges ?? []);
+  }, [props.nodes, props.edges]);
+
+  useEffect(() => {
+    if (props.metadata?.templateId || props.metadata?.templateVersionId) {
+      shouldAutoFitRef.current = true;
+    }
+  }, [props.metadata?.templateId, props.metadata?.templateVersionId]);
 
   const clearPendingProgressTimer = useCallback((nodeName?: string) => {
     if (!nodeName) return;
@@ -201,6 +215,9 @@ const Flow = forwardRef((props: FlowProps, ref) => {
   const [{ isOver }, dropRef] = useDrop({
     accept: "NODE",
     drop: (item, monitor) => {
+      if (!canEditStructure) {
+        return;
+      }
       onDrop(item, monitor);
     },
     collect: (monitor) => ({
@@ -213,6 +230,10 @@ const Flow = forwardRef((props: FlowProps, ref) => {
   };
 
   const addNode = (type: string, data?: any) => {
+    if (!canEditStructure) {
+      return;
+    }
+
     const reactFlowBounds = (
       reactFlowWrapper.current as any
     ).getBoundingClientRect();
@@ -415,14 +436,40 @@ const Flow = forwardRef((props: FlowProps, ref) => {
     };
   }, [reactFlowInstance]);
 
+  useEffect(() => {
+    if (!reactFlowInstance || !shouldAutoFitRef.current) {
+      return;
+    }
+
+    if (nodes.length === 0) {
+      shouldAutoFitRef.current = false;
+      return;
+    }
+
+    const rafId = requestAnimationFrame(() => {
+      reactFlowInstance.fitView({
+        padding: 0.2,
+        duration: 0,
+        maxZoom: 1.05,
+      });
+      shouldAutoFitRef.current = false;
+    });
+
+    return () => cancelAnimationFrame(rafId);
+  }, [reactFlowInstance, nodes, edges]);
+
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => {
+      if (!canEditStructure) {
+        return;
+      }
       setNodes((nds) => applyNodeChanges(changes, nds));
     },
-    [setNodes],
+    [canEditStructure, setNodes],
   );
 
   const onNodesDelete: OnNodesDelete = useCallback((removedNodes) => {
+    if (!canEditStructure) return;
     if (!removedNodes?.length) return;
     void (async () => {
       const clientSessionId = socket?.getId();
@@ -454,14 +501,22 @@ const Flow = forwardRef((props: FlowProps, ref) => {
         }),
       );
     })();
-  }, [socket]);
+  }, [canEditStructure, socket]);
   const onEdgesChange: OnEdgesChange = useCallback(
-    (changes) => setEdges((eds) => applyEdgeChanges(changes, eds)),
-    [setEdges],
+    (changes) => {
+      if (!canEditStructure) {
+        return;
+      }
+      setEdges((eds) => applyEdgeChanges(changes, eds));
+    },
+    [canEditStructure, setEdges],
   );
 
   const onConnect: OnConnect = useCallback(
-    (connection) =>
+    (connection) => {
+      if (!canEditStructure) {
+        return;
+      }
       setEdges((eds) => {
         if (
           isHandleAlreadyTargeted(connection, eds) ||
@@ -477,8 +532,9 @@ const Flow = forwardRef((props: FlowProps, ref) => {
           },
           eds,
         );
-      }),
-    [setEdges],
+      });
+    },
+    [canEditStructure, setEdges],
   );
 
   const onDragOver = useCallback((event: any) => {
@@ -490,6 +546,9 @@ const Flow = forwardRef((props: FlowProps, ref) => {
 
   const onDrop = useCallback(
     (item: any, monitor?: any) => {
+      if (!canEditStructure) {
+        return;
+      }
       if (
         !!reactFlowWrapper &&
         !!reactFlowInstance &&
@@ -523,7 +582,7 @@ const Flow = forwardRef((props: FlowProps, ref) => {
         setNodes((nds) => nds.concat(newNode));
       }
     },
-    [reactFlowInstance],
+    [canEditStructure, reactFlowInstance],
   );
 
   const isHandleAlreadyTargeted = (connection: Connection, eds: Edge[]) => {
@@ -624,6 +683,10 @@ const Flow = forwardRef((props: FlowProps, ref) => {
             minZoom={0.2}
             maxZoom={1.5}
             onLoad={props.onLoaded}
+            nodesDraggable={canEditStructure}
+            nodesConnectable={canEditStructure}
+            elementsSelectable={true}
+            connectOnClick={canEditStructure}
             // UX: enable middle-mouse (button 1) and right-mouse (button 2) drag to pan.
             // Left-mouse drag (button 0) on empty canvas continues to pan by default.
             panOnDrag={[0, 1, 2]}
@@ -645,7 +708,9 @@ const Flow = forwardRef((props: FlowProps, ref) => {
             )}
           </ReactFlowStyled>
         </div>
-        <SideBar nodes={nodes} edges={edges} onChangeFlow={handleChangeFlow} />
+        {!isTemplateLocked && (
+          <SideBar nodes={nodes} edges={edges} onChangeFlow={handleChangeFlow} />
+        )}
         <UserMessagePopup
           isOpen={isPopupOpen}
           onClose={handlePopupClose}

@@ -24,6 +24,17 @@ export const handleOutPrefix = "handle-out";
 export const handleSeparator = "-";
 const indexKeyHandleOut = 2;
 const indexKeyHandleIn = 2;
+const FLOW_RUNTIME_NODE_KEYS = [
+  "outputData",
+  "lastRun",
+  "isDone",
+  "isRunning",
+  "startup_status",
+  "startup_deferred",
+  "error",
+  "warning",
+  "missingFields",
+] as const;
 
 export function getConfig() {
   return CONFIG;
@@ -164,7 +175,17 @@ export function convertFlowToJson(
     }
 
     if (withCoordinates) {
-      nodeJson = { ...nodeJson, x: position.x, y: position.y };
+      const coordinatePayload: any = {
+        canvasX: position.x,
+        canvasY: position.y,
+      };
+      if (nodeJson.x === undefined) {
+        coordinatePayload.x = position.x;
+      }
+      if (nodeJson.y === undefined) {
+        coordinatePayload.y = position.y;
+      }
+      nodeJson = { ...nodeJson, ...coordinatePayload };
     }
     return nodeJson;
   });
@@ -243,17 +264,49 @@ export function convertJsonToFlow(json: any): {
   nodes: BasicNode[];
   edges: BasicEdge[];
 } {
+  let flowSource = json;
+  if (typeof flowSource === "string") {
+    try {
+      flowSource = JSON.parse(flowSource);
+    } catch (error) {
+      flowSource = [];
+    }
+  }
+
+  if (
+    flowSource &&
+    typeof flowSource === "object" &&
+    Array.isArray((flowSource as any).nodes)
+  ) {
+    const reactFlowNodes = (flowSource as any).nodes;
+    const reactFlowEdges = Array.isArray((flowSource as any).edges)
+      ? (flowSource as any).edges
+      : [];
+    flowSource = convertFlowToJson(reactFlowNodes, reactFlowEdges, true, true);
+  }
+
+  const flowDefinition = Array.isArray(flowSource) ? flowSource : [];
   const nodes: BasicNode[] = [];
   const edges: BasicEdge[] = [];
+  let hasInvalidCoordinates = false;
 
   // Create nodes
-  json.forEach((node: any) => {
-    const { x, y, ...nodeData } = node;
+  flowDefinition.forEach((node: any) => {
+    const { x, y, canvasX, canvasY, ...nodeData } = node;
+    const normalizedX = Number(canvasX ?? x);
+    const normalizedY = Number(canvasY ?? y);
+    const hasValidCoordinates =
+      Number.isFinite(normalizedX) && Number.isFinite(normalizedY);
+    if (!hasValidCoordinates) {
+      hasInvalidCoordinates = true;
+    }
 
     nodes.push({
       id: node.name,
       type: nodeData.processorType,
-      position: { x, y },
+      position: hasValidCoordinates
+        ? { x: normalizedX, y: normalizedY }
+        : { x: 0, y: 0 },
       data: {
         ...nodeData,
         config: !!nodeData.config
@@ -264,7 +317,7 @@ export function convertJsonToFlow(json: any): {
   });
 
   // Create edges
-  json.forEach((node: any) => {
+  flowDefinition.forEach((node: any) => {
     if (node.inputs) {
       node.inputs.forEach((input: any, index: number) => {
         let targetHandleIndex = index;
@@ -318,7 +371,54 @@ export function convertJsonToFlow(json: any): {
     }
   });
 
+  if (hasInvalidCoordinates && nodes.length > 0) {
+    formatFlow(nodes, edges);
+  }
+
   return { nodes, edges };
+}
+
+export function stripRuntimeStateFromNodes<T extends BasicNode>(nodes: T[]): T[] {
+  return nodes.map((node) => {
+    const cleanData = { ...(node.data as Record<string, any>) };
+    for (const key of FLOW_RUNTIME_NODE_KEYS) {
+      delete cleanData[key];
+    }
+    return {
+      ...node,
+      data: cleanData,
+    } as T;
+  });
+}
+
+export function shiftNodesIntoViewport<T extends BasicNode>(
+  nodes: T[],
+  paddingX = 120,
+  paddingY = 100,
+): T[] {
+  if (!nodes.length) {
+    return nodes;
+  }
+
+  const minX = Math.min(...nodes.map((node) => Number(node.position?.x ?? 0)));
+  const minY = Math.min(...nodes.map((node) => Number(node.position?.y ?? 0)));
+  const deltaX = paddingX - minX;
+  const deltaY = paddingY - minY;
+
+  if (
+    (!Number.isFinite(deltaX) && !Number.isFinite(deltaY)) ||
+    (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1)
+  ) {
+    return nodes;
+  }
+
+  return nodes.map((node) => ({
+    ...node,
+    position: {
+      x: Number(node.position?.x ?? 0) + (Number.isFinite(deltaX) ? deltaX : 0),
+      y: Number(node.position?.y ?? 0) + (Number.isFinite(deltaY) ? deltaY : 0),
+    },
+  }));
 }
 
 export function migrateConfig(oldConfig: FlowTab) {
