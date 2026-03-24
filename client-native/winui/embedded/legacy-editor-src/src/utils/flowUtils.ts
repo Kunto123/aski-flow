@@ -429,3 +429,39 @@ export function migrateConfig(oldConfig: FlowTab) {
     });
   }
 }
+
+/**
+ * Syncs each node's stored config schema with the latest nodeConfig registry.
+ *
+ * Why: When a node type gains new fields (or updates labels/options/defaults),
+ * templates saved before that change still carry the old config schema.
+ * This function replaces the stored config with the current one from nodeConfig,
+ * while preserving all field VALUES that are stored at the top-level of node.data.
+ *
+ * Field values are NOT inside config.fields — they live directly on node.data
+ * (e.g. node.data.conf_threshold = 0.5). The config object is purely schema
+ * (field definitions: name, type, label, defaultValue, options, etc.).
+ * Replacing config therefore never loses user-set values.
+ *
+ * New fields added to nodeConfig will appear in the UI with their defaultValue;
+ * the user must fill them in if needed.
+ *
+ * Unknown processorTypes (extensions not registered yet) are left unchanged.
+ */
+export function syncNodeConfigs<T extends BasicNode>(nodes: T[]): T[] {
+  return nodes.map((node) => {
+    const processorType = node.data?.processorType as string | undefined;
+    if (!processorType) return node;
+
+    const latestConfig = getConfigViaType(processorType);
+    if (!latestConfig) return node;
+
+    return {
+      ...node,
+      data: {
+        ...node.data,
+        config: latestConfig,
+      },
+    };
+  });
+}

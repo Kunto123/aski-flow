@@ -11,6 +11,7 @@ import {
   nodesTopologicalSort,
   shiftNodesIntoViewport,
   stripRuntimeStateFromNodes,
+  syncNodeConfigs,
 } from "../../utils/flowUtils";
 import {
   toastErrorMessage,
@@ -58,8 +59,10 @@ import {
   getFlowTemplate,
   listFlowTemplates,
 } from "../../api/templates";
+import { getActiveDeployment, TemplateDeployment } from "../../api/qc";
 import TemplatePickerPanel from "../../components/templates/TemplatePickerPanel";
 import TemplateSaveModal from "../../components/templates/TemplateSaveModal";
+import TemplateManagerPanel from "../../components/templates/TemplateManagerPanel";
 import { TemplateModeProvider } from "../../providers/TemplateModeProvider";
 
 export interface FlowTab {
@@ -192,8 +195,21 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
   const dndSidebar = getElement("dragAndDropSidebar");
   const [templates, setTemplates] = useState<FlowTemplateSummary[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
+  // Deployment context – read line_id / station_id from URL query params
+  const [deploymentContext] = useState<{ lineId: string; stationId: string } | null>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const lineId = params.get("line_id")?.trim() ?? "";
+      const stationId = params.get("station_id")?.trim() ?? "";
+      return lineId && stationId ? { lineId, stationId } : null;
+    } catch {
+      return null;
+    }
+  });
+  const [activeDeployment, setActiveDeployment] = useState<TemplateDeployment | null>(null);
   const [templatesError, setTemplatesError] = useState("");
   const [showTemplateSaveModal, setShowTemplateSaveModal] = useState(false);
+  const [showTemplateManager, setShowTemplateManager] = useState(false);
 
   const currentTabRef = useRef(currentTab);
   const flowTabsRef = useRef(flowTabs);
@@ -292,6 +308,35 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
     }
   }, [isOperatorTemplateExperience, loadTemplates]);
 
+  // Auto-load active deployment template when line_id + station_id are present
+  useEffect(() => {
+    if (!isOperatorTemplateExperience || !deploymentContext) return;
+
+    const { lineId, stationId } = deploymentContext;
+    let cancelled = false;
+
+    const autoLoad = async () => {
+      try {
+        const deployment = await getActiveDeployment(lineId, stationId);
+        if (cancelled) return;
+        if (!deployment) return;
+        setActiveDeployment(deployment);
+        // Only auto-apply if operator hasn't already selected a template
+        if (!currentFlowTab.metadata?.templateId) {
+          void handleApplyTemplate(deployment.template_id);
+        }
+      } catch {
+        // Silent – operator can still pick manually
+      }
+    };
+
+    void autoLoad();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOperatorTemplateExperience, deploymentContext]);
+
   const addNewFlowTab = () => {
     setFlowTabs((prevFlowTabs) => {
       const nextTabs = [...prevFlowTabs.tabs, createEmptyFlowTab()];
@@ -354,8 +399,12 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
         if (parsedFlow.nodes.length === 0) {
           throw new Error("Template tidak memiliki node yang valid.");
         }
+        // Sync each node's config schema to the latest nodeConfig registry.
+        // This ensures new fields added after the template was saved appear
+        // in the UI. Stored field values (on node.data) are never touched.
+        const syncedNodes = syncNodeConfigs(parsedFlow.nodes);
         const templateNodes = alignTemplateNodesForViewport(
-          parsedFlow.nodes as Node[],
+          syncedNodes as Node[],
         );
         replaceCurrentTab({
           nodes: templateNodes,
@@ -646,6 +695,13 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
           onSaved={handleTemplateSaved}
         />
       )}
+      {isAdmin && (
+        <TemplateManagerPanel
+          isOpen={showTemplateManager}
+          onClose={() => setShowTemplateManager(false)}
+          onLoad={handleApplyTemplate}
+        />
+      )}
       <TabHeader
         onToggleSidebar={handleToggleSidebar}
         activeTopTab={activeTopTab}
@@ -728,14 +784,23 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
               </div>
               <div className="ml-3 flex items-center gap-3">
                 {isAdmin && (
-                  <button
-                    type="button"
-                    className="aski-template-toolbar-btn"
-                    onClick={() => setShowTemplateSaveModal(true)}
-                    disabled={currentFlowTab.nodes.length === 0}
-                  >
-                    Save Template
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="aski-template-toolbar-btn"
+                      onClick={() => setShowTemplateSaveModal(true)}
+                      disabled={currentFlowTab.nodes.length === 0}
+                    >
+                      Save Template
+                    </button>
+                    <button
+                      type="button"
+                      className="aski-template-toolbar-btn ghost"
+                      onClick={() => setShowTemplateManager(true)}
+                    >
+                      Manage Templates
+                    </button>
+                  </>
                 )}
                 {isOperatorTemplateExperience && hasSelectedTemplate && (
                   <button
@@ -761,18 +826,37 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
               }`}
             >
               {isOperatorTemplateExperience && !hasSelectedTemplate ? (
-                <TemplatePickerPanel
-                  templates={templates}
-                  isLoading={templatesLoading || loading}
-                  errorMessage={templatesError}
-                  selectedTemplateId={currentFlowTab.metadata?.templateId ?? null}
-                  onRefresh={() => {
-                    void loadTemplates();
-                  }}
-                  onSelect={(templateId) => {
-                    void handleApplyTemplate(templateId);
-                  }}
-                />
+                <>
+                  {activeDeployment && (
+                    <div className="aski-deployment-badge">
+                      <span>
+                        Line: <strong>{activeDeployment.line_id}</strong> / Station:{" "}
+                        <strong>{activeDeployment.station_id}</strong> — Active template:{" "}
+                        <strong>{activeDeployment.template_name}</strong> v
+                        {activeDeployment.version_number}
+                      </span>
+                      <button
+                        type="button"
+                        className="aski-deployment-apply-btn"
+                        onClick={() => void handleApplyTemplate(activeDeployment.template_id)}
+                      >
+                        Apply Deployment Template
+                      </button>
+                    </div>
+                  )}
+                  <TemplatePickerPanel
+                    templates={templates}
+                    isLoading={templatesLoading || loading}
+                    errorMessage={templatesError}
+                    selectedTemplateId={currentFlowTab.metadata?.templateId ?? null}
+                    onRefresh={() => {
+                      void loadTemplates();
+                    }}
+                    onSelect={(templateId) => {
+                      void handleApplyTemplate(templateId);
+                    }}
+                  />
+                </>
               ) : (
                 <TemplateModeProvider
                   templatePolicy={currentFlowTab.metadata?.templatePolicy}

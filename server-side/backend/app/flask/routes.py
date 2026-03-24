@@ -11,9 +11,12 @@ from .utils.constants import HTTP_OK
 
 from app.storage.db import init_db
 from app.templates import ensure_template_schema
+from app.qc.schema import ensure_qc_schema, ensure_rbac_schema
 
 init_db()
 ensure_template_schema()
+ensure_qc_schema()
+ensure_rbac_schema()
 
 # Auth blueprint (SQL Server) – selalu didaftarkan
 from .app_routes.auth_routes import auth_blueprint
@@ -62,6 +65,17 @@ register_blueprint_with_v1_alias(upload_blueprint, "upload_blueprint")
 from .app_routes.template_routes import template_blueprint
 
 register_blueprint_with_v1_alias(template_blueprint, "template_blueprint")
+
+# QC domain blueprints – public read + admin write
+from .app_routes.deployment_routes import deployment_blueprint
+from .app_routes.inspection_routes import inspection_blueprint
+from .app_routes.dashboard_routes import dashboard_blueprint
+from .app_routes.rbac_routes import rbac_blueprint
+
+register_blueprint_with_v1_alias(deployment_blueprint, "deployment_blueprint")
+register_blueprint_with_v1_alias(inspection_blueprint, "inspection_blueprint")
+register_blueprint_with_v1_alias(dashboard_blueprint, "dashboard_blueprint")
+register_blueprint_with_v1_alias(rbac_blueprint, "rbac_blueprint")
 
 if is_server_static_files_enabled():
     # Only register static UI serving if the build folder exists.

@@ -211,6 +211,7 @@ def _map_template_row(row: dict[str, Any]) -> dict[str, Any]:
     mapped["is_active"] = bool(mapped.get("is_active"))
     mapped["flow"] = _deserialize_json(mapped.pop("flow_json", None), [])
     mapped["policy"] = _deserialize_json(mapped.pop("policy_json", None), {"graphLocked": True, "nodes": {}})
+    mapped["inspection_recipe"] = _deserialize_json(mapped.pop("inspection_recipe_json", None), None)
     mapped["created_at"] = str(mapped.get("created_at")) if mapped.get("created_at") else None
     mapped["updated_at"] = str(mapped.get("updated_at")) if mapped.get("updated_at") else None
     mapped["version_created_at"] = (
@@ -293,6 +294,7 @@ def get_template_detail(template_id: int) -> dict[str, Any] | None:
                 v.version_number,
                 v.flow_json,
                 v.policy_json,
+                v.inspection_recipe_json,
                 v.created_at AS version_created_at
             FROM aski_flow_templates t
             LEFT JOIN aski_flow_template_versions v ON v.id = t.current_version_id
@@ -326,6 +328,7 @@ def get_template_version_detail(template_id: int, version_id: int | None = None)
                     v.version_number,
                     v.flow_json,
                     v.policy_json,
+                    v.inspection_recipe_json,
                     v.created_at AS version_created_at
                 FROM aski_flow_templates t
                 INNER JOIN aski_flow_template_versions v ON v.id = t.current_version_id
@@ -349,6 +352,7 @@ def get_template_version_detail(template_id: int, version_id: int | None = None)
                     v.version_number,
                     v.flow_json,
                     v.policy_json,
+                    v.inspection_recipe_json,
                     v.created_at AS version_created_at
                 FROM aski_flow_templates t
                 INNER JOIN aski_flow_template_versions v ON v.template_id = t.id
@@ -364,12 +368,25 @@ def get_template_version_detail(template_id: int, version_id: int | None = None)
         return _map_template_row(row_to_dict(cur, row))
 
 
+def _validate_inspection_recipe(recipe: Any) -> dict | None:
+    """Basic structural validation for inspection recipe. Returns normalized recipe or None."""
+    if recipe is None:
+        return None
+    if not isinstance(recipe, dict):
+        raise ValueError("inspection_recipe harus berupa objek JSON.")
+    targets = recipe.get("targets")
+    if targets is not None and not isinstance(targets, list):
+        raise ValueError("inspection_recipe.targets harus berupa array.")
+    return recipe
+
+
 def create_template(
     *,
     name: str,
     description: str,
     flow_definition: Any,
     policy_definition: Any,
+    inspection_recipe: Any = None,
     created_by: int,
 ) -> dict[str, Any]:
     normalized_name = str(name or "").strip()
@@ -378,8 +395,10 @@ def create_template(
 
     normalized_flow = normalize_flow_definition(flow_definition)
     normalized_policy = normalize_template_policy(policy_definition, normalized_flow)
+    validated_recipe = _validate_inspection_recipe(inspection_recipe)
     flow_json = _serialize_json(normalized_flow)
     policy_json = _serialize_json(normalized_policy)
+    recipe_json = _serialize_json(validated_recipe) if validated_recipe is not None else None
 
     with db_cursor() as cur:
         cur.execute(
@@ -402,10 +421,11 @@ def create_template(
                 flow_json,
                 policy_json,
                 flow_hash,
-                created_by
+                created_by,
+                inspection_recipe_json
             )
             OUTPUT INSERTED.id
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             template_id,
             1,
@@ -413,6 +433,7 @@ def create_template(
             policy_json,
             _flow_hash(normalized_flow),
             int(created_by),
+            recipe_json,
         )
         version_id = int(cur.fetchone()[0])
         cur.execute(
@@ -439,6 +460,7 @@ def update_template(
     description: str | None,
     flow_definition: Any | None,
     policy_definition: Any | None,
+    inspection_recipe: Any = None,
     updated_by: int,
     is_active: bool | None = None,
 ) -> dict[str, Any]:
@@ -473,14 +495,21 @@ def update_template(
             int(template_id),
         )
 
-    should_create_version = flow_definition is not None or policy_definition is not None
+    should_create_version = (
+        flow_definition is not None
+        or policy_definition is not None
+        or inspection_recipe is not None
+    )
     if should_create_version:
         base_flow = flow_definition if flow_definition is not None else current["flow"]
         base_policy = policy_definition if policy_definition is not None else current["policy"]
+        base_recipe = inspection_recipe if inspection_recipe is not None else current.get("inspection_recipe")
         normalized_flow = normalize_flow_definition(base_flow)
         normalized_policy = normalize_template_policy(base_policy, normalized_flow)
+        validated_recipe = _validate_inspection_recipe(base_recipe)
         flow_json = _serialize_json(normalized_flow)
         policy_json = _serialize_json(normalized_policy)
+        recipe_json = _serialize_json(validated_recipe) if validated_recipe is not None else None
         next_version_number = int(current.get("version_number") or 0) + 1
 
         with db_cursor() as cur:
@@ -492,10 +521,11 @@ def update_template(
                     flow_json,
                     policy_json,
                     flow_hash,
-                    created_by
+                    created_by,
+                    inspection_recipe_json
                 )
                 OUTPUT INSERTED.id
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 int(template_id),
                 next_version_number,
@@ -503,6 +533,7 @@ def update_template(
                 policy_json,
                 _flow_hash(normalized_flow),
                 int(updated_by),
+                recipe_json,
             )
             version_id = int(cur.fetchone()[0])
             cur.execute(

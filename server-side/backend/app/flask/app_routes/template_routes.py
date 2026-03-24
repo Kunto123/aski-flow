@@ -53,6 +53,7 @@ def handle_create_template():
             description=payload.get("description"),
             flow_definition=payload.get("flow"),
             policy_definition=payload.get("policy"),
+            inspection_recipe=payload.get("inspection_recipe"),
             created_by=int(g.user_id),
         )
     except ValueError as exc:
@@ -71,6 +72,7 @@ def handle_update_template(template_id: int):
             description=payload.get("description"),
             flow_definition=payload.get("flow"),
             policy_definition=payload.get("policy"),
+            inspection_recipe=payload.get("inspection_recipe"),
             updated_by=int(g.user_id),
             is_active=payload.get("is_active"),
         )

@@ -13,6 +13,8 @@ import { faceRecognitionNodeConfig } from "./faceRecognitionNode";
 import { qrCodeReaderNodeConfig } from "./qrCodeReaderNode";
 import { ocrReaderNodeConfig } from "./ocrReaderNode";
 import { lampControlNodeConfig } from "./lampControlNode";
+import { stickerValidatorNodeConfig } from "./stickerValidatorNode";
+import { inspectionDbWriterNodeConfig } from "./inspectionDbWriterNode";
 
 export const nodeConfigs: { [key: string]: NodeConfig | undefined } = {
   // Week 5 roadmap nodes
@@ -28,6 +30,9 @@ export const nodeConfigs: { [key: string]: NodeConfig | undefined } = {
   "qr-code-reader": qrCodeReaderNodeConfig,
   "ocr-reader": ocrReaderNodeConfig,
   "lamp-control": lampControlNodeConfig,
+  // QC domain nodes
+  "sticker-validator": stickerValidatorNodeConfig,
+  "inspection-db-writer": inspectionDbWriterNodeConfig,
   // add other configs here...
 };
 

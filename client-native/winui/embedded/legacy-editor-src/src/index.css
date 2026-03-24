@@ -604,6 +604,155 @@ body {
   background: transparent;
 }
 
+/* ── Template Manager Panel ─────────────────────────────────── */
+.aski-tmgr {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 70vh;
+  overflow: hidden;
+}
+
+.aski-tmgr-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(171, 214, 226, 0.1);
+}
+
+.aski-tmgr-count {
+  font-size: 13px;
+  color: rgba(182, 213, 223, 0.8);
+}
+
+.aski-tmgr-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.aski-tmgr-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(171, 214, 226, 0.1);
+  transition: border-color 120ms ease;
+}
+
+.aski-tmgr-row:hover {
+  border-color: rgba(171, 214, 226, 0.22);
+}
+
+.aski-tmgr-row.inactive {
+  opacity: 0.55;
+}
+
+.aski-tmgr-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.aski-tmgr-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  color: #f5fafc;
+  flex-wrap: wrap;
+}
+
+.aski-tmgr-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.aski-tmgr-badge.active {
+  background: rgba(38, 170, 100, 0.25);
+  color: #7ef5b0;
+}
+
+.aski-tmgr-badge.inactive {
+  background: rgba(200, 80, 80, 0.2);
+  color: #fca3a3;
+}
+
+.aski-tmgr-version {
+  font-size: 11px;
+  color: rgba(171, 214, 226, 0.55);
+}
+
+.aski-tmgr-desc {
+  font-size: 12px;
+  color: rgba(182, 213, 223, 0.75);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.aski-tmgr-meta {
+  font-size: 11px;
+  color: rgba(171, 214, 226, 0.4);
+  margin-top: 2px;
+}
+
+.aski-tmgr-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.aski-template-toolbar-btn.primary {
+  background: rgba(38, 102, 119, 0.75);
+}
+
+.aski-template-toolbar-btn.danger {
+  color: #fca3a3;
+  border-color: rgba(200, 80, 80, 0.35);
+}
+
+.aski-template-toolbar-btn.danger:hover:not(:disabled) {
+  background: rgba(200, 80, 80, 0.15);
+}
+
+.aski-tmgr-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.aski-tmgr-edit-input,
+.aski-tmgr-edit-textarea {
+  width: 100%;
+  background: rgba(5, 18, 25, 0.7);
+  border: 1px solid rgba(171, 214, 226, 0.2);
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: #f5fafc;
+  font: inherit;
+  font-size: 13px;
+}
+
+.aski-tmgr-edit-input:focus,
+.aski-tmgr-edit-textarea:focus {
+  outline: none;
+  border-color: rgba(171, 214, 226, 0.45);
+}
+
 .aski-template-field-locked {
   pointer-events: none;
   opacity: 0.62;

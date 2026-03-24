@@ -23,9 +23,32 @@ export interface FlowTemplateSummary {
   version_created_at: string | null;
 }
 
+// ── Inspection Recipe ────────────────────────────────────────────────────────
+
+export interface InspectionRecipeTarget {
+  target_id: string;
+  part_name?: string | null;
+  expected_class?: string | null;
+  roi_node_name?: string | null;
+  min_roi_confidence?: number | null;
+  min_class_confidence?: number | null;
+  max_offset_x?: number | null;
+  max_offset_y?: number | null;
+  max_angle_deg?: number | null;
+  expected_cx?: number | null;
+  expected_cy?: number | null;
+  expected_angle_deg?: number | null;
+}
+
+export interface InspectionRecipe {
+  part_name?: string | null;
+  targets: InspectionRecipeTarget[];
+}
+
 export interface FlowTemplateDetail extends FlowTemplateSummary {
   flow: any[];
   policy: FlowTemplatePolicy;
+  inspection_recipe?: InspectionRecipe | null;
 }
 
 export interface SaveFlowTemplatePayload {
@@ -33,6 +56,7 @@ export interface SaveFlowTemplatePayload {
   description?: string;
   flow: any[];
   policy: FlowTemplatePolicy;
+  inspection_recipe?: InspectionRecipe | null;
 }
 
 export async function listFlowTemplates(options?: {

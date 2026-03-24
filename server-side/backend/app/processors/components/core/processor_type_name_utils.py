@@ -30,3 +30,5 @@ class ProcessorType(Enum):
     IMAGE_PROCESSING = "image-processing"
     CONDITIONAL_STATE = "conditional-state"
     PYTHON_CODE = "python-code"
+    STICKER_VALIDATOR = "sticker-validator"
+    INSPECTION_DB_WRITER = "inspection-db-writer"
