@@ -5,6 +5,7 @@ __pycache__/
 # Fichiers générés par l'IDE
 .idea/
 .vscode/
+.aski
 
 # Fichiers de logs
 *.log
