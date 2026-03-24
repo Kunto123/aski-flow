@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Modal } from "@mantine/core";
 import {
   FlowTemplateSummary,
   FlowTemplateDetail,
   listFlowTemplates,
   updateFlowTemplate,
+  deleteFlowTemplate,
   getFlowTemplate,
 } from "../../api/templates";
 import { toastErrorMessage, toastInfoMessage } from "../../utils/toastUtils";
@@ -35,6 +36,8 @@ export default function TemplateManagerPanel({
   const [editState, setEditState] = useState<EditState>({ name: "", description: "" });
   const [saving, setSaving] = useState(false);
   const [loadingTemplateId, setLoadingTemplateId] = useState<number | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const loadTemplates = useCallback(async () => {
     setLoading(true);
@@ -123,6 +126,42 @@ export default function TemplateManagerPanel({
     }
   };
 
+  // ── Delete ────────────────────────────────────────────────────────────────
+  const handleDelete = async (templateId: number) => {
+    setDeleting(true);
+    try {
+      await deleteFlowTemplate(templateId);
+      toastInfoMessage("Template berhasil dihapus.");
+      setConfirmDeleteId(null);
+      await loadTemplates();
+    } catch (err: any) {
+      toastErrorMessage(
+        err?.response?.data?.error ?? err?.message ?? "Gagal menghapus template.",
+      );
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  // ── Version display — disambiguate same-name templates ────────────────────
+  const nameGroupMap = useMemo(() => {
+    const groups: Record<string, number[]> = {};
+    templates.forEach((t) => {
+      const key = t.name.toLowerCase().trim();
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(t.id);
+    });
+    return groups;
+  }, [templates]);
+
+  const getDisplayVersion = (template: FlowTemplateSummary): number => {
+    const key = template.name.toLowerCase().trim();
+    const group = nameGroupMap[key] ?? [];
+    if (group.length <= 1) return template.version_number ?? 1;
+    const sorted = [...group].sort((a, b) => a - b);
+    return sorted.indexOf(template.id) + 1;
+  };
+
   const activeCount = templates.filter((t) => t.is_active).length;
 
   return (
@@ -200,7 +239,7 @@ export default function TemplateManagerPanel({
                           {template.is_active ? "Aktif" : "Nonaktif"}
                         </span>
                         <span className="aski-tmgr-version">
-                          v{template.version_number ?? 1}
+                          v{getDisplayVersion(template)}
                         </span>
                         {template.name}
                       </div>
@@ -240,6 +279,26 @@ export default function TemplateManagerPanel({
                         Batal
                       </button>
                     </>
+                  ) : confirmDeleteId === template.id ? (
+                    <>
+                      <span className="aski-tmgr-confirm-label">Hapus permanen?</span>
+                      <button
+                        type="button"
+                        className="aski-template-toolbar-btn danger"
+                        onClick={() => void handleDelete(template.id)}
+                        disabled={deleting}
+                      >
+                        {deleting ? "Menghapus..." : "Ya, Hapus"}
+                      </button>
+                      <button
+                        type="button"
+                        className="aski-template-toolbar-btn ghost"
+                        onClick={() => setConfirmDeleteId(null)}
+                        disabled={deleting}
+                      >
+                        Batal
+                      </button>
+                    </>
                   ) : (
                     <>
                       <button
@@ -265,6 +324,14 @@ export default function TemplateManagerPanel({
                         title={template.is_active ? "Nonaktifkan" : "Aktifkan"}
                       >
                         {template.is_active ? "Nonaktifkan" : "Aktifkan"}
+                      </button>
+                      <button
+                        type="button"
+                        className="aski-template-toolbar-btn ghost danger"
+                        onClick={() => setConfirmDeleteId(template.id)}
+                        title="Hapus template"
+                      >
+                        Hapus
                       </button>
                     </>
                   )}

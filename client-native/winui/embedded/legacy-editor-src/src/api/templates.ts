@@ -92,3 +92,7 @@ export async function updateFlowTemplate(
   );
   return response.data;
 }
+
+export async function deleteFlowTemplate(templateId: number): Promise<void> {
+  await apiClient.delete(`/templates/${templateId}`);
+}

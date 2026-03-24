@@ -753,6 +753,13 @@ body {
   border-color: rgba(171, 214, 226, 0.45);
 }
 
+.aski-tmgr-confirm-label {
+  font-size: 12px;
+  color: #fca3a3;
+  align-self: center;
+  white-space: nowrap;
+}
+
 .aski-template-field-locked {
   pointer-events: none;
   opacity: 0.62;

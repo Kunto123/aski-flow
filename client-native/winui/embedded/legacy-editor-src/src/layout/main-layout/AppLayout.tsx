@@ -345,26 +345,25 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
     });
   };
 
-  const handleFlowChange = (
-    nodes: Node[],
-    edges: Edge[],
-    metadata?: FlowMetadata,
-  ) => {
-    setFlowTabs((prevFlowTabs) => {
-      const updatedTabs = prevFlowTabs.tabs.map((tab, index) => {
-        if (index === currentTab) {
-          return {
-            ...tab,
-            nodes,
-            edges,
-            metadata: { ...tab.metadata, ...metadata },
-          };
-        }
-        return tab;
+  const handleFlowChange = useCallback(
+    (nodes: Node[], edges: Edge[], metadata?: FlowMetadata) => {
+      setFlowTabs((prevFlowTabs) => {
+        const updatedTabs = prevFlowTabs.tabs.map((tab, index) => {
+          if (index === currentTabRef.current) {
+            return {
+              ...tab,
+              nodes,
+              edges,
+              metadata: { ...tab.metadata, ...metadata },
+            };
+          }
+          return tab;
+        });
+        return { ...prevFlowTabs, tabs: updatedTabs };
       });
-      return { ...prevFlowTabs, tabs: updatedTabs };
-    });
-  };
+    },
+    [],
+  );
 
   const handleMetadataChange = (metadata: FlowMetadata) => {
     setFlowTabs((prevFlowTabs) => {

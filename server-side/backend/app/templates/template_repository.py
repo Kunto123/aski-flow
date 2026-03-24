@@ -555,6 +555,31 @@ def update_template(
     return detail
 
 
+def delete_template(*, template_id: int) -> bool:
+    """Hard-delete a template and all its versions. Returns False if not found."""
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT id FROM aski_flow_templates WHERE id = ?",
+            int(template_id),
+        )
+        if not cur.fetchone():
+            return False
+        # Nullify FK before deleting versions to avoid FK constraint error
+        cur.execute(
+            "UPDATE aski_flow_templates SET current_version_id = NULL WHERE id = ?",
+            int(template_id),
+        )
+        cur.execute(
+            "DELETE FROM aski_flow_template_versions WHERE template_id = ?",
+            int(template_id),
+        )
+        cur.execute(
+            "DELETE FROM aski_flow_templates WHERE id = ?",
+            int(template_id),
+        )
+    return True
+
+
 def _canonicalize_node(node_definition: dict[str, Any]) -> dict[str, Any]:
     normalized = copy.deepcopy(node_definition)
     for key in list(normalized.keys()):

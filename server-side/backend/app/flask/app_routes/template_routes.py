@@ -3,6 +3,7 @@ from flask import Blueprint, g, jsonify, request
 from app.flask.middleware.auth_middleware import require_admin, require_auth
 from app.templates.template_repository import (
     create_template,
+    delete_template,
     get_template_detail,
     list_templates,
     update_template,
@@ -81,3 +82,15 @@ def handle_update_template(template_id: int):
         status_code = 404 if "tidak ditemukan" in message.lower() else 400
         return jsonify({"error": message}), status_code
     return jsonify(detail)
+
+
+@template_blueprint.route("/<int:template_id>", methods=["DELETE"])
+@require_admin
+def handle_delete_template(template_id: int):
+    try:
+        found = delete_template(template_id=template_id)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+    if not found:
+        return jsonify({"error": "Template tidak ditemukan"}), 404
+    return "", 204
