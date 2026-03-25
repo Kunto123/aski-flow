@@ -30,6 +30,7 @@ Reject reason codes:
 
 from __future__ import annotations
 
+import json
 import math
 from typing import Any, Dict, List, Optional
 
@@ -66,9 +67,40 @@ class StickerValidatorProcessor(BasicProcessor):
         if not vision_output:
             return self._error_payload("No vision model output connected.")
 
+        # main-vision-model returns output[0] as a JSON string; parse it here.
+        if isinstance(vision_output, str):
+            try:
+                vision_output = json.loads(vision_output)
+            except Exception:
+                pass
+
         detections: List[Dict[str, Any]] = []
         if isinstance(vision_output, dict):
-            detections = vision_output.get("detections") or []
+            # In stream mode, main-vision-model returns an empty detections list at
+            # startup because the model warms up in a background thread.  The live
+            # predictions accumulate in the stream manager instead.  Fetch them here.
+            stream_id = vision_output.get("stream_id")
+            if stream_id:
+                try:
+                    from ....streaming import get_stream_manager
+                    manager = get_stream_manager()
+                    # Access latest_predictions without acquiring state.lock.
+                    # dict-reference assignment is GIL-atomic in CPython so we
+                    # will never read a torn value — worst case we read a frame
+                    # that is one inference cycle stale.  This avoids blocking
+                    # the eventlet hub (main OS thread) on a real threading.Lock
+                    # that is held by the YOLO transform thread.
+                    state = manager.get_stream(stream_id)
+                    if state is not None:
+                        live_preds = state.latest_predictions
+                        if live_preds and isinstance(live_preds, dict):
+                            detections = self._boxes_to_detections(
+                                live_preds.get("boxes") or []
+                            )
+                except Exception:
+                    pass
+            if not detections:
+                detections = vision_output.get("detections") or []
         elif isinstance(vision_output, list):
             detections = vision_output
 
@@ -95,7 +127,7 @@ class StickerValidatorProcessor(BasicProcessor):
         # Pick aggregate data1/data2 from first accepted target or overall best
         agg_data1, agg_data2 = self._aggregate_data(target_results)
 
-        return {
+        return [json.dumps({
             "decision": overall_decision,
             "decision_code": overall_decision,
             "reject_reason_code": first_reject_reason,
@@ -106,7 +138,7 @@ class StickerValidatorProcessor(BasicProcessor):
             "mp_check": self._mp_check,
             "template_version_id": self._template_version_id,
             "targets": target_results,
-        }
+        })]
 
     # ── Target validation ───────────────────────────────────────────────────
     def _validate_target(
@@ -229,6 +261,25 @@ class StickerValidatorProcessor(BasicProcessor):
                 "reject_reason_code": None}
 
     # ── Helpers ─────────────────────────────────────────────────────────────
+    @staticmethod
+    def _boxes_to_detections(boxes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Convert raw model boxes (runtime format) to the detections format expected by validators."""
+        result = []
+        for idx, box in enumerate(boxes):
+            xyxy = box.get("xyxy") or [0, 0, 0, 0]
+            try:
+                x1, y1, x2, y2 = [float(v) for v in xyxy[:4]]
+            except Exception:
+                x1, y1, x2, y2 = 0.0, 0.0, 0.0, 0.0
+            result.append({
+                "index": idx,
+                "label": str(box.get("label", "unknown")),
+                "class_id": box.get("class_id"),
+                "confidence": float(box.get("conf", 0.0)),
+                "position": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
+            })
+        return result
+
     def _find_best_candidate(
         self,
         expected_class: str,
@@ -261,14 +312,14 @@ class StickerValidatorProcessor(BasicProcessor):
 
     def _get_input(self, field_name: str) -> Any:
         """Retrieve input from config or connected node output."""
-        return self.config.get(field_name)
+        return self.get_input_by_name(field_name, accept_object=True)
 
     @staticmethod
-    def _error_payload(message: str) -> Dict[str, Any]:
-        return {
+    def _error_payload(message: str) -> List[str]:
+        return [json.dumps({
             "decision": "REJECT",
             "decision_code": "ERROR",
             "reject_reason_code": "ERROR",
             "error": message,
             "targets": [],
-        }
+        })]

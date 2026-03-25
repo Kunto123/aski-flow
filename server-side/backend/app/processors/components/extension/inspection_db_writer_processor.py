@@ -14,6 +14,7 @@ without persistence (validator only), or with persistence (validator → db-writ
 
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, Optional
 
 from ..processor import BasicProcessor
@@ -35,9 +36,18 @@ class InspectionDbWriterProcessor(BasicProcessor):
         self._bucket_granularity: str = str(config.get("bucket_granularity") or "hour")
 
     def process(self) -> Any:
-        validator_output = self.config.get("validator_result")
+        validator_raw = self.get_input_by_name("validator_result", accept_object=True)
+        # StickerValidator returns output[0] as a JSON string; parse it here.
+        if isinstance(validator_raw, str):
+            try:
+                validator_output = json.loads(validator_raw)
+            except Exception:
+                validator_output = None
+        else:
+            validator_output = validator_raw
+
         if not validator_output or not isinstance(validator_output, dict):
-            return {"written": False, "error": "No validator result connected."}
+            return [json.dumps({"written": False, "error": "No validator result connected."})]
 
         decision = str(validator_output.get("decision") or "REJECT")
         decision_code = str(validator_output.get("decision_code") or decision)
@@ -81,7 +91,7 @@ class InspectionDbWriterProcessor(BasicProcessor):
                 data2=data2,
             )
         except Exception as exc:
-            return {"written": False, "error": str(exc)}
+            return [json.dumps({"written": False, "error": str(exc)})]
 
         # Update counter bucket (best-effort; never block main result)
         try:
@@ -97,7 +107,7 @@ class InspectionDbWriterProcessor(BasicProcessor):
         except Exception:
             pass
 
-        return {
+        return [json.dumps({
             "written": True,
             "event_id": event_id,
             "decision": decision,
@@ -107,4 +117,4 @@ class InspectionDbWriterProcessor(BasicProcessor):
             "line": line_id,
             "data1": data1,
             "data2": data2,
-        }
+        })]
