@@ -559,6 +559,24 @@ body {
   margin-bottom: 10px;
   color: #f5fafc;
   font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.aski-template-modal-check-all {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(171, 214, 226, 0.6);
+  cursor: pointer;
+  user-select: none;
+}
+
+.aski-template-modal-check-all:hover {
+  color: rgba(171, 214, 226, 1);
 }
 
 .aski-template-modal-group-grid {

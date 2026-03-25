@@ -447,7 +447,12 @@ const Flow = forwardRef((props: FlowProps, ref) => {
       });
     };
 
-    const rafId = requestAnimationFrame(fitToViewport);
+    // Do NOT call fitToViewport immediately here.
+    // The <ReactFlowStyled fitView> prop already handles the initial fit on mount
+    // (it runs inside ReactFlow's onInit, after internal node measurement).
+    // Firing a competing requestAnimationFrame here races with that prop fitView,
+    // producing an intermittent blank or wrong-zoom canvas when templates load.
+    // Only keep resize-triggered fits (ResizeObserver + window listener).
     const resizeObserver = new ResizeObserver(() => {
       fitToViewport();
     });
@@ -455,7 +460,6 @@ const Flow = forwardRef((props: FlowProps, ref) => {
     window.addEventListener("resize", fitToViewport);
 
     return () => {
-      cancelAnimationFrame(rafId);
       resizeObserver.disconnect();
       window.removeEventListener("resize", fitToViewport);
     };
@@ -471,16 +475,19 @@ const Flow = forwardRef((props: FlowProps, ref) => {
       return;
     }
 
-    const rafId = requestAnimationFrame(() => {
+    // Use setTimeout instead of requestAnimationFrame so that node dimensions
+    // measured by ResizeObserver (which may lag in WinUI WebView2) have time
+    // to settle before fitView calculates the bounding box.
+    const timerId = window.setTimeout(() => {
       reactFlowInstance.fitView({
         padding: 0.2,
         duration: 0,
         maxZoom: 1.05,
       });
       shouldAutoFitRef.current = false;
-    });
+    }, 150);
 
-    return () => cancelAnimationFrame(rafId);
+    return () => window.clearTimeout(timerId);
   }, [reactFlowInstance, nodes, edges]);
 
   const onNodesChange: OnNodesChange = useCallback(

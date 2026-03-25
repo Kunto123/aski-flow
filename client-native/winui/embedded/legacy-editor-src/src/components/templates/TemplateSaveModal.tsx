@@ -85,6 +85,19 @@ export default function TemplateSaveModal({
     }));
   };
 
+  const handleToggleAll = (fields: EditableFieldOption[]) => {
+    const allChecked = fields.every(
+      (f) => selectedFields[`${f.nodeName}:${f.fieldName}`],
+    );
+    setSelectedFields((prev) => {
+      const next = { ...prev };
+      for (const f of fields) {
+        next[`${f.nodeName}:${f.fieldName}`] = !allChecked;
+      }
+      return next;
+    });
+  };
+
   const handleSubmit = async () => {
     if (!name.trim()) {
       toastInfoMessage("Nama template wajib diisi.");
@@ -186,10 +199,22 @@ export default function TemplateSaveModal({
                 Tidak ada field editable yang terdeteksi pada flow ini.
               </div>
             ) : (
-              fieldMapByNode.map(([nodeName, fields]) => (
+              fieldMapByNode.map(([nodeName, fields]) => {
+                const allChecked = fields.every(
+                  (f) => selectedFields[`${f.nodeName}:${f.fieldName}`],
+                );
+                return (
                 <div key={nodeName} className="aski-template-modal-group">
                   <div className="aski-template-modal-group-title">
-                    {fields[0]?.nodeLabel || nodeName}
+                    <span>{fields[0]?.nodeLabel || nodeName}</span>
+                    <label className="aski-template-modal-check-all">
+                      <input
+                        type="checkbox"
+                        checked={allChecked}
+                        onChange={() => handleToggleAll(fields)}
+                      />
+                      <span>All</span>
+                    </label>
                   </div>
                   <div className="aski-template-modal-group-grid">
                     {fields.map((field: EditableFieldOption) => {
@@ -207,7 +232,7 @@ export default function TemplateSaveModal({
                     })}
                   </div>
                 </div>
-              ))
+              ); })
             )}
           </div>
         </div>

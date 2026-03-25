@@ -38,21 +38,23 @@ from ..processor import BasicProcessor
 from ..core.processor_type_name_utils import ProcessorType
 
 
+def _as_float(v: Any) -> Optional[float]:
+    """Return float(v) or None if v is None/unparseable."""
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 class StickerValidatorProcessor(BasicProcessor):
     processor_type = ProcessorType.STICKER_VALIDATOR
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        # Inline recipe — may arrive as JSON string (textarea) or dict (programmatic)
-        raw_recipe = config.get("inspection_recipe") or {}
-        if isinstance(raw_recipe, str):
-            try:
-                import json as _json
-                raw_recipe = _json.loads(raw_recipe)
-            except Exception:
-                raw_recipe = {}
-        self._recipe: Dict[str, Any] = raw_recipe if isinstance(raw_recipe, dict) else {}
-        # Per-field overrides the operator can change (editableFields)
+
+        # ── Operator / metadata fields ────────────────────────────────────
         self._line: str = str(config.get("line") or "").strip()
         self._mp_check: str = str(config.get("mp_check") or "").strip() or None
         self._template_version_id: Optional[int] = (
@@ -60,6 +62,48 @@ class StickerValidatorProcessor(BasicProcessor):
             if config.get("template_version_id") is not None
             else None
         )
+
+        # ── Build inspection recipe ───────────────────────────────────────
+        # Priority:
+        #   1. Advanced JSON textarea  — used when it contains a "targets" list.
+        #   2. Individual form fields  — used otherwise (single-target quick config).
+        raw_recipe = config.get("inspection_recipe") or {}
+        if isinstance(raw_recipe, str):
+            try:
+                raw_recipe = json.loads(raw_recipe)
+            except Exception:
+                raw_recipe = {}
+        recipe_json: Dict[str, Any] = raw_recipe if isinstance(raw_recipe, dict) else {}
+
+        if recipe_json.get("targets"):
+            # Advanced mode: honour the full JSON recipe as-is.
+            self._recipe: Dict[str, Any] = recipe_json
+        else:
+            # Simple mode: build a single-target recipe from individual fields.
+            # expected_cx / expected_cy are derived from ROI output dimensions
+            # so that the expected sticker position is always the centre of the
+            # cropped ROI region:  cx = roi_output_width / 2, cy = roi_output_height / 2
+            roi_w = _as_float(config.get("roi_output_width"))
+            roi_h = _as_float(config.get("roi_output_height"))
+            exp_cx: Optional[float] = (roi_w / 2.0) if roi_w is not None else None
+            exp_cy: Optional[float] = (roi_h / 2.0) if roi_h is not None else None
+
+            self._recipe = {
+                "part_name": str(config.get("part_name") or recipe_json.get("part_name") or "").strip() or None,
+                "targets": [
+                    {
+                        "target_id": str(config.get("target_id") or "target-1").strip(),
+                        "expected_class": str(config.get("expected_class") or "").strip() or None,
+                        "min_roi_confidence": _as_float(config.get("min_roi_confidence")) if config.get("min_roi_confidence") is not None else 0.5,
+                        "min_class_confidence": None,
+                        "max_offset_x": _as_float(config.get("max_offset_x")),
+                        "max_offset_y": _as_float(config.get("max_offset_y")),
+                        "max_angle_deg": None,
+                        "expected_cx": exp_cx,
+                        "expected_cy": exp_cy,
+                    }
+                ],
+            }
 
     # ── Public entry point ──────────────────────────────────────────────────
     def process(self) -> Any:

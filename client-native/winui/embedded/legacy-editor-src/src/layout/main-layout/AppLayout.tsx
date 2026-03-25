@@ -176,7 +176,10 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
     tabs: tabs.length > 0 ? tabs : [createEmptyFlowTab()],
   });
   const [currentTab, setCurrentTab] = useState(0);
-  const [refresh, setRefresh] = useState(false);
+  // Counter instead of boolean: two setRefreshKey calls in the same React 18 batch
+  // always net-increment, whereas boolean toggles would cancel each other out and
+  // leave the Flow key unchanged (blank canvas on template reload).
+  const [refreshKey, setRefreshKey] = useState(0);
   const [showOnlyOutput, setShowOnlyOutput] = useState(false);
   const { emitEvent, connect, getSocket, updateSocket } = useContext(SocketContext);
   const [isRunning, setIsRunning] = useState(false);
@@ -242,7 +245,7 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
         ? Math.max(0, Math.min(parsedTab, Math.max(0, flowTabsRef.current.tabs.length - 1)))
         : 0;
       await handleChangeTab(safeTab);
-      setRefresh((prev) => !prev);
+      setRefreshKey((prev) => prev + 1);
     };
     init();
   }, []);
@@ -387,7 +390,7 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
       safeTabs[currentTabRef.current] = nextTab;
       return { ...prevFlowTabs, tabs: safeTabs };
     });
-    setRefresh((prev) => !prev);
+    setRefreshKey((prev) => prev + 1);
   }, []);
 
   const handleApplyTemplate = useCallback(
@@ -529,7 +532,7 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
     });
 
     setCurrentTab(index - 1 > 0 ? index - 1 : 0);
-    setRefresh((prev) => !prev);
+    setRefreshKey((prev) => prev + 1);
   };
 
   const handleAddNewFlow = (flowData: any) => {
@@ -642,7 +645,7 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
             }),
           })),
         }));
-        setRefresh((prev) => !prev);
+        setRefreshKey((prev) => prev + 1);
         updateSocket();
         toastFastInfoMessage("Frontend dan koneksi backend direfresh.");
       }
@@ -873,7 +876,7 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
                     >
                       {mode === "flow" && (
                         <Flow
-                          key={`flow-${currentTab}-${currentFlowTab.metadata?.templateVersionId ?? "draft"}-${refresh}`}
+                          key={`flow-${currentTab}-${currentFlowTab.metadata?.templateVersionId ?? "draft"}-${refreshKey}`}
                           nodes={currentFlowTab.nodes ?? []}
                           edges={currentFlowTab.edges ?? []}
                           metadata={currentFlowTab.metadata ?? {}}
@@ -892,7 +895,7 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
             </div>
           </>
         ) : (
-          <div className="aski-workstation-wrap" key={`workstation-${refresh}`}>
+          <div className="aski-workstation-wrap" key={`workstation-${refreshKey}`}>
             <WorkstationMain activeSection={workstationSection} />
           </div>
         )}
