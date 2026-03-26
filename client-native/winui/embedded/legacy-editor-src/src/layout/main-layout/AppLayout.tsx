@@ -357,7 +357,13 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
               ...tab,
               nodes,
               edges,
-              metadata: { ...tab.metadata, ...metadata },
+              // Preserve reference when metadata is unchanged to avoid
+              // triggering the [nodes, edges, props.metadata] effect in Flow.tsx
+              // which would cause an infinite re-render loop.
+              metadata:
+                !metadata || metadata === tab.metadata
+                  ? tab.metadata
+                  : { ...tab.metadata, ...metadata },
             };
           }
           return tab;

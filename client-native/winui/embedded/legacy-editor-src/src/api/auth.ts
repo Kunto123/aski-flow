@@ -40,12 +40,6 @@ export async function getPermissionsApi(): Promise<Permission[]> {
   return res.data;
 }
 
-export async function updatePermissionApi(
-  key: string,
-  isAllowed: boolean,
-): Promise<void> {
-  await apiClient.put(`/auth/permissions/${key}`, { is_allowed: isAllowed });
-}
 
 export interface UserRecord {
   id: number;

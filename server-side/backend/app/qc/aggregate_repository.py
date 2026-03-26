@@ -1,37 +1,27 @@
 """
-Inspection aggregate / counter bucket repository.
+Inspection aggregate repository (live query version).
 
-update_counter_bucket() is called from inspection_repository.write_inspection_result()
-(or from InspectionDbWriterProcessor) after each inspection cycle.
+update_counter_bucket() is kept as a no-op for interface compatibility.
+query_dashboard() and get_summary() now query aski_inspection_results directly
+instead of the pre-aggregated aski_inspection_counter_buckets table.
 
-Dashboard query supports granularity='hour' or 'day' aggregation.
+Public signatures are unchanged so dashboard_routes.py needs no edits.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from app.storage.auth_db import db_cursor, row_to_dict
 
-_REJECT_REASON_COLUMN_MAP: dict[str, str] = {
-    "NOT_FOUND":          "reject_not_found",
-    "WRONG_TYPE":         "reject_wrong_type",
-    "OUT_OF_POSITION":    "reject_out_of_position",
-    "OUT_OF_ANGLE":       "reject_out_of_angle",
-    "LOW_ROI_CONF":       "reject_low_conf",
-    "LOW_CLASS_CONF":     "reject_low_conf",
-    "ANGLE_UNAVAILABLE":  "reject_other",
+# SQL Server bucket truncation by granularity (DATEADD/DATEDIFF pattern,
+# works on all SQL Server versions without DATETRUNC).
+_BUCKET_SQL: dict[str, str] = {
+    "minute": "DATEADD(MINUTE, DATEDIFF(MINUTE, 0, DateCheckMC), 0)",
+    "hour":   "DATEADD(HOUR,   DATEDIFF(HOUR,   0, DateCheckMC), 0)",
+    "day":    "DATEADD(DAY,    DATEDIFF(DAY,    0, DateCheckMC), 0)",
 }
-
-
-def _bucket_time(dt: datetime, granularity: str) -> datetime:
-    if granularity == "minute":
-        return dt.replace(second=0, microsecond=0)
-    if granularity == "hour":
-        return dt.replace(minute=0, second=0, microsecond=0)
-    # day
-    return dt.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 def update_counter_bucket(
@@ -44,53 +34,8 @@ def update_counter_bucket(
     granularity: str = "hour",
     at: datetime | None = None,
 ) -> None:
-    """
-    Upsert counter bucket row for the given time bucket.
-    Increments total_inspections, total_accept or total_reject,
-    and the specific reject breakdown column.
-    """
-    dt = at or datetime.now(timezone.utc)
-    bt = _bucket_time(dt.replace(tzinfo=None), granularity)
-
-    is_accept = 1 if decision.upper() == "ACCEPT" else 0
-    is_reject = 0 if is_accept else 1
-
-    reject_col = _REJECT_REASON_COLUMN_MAP.get(reject_reason_code or "", "reject_other")
-    reject_inc = is_reject
-
-    with db_cursor() as cur:
-        # Try update first (common path)
-        cur.execute(
-            f"""
-            UPDATE aski_inspection_counter_buckets
-            SET
-                total_inspections      = total_inspections + 1,
-                total_accept           = total_accept + ?,
-                total_reject           = total_reject + ?,
-                {reject_col}           = {reject_col} + ?
-            WHERE
-                bucket_time = ? AND granularity = ?
-                AND line_id = ?
-                AND (template_version_id = ? OR (template_version_id IS NULL AND ? IS NULL))
-                AND (part_name = ? OR (part_name IS NULL AND ? IS NULL))
-            """,
-            is_accept, is_reject, reject_inc,
-            bt, granularity, line_id,
-            template_version_id, template_version_id,
-            part_name, part_name,
-        )
-
-        if cur.rowcount == 0:
-            cur.execute(
-                f"""
-                INSERT INTO aski_inspection_counter_buckets (
-                    bucket_time, granularity, line_id, template_version_id, part_name,
-                    total_inspections, total_accept, total_reject, {reject_col}
-                ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
-                """,
-                bt, granularity, line_id, template_version_id, part_name,
-                is_accept, is_reject, reject_inc,
-            )
+    """No-op: counter buckets are replaced by live GROUP BY on aski_inspection_results."""
+    pass
 
 
 def query_dashboard(
@@ -103,39 +48,71 @@ def query_dashboard(
     to_dt: datetime | None = None,
     limit: int = 200,
 ) -> list[dict[str, Any]]:
-    """Return counter bucket rows for dashboard rendering."""
-    filters: list[str] = ["granularity = ?"]
-    params: list[Any] = [granularity]
+    """Return time-bucketed aggregate rows from aski_inspection_results.
+
+    Output shape matches the old aski_inspection_counter_buckets row format
+    so the frontend requires no changes.
+    """
+    if granularity not in _BUCKET_SQL:
+        granularity = "hour"
+    bucket_expr = _BUCKET_SQL[granularity]
+
+    filters: list[str] = []
+    params: list[Any] = []
 
     if line_id:
-        filters.append("line_id = ?")
+        filters.append("Line = ?")
         params.append(line_id)
     if template_version_id is not None:
         filters.append("template_version_id = ?")
         params.append(int(template_version_id))
     if part_name:
-        filters.append("part_name = ?")
+        filters.append("PartName = ?")
         params.append(part_name)
     if from_dt:
-        filters.append("bucket_time >= ?")
+        filters.append("DateCheckMC >= ?")
         params.append(from_dt.replace(tzinfo=None))
     if to_dt:
-        filters.append("bucket_time <= ?")
+        filters.append("DateCheckMC <= ?")
         params.append(to_dt.replace(tzinfo=None))
 
+    where = ("WHERE " + " AND ".join(filters)) if filters else ""
     params.append(limit)
 
     with db_cursor() as cur:
         cur.execute(
             f"""
             SELECT
-                id, bucket_time, granularity, line_id, template_version_id, part_name,
-                total_inspections, total_accept, total_reject,
-                reject_not_found, reject_wrong_type,
-                reject_out_of_position, reject_out_of_angle,
-                reject_low_conf, reject_other
-            FROM aski_inspection_counter_buckets
-            WHERE {' AND '.join(filters)}
+                {bucket_expr}                                               AS bucket_time,
+                '{granularity}'                                             AS granularity,
+                Line                                                        AS line_id,
+                template_version_id,
+                PartName                                                    AS part_name,
+                COUNT(*)                                                    AS total_inspections,
+                SUM(CASE WHEN decision = 'ACCEPT' THEN 1 ELSE 0 END)       AS total_accept,
+                SUM(CASE WHEN decision = 'REJECT' THEN 1 ELSE 0 END)       AS total_reject,
+                SUM(CASE WHEN reject_reason_code = 'NOT_FOUND'
+                         THEN 1 ELSE 0 END)                                AS reject_not_found,
+                SUM(CASE WHEN reject_reason_code = 'WRONG_TYPE'
+                         THEN 1 ELSE 0 END)                                AS reject_wrong_type,
+                SUM(CASE WHEN reject_reason_code = 'OUT_OF_POSITION'
+                         THEN 1 ELSE 0 END)                                AS reject_out_of_position,
+                SUM(CASE WHEN reject_reason_code = 'OUT_OF_ANGLE'
+                         THEN 1 ELSE 0 END)                                AS reject_out_of_angle,
+                SUM(CASE WHEN reject_reason_code IN ('LOW_ROI_CONF', 'LOW_CLASS_CONF')
+                         THEN 1 ELSE 0 END)                                AS reject_low_conf,
+                SUM(CASE WHEN reject_reason_code NOT IN (
+                             'NOT_FOUND','WRONG_TYPE','OUT_OF_POSITION',
+                             'OUT_OF_ANGLE','LOW_ROI_CONF','LOW_CLASS_CONF'
+                         ) AND reject_reason_code IS NOT NULL
+                         THEN 1 ELSE 0 END)                                AS reject_other
+            FROM aski_inspection_results
+            {where}
+            GROUP BY
+                {bucket_expr},
+                Line,
+                template_version_id,
+                PartName
             ORDER BY bucket_time DESC
             OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY
             """,
@@ -156,35 +133,46 @@ def get_summary(
     from_dt: datetime | None = None,
     to_dt: datetime | None = None,
 ) -> dict[str, Any]:
-    """Return aggregate totals for dashboard summary card."""
-    filters: list[str] = ["granularity = 'hour'"]
+    """Return aggregate totals from aski_inspection_results."""
+    filters: list[str] = []
     params: list[Any] = []
 
     if line_id:
-        filters.append("line_id = ?")
+        filters.append("Line = ?")
         params.append(line_id)
     if from_dt:
-        filters.append("bucket_time >= ?")
+        filters.append("DateCheckMC >= ?")
         params.append(from_dt.replace(tzinfo=None))
     if to_dt:
-        filters.append("bucket_time <= ?")
+        filters.append("DateCheckMC <= ?")
         params.append(to_dt.replace(tzinfo=None))
+
+    where = ("WHERE " + " AND ".join(filters)) if filters else ""
 
     with db_cursor() as cur:
         cur.execute(
             f"""
             SELECT
-                SUM(total_inspections)      AS total_inspections,
-                SUM(total_accept)           AS total_accept,
-                SUM(total_reject)           AS total_reject,
-                SUM(reject_not_found)       AS reject_not_found,
-                SUM(reject_wrong_type)      AS reject_wrong_type,
-                SUM(reject_out_of_position) AS reject_out_of_position,
-                SUM(reject_out_of_angle)    AS reject_out_of_angle,
-                SUM(reject_low_conf)        AS reject_low_conf,
-                SUM(reject_other)           AS reject_other
-            FROM aski_inspection_counter_buckets
-            WHERE {' AND '.join(filters)}
+                COUNT(*)                                                    AS total_inspections,
+                SUM(CASE WHEN decision = 'ACCEPT' THEN 1 ELSE 0 END)       AS total_accept,
+                SUM(CASE WHEN decision = 'REJECT' THEN 1 ELSE 0 END)       AS total_reject,
+                SUM(CASE WHEN reject_reason_code = 'NOT_FOUND'
+                         THEN 1 ELSE 0 END)                                AS reject_not_found,
+                SUM(CASE WHEN reject_reason_code = 'WRONG_TYPE'
+                         THEN 1 ELSE 0 END)                                AS reject_wrong_type,
+                SUM(CASE WHEN reject_reason_code = 'OUT_OF_POSITION'
+                         THEN 1 ELSE 0 END)                                AS reject_out_of_position,
+                SUM(CASE WHEN reject_reason_code = 'OUT_OF_ANGLE'
+                         THEN 1 ELSE 0 END)                                AS reject_out_of_angle,
+                SUM(CASE WHEN reject_reason_code IN ('LOW_ROI_CONF', 'LOW_CLASS_CONF')
+                         THEN 1 ELSE 0 END)                                AS reject_low_conf,
+                SUM(CASE WHEN reject_reason_code NOT IN (
+                             'NOT_FOUND','WRONG_TYPE','OUT_OF_POSITION',
+                             'OUT_OF_ANGLE','LOW_ROI_CONF','LOW_CLASS_CONF'
+                         ) AND reject_reason_code IS NOT NULL
+                         THEN 1 ELSE 0 END)                                AS reject_other
+            FROM aski_inspection_results
+            {where}
             """,
             *params,
         )

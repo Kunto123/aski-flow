@@ -17,11 +17,18 @@ Input contract (from main-vision-model outputData):
       ]
     }
 
+Runtime metadata (auto-resolved):
+  - mp_check:        taken from the logged-in user's username (g.username in Flask context).
+                     Falls back to config field "mp_check" for backward compatibility.
+  - operator_user_id: taken from the logged-in user's ID (g.user_id).
+                     Falls back to None if runtime context is unavailable.
+
 Fallback rules (documented):
   - angle_deg / delta_angle_deg: stored as None when rotation_deg absent;
     if angle check is required (max_angle_deg set) and value is None → ANGLE_UNAVAILABLE.
   - data2 (class_confidence): stored as None when model only yields one confidence score.
-    Validators using min_class_confidence will REJECT with LOW_CLASS_CONF if data2 is None.
+    If min_class_confidence is None (field blank), the check is skipped entirely.
+    If min_class_confidence is set and data2 is None → reject with LOW_CLASS_CONF.
 
 Reject reason codes:
     NOT_FOUND, WRONG_TYPE, LOW_ROI_CONF, LOW_CLASS_CONF,
@@ -34,8 +41,9 @@ import json
 import math
 from typing import Any, Dict, List, Optional
 
-from ..processor import BasicProcessor
+from ..processor import ContextAwareProcessor
 from ..core.processor_type_name_utils import ProcessorType
+from ...context.processor_context import ProcessorContext
 
 
 def _as_float(v: Any) -> Optional[float]:
@@ -48,25 +56,65 @@ def _as_float(v: Any) -> Optional[float]:
         return None
 
 
-class StickerValidatorProcessor(BasicProcessor):
+class StickerValidatorProcessor(ContextAwareProcessor):
     processor_type = ProcessorType.STICKER_VALIDATOR
 
-    def __init__(self, config: Dict[str, Any]):
-        super().__init__(config)
+    def __init__(self, config: Dict[str, Any], context: ProcessorContext = None):
+        super().__init__(config, context)
 
-        # ── Operator / metadata fields ────────────────────────────────────
+        # ── Operator / metadata fields (backward-compat config fallbacks) ──
         self._line: str = str(config.get("line") or "").strip()
-        self._mp_check: str = str(config.get("mp_check") or "").strip() or None
+        # mp_check config fallback — used if runtime auth context is unavailable
+        self._mp_check_fallback: Optional[str] = (
+            str(config.get("mp_check") or "").strip() or None
+        )
         self._template_version_id: Optional[int] = (
             int(config["template_version_id"])
             if config.get("template_version_id") is not None
             else None
         )
+        # Recipe is built at process() time so roi_dimensions can be read
+        # from a connected ROI node's runtime output.
 
-        # ── Build inspection recipe ───────────────────────────────────────
-        # Priority:
-        #   1. Advanced JSON textarea  — used when it contains a "targets" list.
-        #   2. Individual form fields  — used otherwise (single-target quick config).
+    # ── Runtime auth context ─────────────────────────────────────────────
+    def _get_runtime_user(self) -> tuple[Optional[int], Optional[str]]:
+        """Return (user_id: int|None, username: str|None) from runtime auth context.
+
+        The Flask g object is stored in ProcessorContextFlaskRequest.g_context.
+        At socket event time, sockets.py sets g.user_id and g.username from JWT.
+        Returns (None, None) safely if context is unavailable.
+        """
+        try:
+            ctx = self.get_context()
+            if ctx is None:
+                return None, None
+            g_ctx = ctx.get_context()
+            if g_ctx is None:
+                return None, None
+            username = getattr(g_ctx, "username", None) or None
+            user_id_str = str(getattr(g_ctx, "user_id", None) or "").strip()
+            user_id = int(user_id_str) if user_id_str else None
+            return user_id, username
+        except Exception:
+            return None, None
+
+    def _build_recipe(
+        self,
+        roi_w: Optional[float],
+        roi_h: Optional[float],
+    ) -> Dict[str, Any]:
+        """Build inspection recipe from config.
+
+        Priority:
+          1. Advanced JSON textarea — used when it contains a "targets" list.
+             (backward compatibility for old templates with inspection_recipe field)
+          2. Individual form fields — used otherwise (single-target quick config).
+
+        roi_w / roi_h come from the connected ROI node's output[1] when wired,
+        otherwise from the manual roi_output_width / roi_output_height fields.
+        expected_cx = roi_w / 2, expected_cy = roi_h / 2.
+        """
+        config = self._config
         raw_recipe = config.get("inspection_recipe") or {}
         if isinstance(raw_recipe, str):
             try:
@@ -75,38 +123,70 @@ class StickerValidatorProcessor(BasicProcessor):
                 raw_recipe = {}
         recipe_json: Dict[str, Any] = raw_recipe if isinstance(raw_recipe, dict) else {}
 
+        # Advanced JSON path (backward compat): if targets list present, use as-is.
         if recipe_json.get("targets"):
-            # Advanced mode: honour the full JSON recipe as-is.
-            self._recipe: Dict[str, Any] = recipe_json
-        else:
-            # Simple mode: build a single-target recipe from individual fields.
-            # expected_cx / expected_cy are derived from ROI output dimensions
-            # so that the expected sticker position is always the centre of the
-            # cropped ROI region:  cx = roi_output_width / 2, cy = roi_output_height / 2
-            roi_w = _as_float(config.get("roi_output_width"))
-            roi_h = _as_float(config.get("roi_output_height"))
-            exp_cx: Optional[float] = (roi_w / 2.0) if roi_w is not None else None
-            exp_cy: Optional[float] = (roi_h / 2.0) if roi_h is not None else None
+            return recipe_json
 
-            self._recipe = {
-                "part_name": str(config.get("part_name") or recipe_json.get("part_name") or "").strip() or None,
-                "targets": [
-                    {
-                        "target_id": str(config.get("target_id") or "target-1").strip(),
-                        "expected_class": str(config.get("expected_class") or "").strip() or None,
-                        "min_roi_confidence": _as_float(config.get("min_roi_confidence")) if config.get("min_roi_confidence") is not None else 0.5,
-                        "min_class_confidence": None,
-                        "max_offset_x": _as_float(config.get("max_offset_x")),
-                        "max_offset_y": _as_float(config.get("max_offset_y")),
-                        "max_angle_deg": None,
-                        "expected_cx": exp_cx,
-                        "expected_cy": exp_cy,
-                    }
-                ],
-            }
+        exp_cx: Optional[float] = (roi_w / 2.0) if roi_w is not None else None
+        exp_cy: Optional[float] = (roi_h / 2.0) if roi_h is not None else None
+
+        # Quick config path.
+        # min_roi_confidence: read from config for backward compat with old templates
+        # that still have the field. Not a UI field in the new simplified node.
+        # Default 0.0 → check effectively disabled when field absent.
+        min_roi_conf = _as_float(config.get("min_roi_confidence"))
+        if min_roi_conf is None:
+            min_roi_conf = 0.0
+
+        return {
+            "part_name": str(
+                config.get("part_name") or recipe_json.get("part_name") or ""
+            ).strip() or None,
+            "targets": [
+                {
+                    # target_id is internal — not a UI field; default "target-1"
+                    "target_id": str(config.get("target_id") or "target-1").strip(),
+                    "expected_class": str(config.get("expected_class") or "").strip() or None,
+                    "min_roi_confidence": min_roi_conf,
+                    # New UI fields — None means check is skipped
+                    "min_class_confidence": _as_float(config.get("min_class_confidence")),
+                    "max_offset_x": _as_float(config.get("max_offset_x")),
+                    "max_offset_y": _as_float(config.get("max_offset_y")),
+                    "max_angle_deg": _as_float(config.get("max_angle_deg")),
+                    "expected_angle_deg": _as_float(config.get("expected_angle_deg")) or 0.0,
+                    "expected_cx": exp_cx,
+                    "expected_cy": exp_cy,
+                }
+            ],
+        }
 
     # ── Public entry point ──────────────────────────────────────────────────
     def process(self) -> Any:
+        # ── Resolve runtime user (mp_check / operator_user_id) ───────────
+        runtime_user_id, runtime_username = self._get_runtime_user()
+        mp_check = runtime_username or self._mp_check_fallback
+        operator_user_id = runtime_user_id  # None if context unavailable
+
+        # ── Resolve ROI dimensions ────────────────────────────────────────
+        # Priority: connected ROI node's output[1] > manual roi_output_width/height fields.
+        roi_w: Optional[float] = None
+        roi_h: Optional[float] = None
+        roi_dim_raw = self.get_input_by_name("roi_dimensions", accept_object=True)
+        if roi_dim_raw:
+            try:
+                dim = json.loads(roi_dim_raw) if isinstance(roi_dim_raw, str) else roi_dim_raw
+                if isinstance(dim, dict):
+                    roi_w = _as_float(dim.get("width"))
+                    roi_h = _as_float(dim.get("height"))
+            except Exception:
+                pass
+        if roi_w is None:
+            roi_w = _as_float(self._config.get("roi_output_width"))
+        if roi_h is None:
+            roi_h = _as_float(self._config.get("roi_output_height"))
+
+        self._recipe = self._build_recipe(roi_w, roi_h)
+
         vision_output = self._get_input("detections_payload")
         if not vision_output:
             return self._error_payload("No vision model output connected.")
@@ -179,8 +259,9 @@ class StickerValidatorProcessor(BasicProcessor):
             "data1": agg_data1,
             "data2": agg_data2,
             "line": self._line or None,
-            "mp_check": self._mp_check,
+            "mp_check": mp_check,
             "template_version_id": self._template_version_id,
+            "operator_user_id": operator_user_id,
             "targets": target_results,
         })]
 
@@ -357,6 +438,9 @@ class StickerValidatorProcessor(BasicProcessor):
     def _get_input(self, field_name: str) -> Any:
         """Retrieve input from config or connected node output."""
         return self.get_input_by_name(field_name, accept_object=True)
+
+    def cancel(self) -> None:
+        pass
 
     @staticmethod
     def _error_payload(message: str) -> List[str]:

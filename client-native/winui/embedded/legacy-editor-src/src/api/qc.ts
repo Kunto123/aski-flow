@@ -3,9 +3,8 @@
  *
  * Covers:
  *  - Template deployments (per line/station)
- *  - Inspection events & outbox
+ *  - Inspection results & push queue
  *  - Dashboard aggregates
- *  - RBAC role assignment
  */
 
 import apiClient from "./client";
@@ -74,103 +73,110 @@ export async function deactivateDeployment(deploymentId: number): Promise<void> 
   await apiClient.delete(`/deployments/${deploymentId}`);
 }
 
-// ── Inspection Events ────────────────────────────────────────────────────────
+// ── Inspection Results ───────────────────────────────────────────────────────
 
-export interface InspectionTargetResult {
-  id: number;
-  event_id: number;
-  target_id: string | null;
-  part_name: string | null;
-  expected_class: string | null;
-  detected_class: string | null;
-  decision: string;
-  decision_code: string;
-  reject_reason_code: string | null;
-  data1: number | null;
-  data2: number | null;
-  pos_x: number | null;
-  pos_y: number | null;
-  offset_x: number | null;
-  offset_y: number | null;
-  angle_deg: number | null;
-  delta_angle_deg: number | null;
+/** Per-target detail; included in InspectionResult.targets when fetching a single result. */
+export interface InspectionTarget {
+  [key: string]: unknown;
 }
 
-export interface InspectionEvent {
+/** Flat inspection result row from aski_inspection_results. */
+export interface InspectionResult {
   id: number;
-  deployment_id: number | null;
   template_version_id: number | null;
   line_id: string | null;
-  station_id: string | null;
   part_name: string | null;
+  mp_check: string | null;
+  data1: number | null;
+  data2: number | null;
   decision: string;
   decision_code: string;
   reject_reason_code: string | null;
-  mp_check: string | null;
-  operator_id: number | null;
+  push_status: "pending" | "sent" | "failed";
+  retry_count: number;
+  operator_user_id: number | null;
   inspected_at: string | null;
-  targets?: InspectionTargetResult[];
+  /** Only present when fetching a single result (GET /inspections/<id>) */
+  targets?: InspectionTarget[];
 }
 
-export interface ListInspectionEventsOptions {
+export interface ListInspectionResultsOptions {
   line_id?: string;
   part_name?: string;
   template_version_id?: number;
   decision_code?: string;
+  push_status?: string;
   from_dt?: string;
   to_dt?: string;
   limit?: number;
   offset?: number;
 }
 
-export async function listInspectionEvents(
-  options?: ListInspectionEventsOptions,
-): Promise<InspectionEvent[]> {
-  const response = await apiClient.get<InspectionEvent[]>("/inspections", {
+export async function listInspectionResults(
+  options?: ListInspectionResultsOptions,
+): Promise<InspectionResult[]> {
+  const response = await apiClient.get<InspectionResult[]>("/inspections", {
     params: options,
   });
   return response.data;
 }
 
-export async function getInspectionEvent(eventId: number): Promise<InspectionEvent> {
-  const response = await apiClient.get<InspectionEvent>(`/inspections/${eventId}`);
+export async function getInspectionResult(resultId: number): Promise<InspectionResult> {
+  const response = await apiClient.get<InspectionResult>(`/inspections/${resultId}`);
   return response.data;
 }
 
-// ── Outbox ───────────────────────────────────────────────────────────────────
+// Backward-compat aliases
+/** @deprecated Use listInspectionResults */
+export const listInspectionEvents = listInspectionResults;
+/** @deprecated Use getInspectionResult */
+export const getInspectionEvent = getInspectionResult;
 
-export interface OutboxRow {
+// ── Push Queue ───────────────────────────────────────────────────────────────
+
+/** Inspection result pending push to external system. */
+export interface PushQueueRow {
   id: number;
-  event_id: number | null;
+  template_version_id: number | null;
+  line_id: string | null;
   part_name: string | null;
-  date_check_mc: string;
   mp_check: string | null;
   data1: number | null;
   data2: number | null;
   line: string | null;
   decision: string;
   decision_code: string;
-  payload_json: string | null;
-  status: "pending" | "processing" | "sent" | "failed";
+  reject_reason_code: string | null;
+  targets_json: string | null;
+  push_status: "pending" | "sent" | "failed";
   retry_count: number;
   last_error: string | null;
-  created_at: string;
+  date_check_mc: string | null;
+  created_at: string | null;
 }
 
-export async function listOutboxPending(limit?: number): Promise<OutboxRow[]> {
-  const response = await apiClient.get<OutboxRow[]>("/inspections/outbox", {
+export async function listPushPending(limit?: number): Promise<PushQueueRow[]> {
+  const response = await apiClient.get<PushQueueRow[]>("/inspections/push-pending", {
     params: limit ? { limit } : undefined,
   });
   return response.data;
 }
 
-export async function markOutboxSent(outboxId: number): Promise<void> {
-  await apiClient.post(`/inspections/outbox/${outboxId}/sent`);
+export async function markPushSent(resultId: number): Promise<void> {
+  await apiClient.post(`/inspections/push/${resultId}/sent`);
 }
 
-export async function markOutboxFailed(outboxId: number, error: string): Promise<void> {
-  await apiClient.post(`/inspections/outbox/${outboxId}/failed`, { error });
+export async function markPushFailed(resultId: number, error: string): Promise<void> {
+  await apiClient.post(`/inspections/push/${resultId}/failed`, { error });
 }
+
+// Legacy outbox aliases (backward compat — routes still respond)
+/** @deprecated Use listPushPending */
+export const listOutboxPending = listPushPending;
+/** @deprecated Use markPushSent */
+export const markOutboxSent = markPushSent;
+/** @deprecated Use markPushFailed */
+export const markOutboxFailed = markPushFailed;
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
 
@@ -187,7 +193,6 @@ export interface DashboardSummary {
 }
 
 export interface CounterBucket {
-  id: number;
   bucket_time: string;
   granularity: string;
   line_id: string;
@@ -234,34 +239,3 @@ export async function getDashboardBuckets(
   return response.data;
 }
 
-// ── RBAC ─────────────────────────────────────────────────────────────────────
-
-export interface AskiRole {
-  id: number;
-  name: string;
-  label: string;
-  description: string | null;
-}
-
-export async function listRoles(): Promise<AskiRole[]> {
-  const response = await apiClient.get<AskiRole[]>("/rbac/roles");
-  return response.data;
-}
-
-export async function listUserRoles(userId: number): Promise<string[]> {
-  const response = await apiClient.get<string[]>(`/rbac/users/${userId}/roles`);
-  return response.data;
-}
-
-export async function assignUserRole(userId: number, roleName: string): Promise<void> {
-  await apiClient.post(`/rbac/users/${userId}/roles`, { role_name: roleName });
-}
-
-export async function revokeUserRole(userId: number, roleName: string): Promise<void> {
-  await apiClient.delete(`/rbac/users/${userId}/roles/${roleName}`);
-}
-
-export async function getMyPermissions(): Promise<string[]> {
-  const response = await apiClient.get<string[]>("/rbac/me/permissions");
-  return response.data;
-}

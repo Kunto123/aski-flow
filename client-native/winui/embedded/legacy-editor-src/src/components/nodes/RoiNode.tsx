@@ -14,7 +14,7 @@ import {
   useUpdateNodeInternals,
 } from "reactflow";
 import HandleWrapper from "../handles/HandleWrapper";
-import { generateIdForHandle, getTargetHandleKey } from "../../utils/flowUtils";
+import { generateIdForHandle, generateIdForHandles, getTargetHandleKey } from "../../utils/flowUtils";
 import { NodeContext, NodeRuntimeContext } from "../../providers/NodeProvider";
 import { useIsPlaying } from "../../hooks/useIsPlaying";
 import NodePlayButton from "./node-button/NodePlayButton";
@@ -853,6 +853,20 @@ const RoiNode: React.FC<RoiNodeProps> = ({ data, id, selected }) => {
 
       <NodeContent>
         <NodeForm>{formFields}</NodeForm>
+        {/* Dimensions output handle — connect to Sticker Validator's "ROI Dimensions" input */}
+        <div className="relative flex items-center justify-end pr-2 py-0.5">
+          <span className="mr-2 text-[10px] text-slate-500">Dimensions</span>
+          <HandleWrapper
+            id={generateIdForHandle(1, true)}
+            position={
+              !!data?.handles?.[generateIdForHandle(1, true)]
+                ? data.handles[generateIdForHandle(1, true)]
+                : Position.Right
+            }
+            isOutput
+            onChangeHandlePosition={handleChangeHandlePosition}
+          />
+        </div>
       </NodeContent>
 
       <NodeLogs

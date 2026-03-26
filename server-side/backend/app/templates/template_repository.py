@@ -7,9 +7,6 @@ from typing import Any
 
 from app.storage.auth_db import db_cursor, row_to_dict
 
-TEMPLATE_MANAGE_PERMISSION = "template.manage"
-TEMPLATE_USE_PERMISSION = "template.use"
-
 RUNTIME_NODE_KEYS = {
     "outputData",
     "lastRun",
@@ -79,36 +76,6 @@ def ensure_template_schema() -> None:
                 );
             END
             """
-        )
-        cur.execute(
-            """
-            IF NOT EXISTS (
-                SELECT 1 FROM aski_operator_permissions WHERE permission_key = ?
-            )
-            BEGIN
-                INSERT INTO aski_operator_permissions (permission_key, label, description, is_allowed)
-                VALUES (?, ?, ?, 0)
-            END
-            """,
-            TEMPLATE_MANAGE_PERMISSION,
-            TEMPLATE_MANAGE_PERMISSION,
-            "Manage Flow Templates",
-            "Membuat dan memperbarui template flow untuk operator",
-        )
-        cur.execute(
-            """
-            IF NOT EXISTS (
-                SELECT 1 FROM aski_operator_permissions WHERE permission_key = ?
-            )
-            BEGIN
-                INSERT INTO aski_operator_permissions (permission_key, label, description, is_allowed)
-                VALUES (?, ?, ?, 0)
-            END
-            """,
-            TEMPLATE_USE_PERMISSION,
-            TEMPLATE_USE_PERMISSION,
-            "Use Flow Templates",
-            "Memilih dan menjalankan template flow yang disediakan admin",
         )
 
 

@@ -1,13 +1,31 @@
 """
-Inspection repository.
+Inspection repository — aski_inspection_results (flat table, single source of truth).
 
-Writes inspection events + target results to SQL Server and enqueues
-an outbox row for downstream push.
+Schema column contract:
+  PartName            — part name string from validator recipe
+  DateCheckMC         — inspection timestamp (DEFAULT GETDATE(), written by DB)
+  MPCheck             — machine/process check identifier from validator config
+  Data1               — aggregate ROI/object confidence across targets (avg of accepted)
+  Data2               — aggregate class confidence (nullable; None when model is single-conf)
+  Line                — line identifier from validator config
+  decision            — 'ACCEPT' | 'REJECT'
+  decision_code       — same as decision in current flows; kept for audit flexibility
+  reject_reason_code  — first failing target's reject reason code (None if ACCEPT)
+  targets_json        — JSON array of per-target detail from StickerValidatorProcessor
+  push_status         — 'pending' | 'sent' | 'failed' (outbox inline)
+  retry_count         — incremented on each failed push attempt
+  last_error          — last push error message (truncated to 1000 chars)
+  last_attempt_at     — timestamp of last push attempt
+  pushed_at           — timestamp of successful push
+  template_version_id — version of the template used (from validator config)
+  operator_user_id    — user id of the operator (from flow config, optional)
 
-Fallback notes:
-- rotation_deg / angle_deg: nullable; stored as NULL when model does not provide it.
-- data2 (class_confidence): nullable; stored as NULL when model only yields one confidence.
-  Callers document this explicitly in the StickerValidatorProcessor payload contract.
+Function rename log (Tahap 2):
+  list_inspection_events          → list_inspection_results
+  get_inspection_event_with_targets → get_inspection_result
+  list_outbox_pending             → list_push_pending
+  mark_outbox_sent                → mark_push_sent
+  mark_outbox_failed              → mark_push_failed
 """
 
 from __future__ import annotations
@@ -21,100 +39,40 @@ from app.storage.auth_db import db_cursor, row_to_dict
 
 def write_inspection_result(
     *,
-    deployment_id: int | None,
     template_version_id: int | None,
     line_id: str | None,
-    station_id: str | None,
     part_name: str | None,
     decision: str,
     decision_code: str,
     reject_reason_code: str | None,
     mp_check: str | None,
-    operator_id: int | None,
+    operator_user_id: int | None,
     targets: list[dict[str, Any]],
     data1: float | None = None,
     data2: float | None = None,
 ) -> int:
     """
-    Insert one inspection event + its target results + an outbox row.
-    Returns the new event_id.
-    All writes are committed atomically (single db_cursor transaction).
+    Insert one row into aski_inspection_results.
+    Returns the new row id (used as inspection_result_id throughout the system).
+
+    Data1 = aggregate ROI confidence from validator (avg of accepted targets).
+    Data2 = aggregate class confidence (None when model yields single confidence score).
+    targets = full per-target detail list serialised as JSON for audit/detail view.
+    push_status defaults to 'pending' — downstream push worker reads via list_push_pending().
     """
+    targets_json = json.dumps(targets, ensure_ascii=True)
     with db_cursor() as cur:
-        # ── 1. inspection_events ────────────────────────────────────────────
         cur.execute(
             """
-            INSERT INTO aski_inspection_events (
-                deployment_id, template_version_id, line_id, station_id,
-                part_name, decision, decision_code, reject_reason_code,
-                mp_check, operator_id
+            INSERT INTO aski_inspection_results (
+                PartName, MPCheck, Data1, Data2, Line,
+                decision, decision_code, reject_reason_code,
+                targets_json, push_status,
+                template_version_id, operator_user_id
             )
             OUTPUT INSERTED.id
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
             """,
-            deployment_id,
-            template_version_id,
-            line_id,
-            station_id,
-            part_name,
-            decision,
-            decision_code,
-            reject_reason_code,
-            mp_check,
-            operator_id,
-        )
-        event_id = int(cur.fetchone()[0])
-
-        # ── 2. target results ───────────────────────────────────────────────
-        for t in targets:
-            cur.execute(
-                """
-                INSERT INTO aski_inspection_target_results (
-                    event_id, target_id, part_name, expected_class, detected_class,
-                    decision, decision_code, reject_reason_code,
-                    data1, data2, pos_x, pos_y, offset_x, offset_y,
-                    angle_deg, delta_angle_deg
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                event_id,
-                t.get("target_id"),
-                t.get("part_name"),
-                t.get("expected_class"),
-                t.get("detected_class"),
-                t.get("decision"),
-                t.get("decision_code"),
-                t.get("reject_reason_code"),
-                t.get("data1"),
-                t.get("data2"),
-                (t.get("position") or {}).get("x"),
-                (t.get("position") or {}).get("y"),
-                (t.get("offset") or {}).get("x"),
-                (t.get("offset") or {}).get("y"),
-                t.get("angle_deg"),
-                t.get("delta_angle_deg"),
-            )
-
-        # ── 3. outbox row ───────────────────────────────────────────────────
-        payload = {
-            "event_id": event_id,
-            "decision": decision,
-            "decision_code": decision_code,
-            "part_name": part_name,
-            "line_id": line_id,
-            "station_id": station_id,
-            "template_version_id": template_version_id,
-            "targets": targets,
-        }
-        cur.execute(
-            """
-            INSERT INTO aski_integration_outbox (
-                event_id, part_name, mp_check, data1, data2,
-                line, decision, decision_code, payload_json, status
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-            """,
-            event_id,
             part_name,
             mp_check,
             data1,
@@ -122,59 +80,76 @@ def write_inspection_result(
             line_id,
             decision,
             decision_code,
-            json.dumps(payload, ensure_ascii=True),
+            reject_reason_code,
+            targets_json,
+            template_version_id,
+            operator_user_id,
         )
+        return int(cur.fetchone()[0])
 
-    return event_id
 
-
-def list_inspection_events(
+def list_inspection_results(
     *,
     line_id: str | None = None,
     part_name: str | None = None,
     template_version_id: int | None = None,
     decision_code: str | None = None,
+    push_status: str | None = None,
     from_dt: datetime | None = None,
     to_dt: datetime | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
+    """List inspection results with optional filters. Does not include targets_json."""
     filters: list[str] = []
     params: list[Any] = []
 
     if line_id:
-        filters.append("e.line_id = ?")
+        filters.append("Line = ?")
         params.append(line_id)
     if part_name:
-        filters.append("e.part_name = ?")
+        filters.append("PartName = ?")
         params.append(part_name)
     if template_version_id is not None:
-        filters.append("e.template_version_id = ?")
+        filters.append("template_version_id = ?")
         params.append(int(template_version_id))
     if decision_code:
-        filters.append("e.decision_code = ?")
+        filters.append("decision_code = ?")
         params.append(decision_code)
+    if push_status:
+        filters.append("push_status = ?")
+        params.append(push_status)
     if from_dt:
-        filters.append("e.inspected_at >= ?")
+        filters.append("DateCheckMC >= ?")
         params.append(from_dt)
     if to_dt:
-        filters.append("e.inspected_at <= ?")
+        filters.append("DateCheckMC <= ?")
         params.append(to_dt)
 
     where = ("WHERE " + " AND ".join(filters)) if filters else ""
-    params.extend([limit, offset])
+    params.extend([offset, limit])
 
     with db_cursor() as cur:
         cur.execute(
             f"""
             SELECT
-                e.id, e.deployment_id, e.template_version_id,
-                e.line_id, e.station_id, e.part_name,
-                e.decision, e.decision_code, e.reject_reason_code,
-                e.mp_check, e.operator_id, e.inspected_at
-            FROM aski_inspection_events e
+                id,
+                template_version_id,
+                Line                AS line_id,
+                PartName            AS part_name,
+                MPCheck             AS mp_check,
+                Data1               AS data1,
+                Data2               AS data2,
+                decision,
+                decision_code,
+                reject_reason_code,
+                push_status,
+                retry_count,
+                operator_user_id,
+                DateCheckMC         AS inspected_at
+            FROM aski_inspection_results
             {where}
-            ORDER BY e.inspected_at DESC
+            ORDER BY DateCheckMC DESC
             OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
             """,
             *params,
@@ -188,50 +163,79 @@ def list_inspection_events(
     return result
 
 
-def get_inspection_event_with_targets(event_id: int) -> dict[str, Any] | None:
+def get_inspection_result(result_id: int) -> dict[str, Any] | None:
+    """Return full inspection result row including parsed targets array."""
     with db_cursor() as cur:
         cur.execute(
             """
             SELECT
-                e.id, e.deployment_id, e.template_version_id,
-                e.line_id, e.station_id, e.part_name,
-                e.decision, e.decision_code, e.reject_reason_code,
-                e.mp_check, e.operator_id, e.inspected_at
-            FROM aski_inspection_events e
-            WHERE e.id = ?
+                id,
+                template_version_id,
+                Line                AS line_id,
+                PartName            AS part_name,
+                MPCheck             AS mp_check,
+                Data1               AS data1,
+                Data2               AS data2,
+                decision,
+                decision_code,
+                reject_reason_code,
+                push_status,
+                retry_count,
+                last_error,
+                last_attempt_at,
+                pushed_at,
+                operator_user_id,
+                DateCheckMC         AS inspected_at,
+                targets_json
+            FROM aski_inspection_results
+            WHERE id = ?
             """,
-            int(event_id),
+            int(result_id),
         )
         row = cur.fetchone()
         if not row:
             return None
-        event = row_to_dict(cur, row)
-        event["inspected_at"] = str(event["inspected_at"]) if event.get("inspected_at") else None
+        record = row_to_dict(cur, row)
 
-        cur.execute(
-            """
-            SELECT *
-            FROM aski_inspection_target_results
-            WHERE event_id = ?
-            ORDER BY id
-            """,
-            int(event_id),
-        )
-        rows = cur.fetchall()
-        event["targets"] = [row_to_dict(cur, r) for r in rows]
+    record["inspected_at"] = str(record["inspected_at"]) if record.get("inspected_at") else None
+    for ts_col in ("last_attempt_at", "pushed_at"):
+        if record.get(ts_col):
+            record[ts_col] = str(record[ts_col])
 
-    return event
+    raw_json = record.pop("targets_json", None)
+    try:
+        record["targets"] = json.loads(raw_json) if raw_json else []
+    except Exception:
+        record["targets"] = []
+
+    return record
 
 
-def list_outbox_pending(limit: int = 50) -> list[dict[str, Any]]:
+def list_push_pending(limit: int = 50) -> list[dict[str, Any]]:
+    """Return inspection results with push_status = 'pending', ordered oldest-first."""
     with db_cursor() as cur:
         cur.execute(
             """
-            SELECT id, event_id, part_name, date_check_mc, mp_check,
-                   data1, data2, line, decision, decision_code,
-                   payload_json, status, retry_count, last_error, created_at
-            FROM aski_integration_outbox
-            WHERE status = 'pending'
+            SELECT
+                id,
+                template_version_id,
+                Line                AS line_id,
+                PartName            AS part_name,
+                MPCheck             AS mp_check,
+                Data1               AS data1,
+                Data2               AS data2,
+                Line                AS line,
+                decision,
+                decision_code,
+                reject_reason_code,
+                targets_json,
+                push_status,
+                retry_count,
+                last_error,
+                DateCheckMC         AS date_check_mc,
+                created_at
+            FROM aski_inspection_results
+            WHERE push_status = 'pending'
             ORDER BY created_at ASC
             OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY
             """,
@@ -241,36 +245,40 @@ def list_outbox_pending(limit: int = 50) -> list[dict[str, Any]]:
         result = [row_to_dict(cur, r) for r in rows]
 
     for item in result:
-        for key in ("date_check_mc", "created_at", "processed_at"):
+        for key in ("date_check_mc", "created_at"):
             if item.get(key):
                 item[key] = str(item[key])
 
     return result
 
 
-def mark_outbox_sent(outbox_id: int) -> None:
+def mark_push_sent(result_id: int) -> None:
+    """Mark an inspection result as successfully pushed."""
     with db_cursor() as cur:
         cur.execute(
             """
-            UPDATE aski_integration_outbox
-            SET status = 'sent', processed_at = GETDATE()
+            UPDATE aski_inspection_results
+            SET push_status     = 'sent',
+                pushed_at       = GETDATE(),
+                last_attempt_at = GETDATE()
             WHERE id = ?
             """,
-            int(outbox_id),
+            int(result_id),
         )
 
 
-def mark_outbox_failed(outbox_id: int, error: str) -> None:
+def mark_push_failed(result_id: int, error: str) -> None:
+    """Record a failed push attempt; increments retry_count."""
     with db_cursor() as cur:
         cur.execute(
             """
-            UPDATE aski_integration_outbox
-            SET status = 'failed',
-                retry_count = retry_count + 1,
-                last_error = ?,
-                processed_at = GETDATE()
+            UPDATE aski_inspection_results
+            SET push_status     = 'failed',
+                retry_count     = retry_count + 1,
+                last_error      = ?,
+                last_attempt_at = GETDATE()
             WHERE id = ?
             """,
             str(error)[:1000],
-            int(outbox_id),
+            int(result_id),
         )

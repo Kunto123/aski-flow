@@ -4,11 +4,10 @@ Auth Blueprint  –  /auth/*
 Endpoints:
     POST  /auth/login               – Login, kembalikan JWT
     GET   /auth/me                  – Info user yang sedang login
-    GET   /auth/permissions         – Daftar semua permission (butuh login)
-    PUT   /auth/permissions/<key>   – Toggle permission (hanya admin)
     POST  /auth/users               – Buat user baru (hanya admin)
     GET   /auth/users               – Daftar semua user (hanya admin)
     PUT   /auth/users/<id>          – Update user aktif/nonaktif (hanya admin)
+    GET   /auth/permissions         – Stub; selalu kembalikan [] (RBAC dihapus)
 """
 
 import datetime
@@ -29,6 +28,15 @@ from app.storage.auth_db import db_cursor, row_to_dict
 auth_blueprint = Blueprint("auth", __name__, url_prefix="/auth")
 
 _TOKEN_EXPIRY_HOURS = int(os.getenv("JWT_EXPIRY_HOURS", "8"))
+
+
+# ---------------------------------------------------------------------------
+# GET /auth/permissions  – stub (RBAC removed; kept so frontend doesn't 500)
+# ---------------------------------------------------------------------------
+@auth_blueprint.route("/permissions", methods=["GET"])
+@require_auth
+def get_permissions():
+    return jsonify([])
 
 
 # ---------------------------------------------------------------------------
@@ -101,51 +109,6 @@ def me():
         "username": g.username,
         "role":     g.role,
     })
-
-
-# ---------------------------------------------------------------------------
-# GET /auth/permissions
-# ---------------------------------------------------------------------------
-@auth_blueprint.route("/permissions", methods=["GET"])
-@require_auth
-def get_permissions():
-    with db_cursor() as cur:
-        cur.execute(
-            "SELECT permission_key, label, description, is_allowed "
-            "FROM aski_operator_permissions ORDER BY permission_key"
-        )
-        rows = cur.fetchall()
-        permissions = [row_to_dict(cur, row) for row in rows]
-
-    # Konversi BIT (0/1) ke bool agar JSON-nya benar
-    for p in permissions:
-        p["is_allowed"] = bool(p["is_allowed"])
-
-    return jsonify(permissions)
-
-
-# ---------------------------------------------------------------------------
-# PUT /auth/permissions/<key>
-# ---------------------------------------------------------------------------
-@auth_blueprint.route("/permissions/<string:key>", methods=["PUT"])
-@require_admin
-def update_permission(key: str):
-    data       = request.get_json(force=True) or {}
-    is_allowed = bool(data.get("is_allowed", False))
-
-    with db_cursor() as cur:
-        cur.execute(
-            "UPDATE aski_operator_permissions "
-            "SET is_allowed = ?, updated_by = ?, updated_at = GETDATE() "
-            "WHERE permission_key = ?",
-            int(is_allowed),
-            int(g.user_id),
-            key,
-        )
-        if cur.rowcount == 0:
-            return jsonify({"error": f"Permission '{key}' tidak ditemukan"}), 404
-
-    return jsonify({"permission_key": key, "is_allowed": is_allowed})
 
 
 # ---------------------------------------------------------------------------

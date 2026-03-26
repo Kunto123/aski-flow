@@ -205,8 +205,9 @@ class RoiProcessor(BasicProcessor):
             runtime_params=initial_params,
         )
         stream_id_ref["value"] = out_stream_id
-        # Single canonical output: downstream and UI can render from stream ref directly.
-        return [f"stream://{out_stream_id}"]
+        # output[0] = stream ref (media/display); output[1] = ROI dimensions JSON
+        dims = json.dumps({"width": int(self.width), "height": int(self.height)})
+        return [f"stream://{out_stream_id}", dims]
 
     def _process_file(self, input_url: str):
         filename = _extract_asset_filename(input_url)
@@ -233,7 +234,8 @@ class RoiProcessor(BasicProcessor):
 
         out_name = f"{self.name}-roi-{uuid.uuid4().hex[:10]}.jpg"
         out_url = self.get_storage().save(out_name, encoded.tobytes())
-        return [out_url]
+        dims = json.dumps({"width": cropped.shape[1], "height": cropped.shape[0]})
+        return [out_url, dims]
 
     def _process_video_file(self, filename: str):
         storage = self.get_storage()
@@ -287,7 +289,8 @@ class RoiProcessor(BasicProcessor):
 
             out_name = f"{self.name}-roi-{uuid.uuid4().hex[:10]}.mp4"
             out_url = storage.save(out_name, out_bytes)
-            return [out_url]
+            dims = json.dumps({"width": roi_w, "height": roi_h})
+            return [out_url, dims]
         finally:
             if cap is not None:
                 cap.release()

@@ -453,7 +453,15 @@ const Flow = forwardRef((props: FlowProps, ref) => {
     // Firing a competing requestAnimationFrame here races with that prop fitView,
     // producing an intermittent blank or wrong-zoom canvas when templates load.
     // Only keep resize-triggered fits (ResizeObserver + window listener).
+    // Skip the first callback: ResizeObserver fires immediately on observe()
+    // (before any actual resize), which races with the fitView prop and the
+    // auto-fit timer already scheduled on mount.
+    let firstResizeCallback = true;
     const resizeObserver = new ResizeObserver(() => {
+      if (firstResizeCallback) {
+        firstResizeCallback = false;
+        return;
+      }
       fitToViewport();
     });
     resizeObserver.observe(reactFlowWrapper.current as Element);
@@ -465,30 +473,42 @@ const Flow = forwardRef((props: FlowProps, ref) => {
     };
   }, [reactFlowInstance]);
 
+  // Mirror nodes into a ref so the auto-fit timer can read the current count
+  // without listing `nodes` as an effect dependency.  Having `nodes` in deps
+  // caused the timer to reset on every ReactFlow per-node dimension callback,
+  // so fitView never fired when loading templates with many nodes (Race #1).
+  const nodesRef = useRef<Node[]>(nodes);
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
+
   useEffect(() => {
     if (!reactFlowInstance || !shouldAutoFitRef.current) {
-      return;
-    }
-
-    if (nodes.length === 0) {
-      shouldAutoFitRef.current = false;
       return;
     }
 
     // Use setTimeout instead of requestAnimationFrame so that node dimensions
     // measured by ResizeObserver (which may lag in WinUI WebView2) have time
     // to settle before fitView calculates the bounding box.
+    // 350 ms is long enough for all per-node dimension callbacks to complete.
     const timerId = window.setTimeout(() => {
+      if (nodesRef.current.length === 0) {
+        shouldAutoFitRef.current = false;
+        return;
+      }
       reactFlowInstance.fitView({
         padding: 0.2,
         duration: 0,
         maxZoom: 1.05,
       });
       shouldAutoFitRef.current = false;
-    }, 150);
+    }, 350);
 
-    return () => window.clearTimeout(timerId);
-  }, [reactFlowInstance, nodes, edges]);
+    return () => {
+      window.clearTimeout(timerId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reactFlowInstance]); // intentionally omit nodes/edges — use nodesRef instead
 
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => {

@@ -75,3 +75,6 @@ guide.md
 client-native/winui/README.md
 client-native/winui/scripts/README.md
 aski-flow.sln
+
+NEXT_STEPS_DB_REFACTOR.md
+WORKLOG_DB_REFACTOR.md

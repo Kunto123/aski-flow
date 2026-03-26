@@ -169,10 +169,6 @@ def ensure_qc_schema() -> None:
             """
         )
 
-    # ── Add inspection_recipe_json column to template_versions (migration) ──
-    _migrate_add_recipe_column()
-
-
 def _migrate_add_recipe_column() -> None:
     """Add inspection_recipe_json column to aski_flow_template_versions if absent."""
     with db_cursor() as cur:
@@ -308,6 +304,54 @@ def ensure_rbac_schema() -> None:
             )
             BEGIN
                 EXEC sp_rename 'aski_permissions.[key]', 'permission_key', 'COLUMN';
+            END
+            """
+        )
+
+
+def ensure_inspection_results_schema() -> None:
+    """Create aski_inspection_results table if not exists.
+
+    Single flat table replacing the old normalized triple:
+      aski_inspection_events + aski_inspection_target_results + aski_integration_outbox
+
+    push_status / retry_count / last_error are stored inline so no separate
+    outbox table is needed.  targets_json holds the per-target detail as JSON.
+    """
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'aski_inspection_results')
+            BEGIN
+                CREATE TABLE aski_inspection_results (
+                    id                  INT IDENTITY(1,1) PRIMARY KEY,
+                    PartName            NVARCHAR(200)  NULL,
+                    DateCheckMC         DATETIME2      NOT NULL DEFAULT GETDATE(),
+                    MPCheck             NVARCHAR(200)  NULL,
+                    Data1               FLOAT          NULL,
+                    Data2               FLOAT          NULL,
+                    Line                NVARCHAR(100)  NULL,
+                    decision            NVARCHAR(20)   NOT NULL,
+                    decision_code       NVARCHAR(50)   NOT NULL,
+                    reject_reason_code  NVARCHAR(50)   NULL,
+                    targets_json        NVARCHAR(MAX)  NULL,
+                    push_status         NVARCHAR(20)   NOT NULL DEFAULT 'pending',
+                    retry_count         INT            NOT NULL DEFAULT 0,
+                    last_error          NVARCHAR(1000) NULL,
+                    last_attempt_at     DATETIME2      NULL,
+                    pushed_at           DATETIME2      NULL,
+                    created_at          DATETIME2      NOT NULL DEFAULT GETDATE(),
+                    template_version_id INT            NULL,
+                    operator_user_id    INT            NULL
+                );
+                CREATE INDEX IX_aski_inspection_results_DateCheckMC
+                    ON aski_inspection_results (DateCheckMC DESC);
+                CREATE INDEX IX_aski_inspection_results_Line
+                    ON aski_inspection_results (Line);
+                CREATE INDEX IX_aski_inspection_results_push_status
+                    ON aski_inspection_results (push_status, DateCheckMC);
+                CREATE INDEX IX_aski_inspection_results_template_ver
+                    ON aski_inspection_results (template_version_id);
             END
             """
         )
