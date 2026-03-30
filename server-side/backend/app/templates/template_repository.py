@@ -35,6 +35,27 @@ ROI_GEOMETRY_FIELDS = {
     "height",
 }
 
+_TEMPLATE_SCHEMA_MIGRATIONS: dict[str, list[tuple[str, str]]] = {
+    "aski_flow_template_versions": [
+        ("inspection_recipe_json", "NVARCHAR(MAX) NULL"),
+    ],
+}
+
+
+def _ensure_template_schema_columns(cur) -> None:
+    for table_name, columns in _TEMPLATE_SCHEMA_MIGRATIONS.items():
+        for column_name, column_definition in columns:
+            cur.execute(
+                f"""
+                IF OBJECT_ID(N'dbo.{table_name}', N'U') IS NOT NULL
+                   AND COL_LENGTH(N'dbo.{table_name}', N'{column_name}') IS NULL
+                BEGIN
+                    ALTER TABLE dbo.{table_name}
+                        ADD {column_name} {column_definition};
+                END
+                """
+            )
+
 
 def ensure_template_schema() -> None:
     with db_cursor() as cur:
@@ -66,6 +87,7 @@ def ensure_template_schema() -> None:
                     version_number INT NOT NULL,
                     flow_json NVARCHAR(MAX) NOT NULL,
                     policy_json NVARCHAR(MAX) NOT NULL,
+                    inspection_recipe_json NVARCHAR(MAX) NULL,
                     flow_hash NVARCHAR(64) NOT NULL,
                     created_by INT NULL,
                     created_at DATETIME2 NOT NULL DEFAULT GETDATE(),
@@ -77,6 +99,7 @@ def ensure_template_schema() -> None:
             END
             """
         )
+        _ensure_template_schema_columns(cur)
 
 
 def _serialize_json(value: Any) -> str:

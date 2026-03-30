@@ -82,6 +82,7 @@ BEGIN
         version_number INT               NOT NULL,
         flow_json      NVARCHAR(MAX)     NOT NULL,
         policy_json    NVARCHAR(MAX)     NOT NULL,
+        inspection_recipe_json NVARCHAR(MAX) NULL,
         flow_hash      NVARCHAR(64)      NOT NULL,
         created_by     INT               NULL,
         created_at     DATETIME2         NOT NULL DEFAULT GETDATE(),
@@ -94,6 +95,16 @@ BEGIN
 END
 ELSE
     PRINT 'Table aski_flow_template_versions already exists (skipped).';
+GO
+
+IF COL_LENGTH('dbo.aski_flow_template_versions', 'inspection_recipe_json') IS NULL
+BEGIN
+    ALTER TABLE dbo.aski_flow_template_versions
+        ADD inspection_recipe_json NVARCHAR(MAX) NULL;
+    PRINT 'Column aski_flow_template_versions.inspection_recipe_json added.';
+END
+ELSE
+    PRINT 'Column aski_flow_template_versions.inspection_recipe_json already exists (skipped).';
 GO
 
 PRINT '=== ASKI Auth setup complete! ===';

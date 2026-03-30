@@ -168,26 +168,6 @@ def ensure_qc_schema() -> None:
             END
             """
         )
-
-def _migrate_add_recipe_column() -> None:
-    """Add inspection_recipe_json column to aski_flow_template_versions if absent."""
-    with db_cursor() as cur:
-        cur.execute(
-            """
-            IF NOT EXISTS (
-                SELECT 1
-                FROM sys.columns
-                WHERE object_id = OBJECT_ID('aski_flow_template_versions')
-                  AND name = 'inspection_recipe_json'
-            )
-            BEGIN
-                ALTER TABLE aski_flow_template_versions
-                    ADD inspection_recipe_json NVARCHAR(MAX) NULL;
-            END
-            """
-        )
-
-
 def ensure_rbac_schema() -> None:
     """Create RBAC tables if they do not exist. Backward-compatible with legacy role column."""
     with db_cursor() as cur:
