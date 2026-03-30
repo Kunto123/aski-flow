@@ -5,7 +5,7 @@ export const stickerValidatorNodeConfig: NodeConfig = {
   processorType: "sticker-validator",
   icon: "FaCheckCircle",
   showHandlesNames: true,
-  inputNames: ["detections_payload"],
+  inputNames: ["detections_payload", "part_ready_result"],
   fields: [
     {
       name: "detections_payload",
@@ -21,6 +21,17 @@ export const stickerValidatorNodeConfig: NodeConfig = {
       type: "input",
       hasHandle: true,
       placeholder: "Connect from ROI node output → auto-isi expected center",
+    },
+    {
+      name: "part_ready_result",
+      label: "Part Ready Gate (from Part Ready Validator)",
+      type: "input",
+      hasHandle: true,
+      required: false,
+      placeholder: "Optional: connect from Part Ready Validator output",
+      description:
+        "Jika dihubungkan, stiker hanya divalidasi saat part_ready = true. " +
+        "Jika part_ready = false → REJECT / PART_NOT_READY tanpa menjalankan validasi stiker.",
     },
     // ── Quick config ───────────────────────────────────────────────────────
     {
@@ -63,7 +74,7 @@ export const stickerValidatorNodeConfig: NodeConfig = {
       step: 1,
       allowDecimal: true,
     },
-    // ── Confidence / angle checks ──────────────────────────────────────────
+    // ── Confidence check ───────────────────────────────────────────────────
     {
       name: "min_class_confidence",
       label: "Min Class Confidence",
@@ -75,33 +86,19 @@ export const stickerValidatorNodeConfig: NodeConfig = {
       allowDecimal: true,
       description: "Kosongkan untuk skip check ini",
     },
-    {
-      name: "max_angle_deg",
-      label: "Max Angle Deviation (deg)",
-      type: "numericfield",
-      defaultValue: null,
-      min: 0,
-      step: 1,
-      allowDecimal: true,
-      description: "Kosongkan untuk skip angle check",
-    },
-    {
-      name: "expected_angle_deg",
-      label: "Expected Angle (deg)",
-      type: "numericfield",
-      defaultValue: 0,
-      step: 1,
-      allowDecimal: true,
-      description: "Sudut referensi untuk perbandingan angle (default 0)",
-    },
   ],
   outputType: "markdown",
   section: "models",
   category: "processing",
   helpMessage:
     "Validates sticker detections against an inspection recipe. " +
-    "Hubungkan output[1] dari ROI node ke 'ROI Dimensions' agar expected center otomatis terisi (cx = W/2, cy = H/2). " +
+    "Expected center otomatis diambil dari dimensi frame aktual model (bukan preview ROI), " +
+    "sehingga offset selalu konsisten dengan koordinat deteksi. " +
     "MPCheck dan Operator User ID otomatis diambil dari akun yang sedang login. " +
-    "Kosongkan Min Class Confidence / Max Angle untuk skip check tersebut. " +
+    "Kosongkan Max Offset X/Y untuk skip position check. " +
+    "Kosongkan Min Class Confidence untuk skip confidence check. " +
+    "OPSIONAL: hubungkan output Part Ready Validator ke 'Part Ready Gate' — jika part_ready = false, " +
+    "hasil langsung REJECT / PART_NOT_READY tanpa menjalankan validasi stiker. " +
+    "data1 = sticker confidence, data2 = part-ready confidence (jika gate aktif). " +
     "Output ACCEPT/REJECT — hubungkan ke inspection-db-writer untuk menyimpan hasil.",
 };

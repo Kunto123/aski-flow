@@ -163,6 +163,8 @@ export const NodeProvider = ({
   errorCount,
   onUpdateNodeData,
   onUpdateNodes,
+  runEndAt,
+  busyRejectEntry,
   children,
 }: {
   nodes: Node[];
@@ -174,6 +176,13 @@ export const NodeProvider = ({
   errorCount: number;
   onUpdateNodeData: (nodeId: string, data: any) => void;
   onUpdateNodes: (nodesUpdated: Node[], edgesUpdated: Edge[]) => void;
+  /** Incremented by Flow.tsx every time a run_end socket event arrives.
+   *  Used as a secondary flush trigger so that the queue is drained even
+   *  when hasActiveRun stays false throughout a fast run (React 18 batching). */
+  runEndAt: number;
+  /** Set by Flow.tsx when the backend rejects a run_node with run_in_progress.
+   *  NodeProvider re-enqueues the rejected node at the front of the queue. */
+  busyRejectEntry?: { name: string; at: number } | null;
   children: ReactNode;
 }) => {
   const { t } = useTranslation("flow");
@@ -181,8 +190,12 @@ export const NodeProvider = ({
   const [currentNodeIdSelected, setCurrentNodeIdSelected] =
     useState<string>("");
   const runRequestedRef = useRef(false);
-  const pendingRunNodeRef = useRef<string | null>(null);
-  const pendingRunAllRef = useRef(false);
+  // Queue-based pending run: replaces the old single-slot pendingRunNodeRef/pendingRunAllRef.
+  // A single ref slot silently dropped requests when busy — multiple clicks only preserved
+  // the last one. The queue ensures each enqueued request survives until execution.
+  type PendingRunEntry = { type: "node"; name: string } | { type: "all" };
+  const pendingRunQueueRef = useRef<PendingRunEntry[]>([]);
+  const MAX_PENDING_QUEUE = 8;
   const lastBusyToastAtRef = useRef(0);
 
   const nodesById = useMemo(() => {
@@ -247,19 +260,28 @@ export const NodeProvider = ({
   }, []);
 
   const enqueuePendingRunNode = useCallback((name: string) => {
-    pendingRunAllRef.current = false;
-    pendingRunNodeRef.current = name;
+    const queue = pendingRunQueueRef.current;
+    // Dedup: skip if this exact node is already the last entry waiting.
+    const last = queue[queue.length - 1];
+    if (last?.type === "node" && last.name === name) {
+      console.debug(`[NodeQueue] skip dup node=${name} queue_len=${queue.length}`);
+      return;
+    }
+    if (queue.length >= MAX_PENDING_QUEUE) {
+      const dropped = queue.shift();
+      console.debug(`[NodeQueue] queue full, dropped=${JSON.stringify(dropped)}`);
+    }
+    queue.push({ type: "node", name });
+    console.debug(`[NodeQueue] enqueue node=${name} queue_len=${queue.length}`);
   }, []);
 
   const enqueuePendingRunAll = useCallback(() => {
-    pendingRunNodeRef.current = null;
-    pendingRunAllRef.current = true;
+    // run-all supersedes all pending node runs — collapse the queue to a single entry.
+    pendingRunQueueRef.current = [{ type: "all" }];
+    console.debug("[NodeQueue] enqueue run-all (queue superseded)");
   }, []);
 
   const startRunNode = useCallback((name: string): boolean => {
-    pendingRunAllRef.current = false;
-    pendingRunNodeRef.current = null;
-
     const nodesSorted = nodesTopologicalSort(nodes, edges);
     // Runtime execution should not include canvas coordinates.
     // Some processors legitimately use fields named `x` / `y` (e.g. ROI),
@@ -311,9 +333,6 @@ export const NodeProvider = ({
   ]);
 
   const startRunAllNodes = useCallback(() => {
-    pendingRunNodeRef.current = null;
-    pendingRunAllRef.current = false;
-
     if (nodes.length === 0) {
       toastFastInfoMessage(t("NoNodesToRun"));
       return;
@@ -373,28 +392,85 @@ export const NodeProvider = ({
     return startRunNode(name);
   }, [isRunBusy, startRunNode]);
 
+  // Stable function refs for the flush effect.
+  // The effect depends ONLY on hasActiveRun (the gate condition). Putting
+  // startRunNode / startRunAllNodes in the deps causes the effect to re-fire
+  // every time nodes/edges update (those fns re-create on every node state
+  // change). That re-fire prematurely resets runRequestedRef.current = false
+  // while a request is still in-flight, breaking the busy-slot guard and
+  // allowing a second overlapping request to reach the backend.
+  const startRunNodeRef = useRef<(name: string) => boolean>(() => false);
+  const startRunAllNodesRef = useRef<() => void>(() => {});
+  useEffect(() => { startRunNodeRef.current = startRunNode; }, [startRunNode]);
+  useEffect(() => { startRunAllNodesRef.current = startRunAllNodes; }, [startRunAllNodes]);
+
+  // Busy-reject reschedule: when the backend rejects a run_node with run_in_progress,
+  // Flow.tsx sets busyRejectEntry. We re-enqueue the node at the front of the queue and
+  // clear runRequestedRef so the flush effect (below) can dispatch it.
+  // IMPORTANT: this effect MUST be defined BEFORE the flush effect so that React runs
+  // them in this order within the same render — re-enqueue first, then dequeue+run.
+  useEffect(() => {
+    if (!busyRejectEntry?.name) return;
+    const name = busyRejectEntry.name;
+    const queue = pendingRunQueueRef.current;
+    const alreadyQueued = queue.some(
+      (e) => e.type === "node" && e.name === name,
+    );
+    if (!alreadyQueued) {
+      queue.unshift({ type: "node", name });
+      console.debug(
+        `[NodeQueue] busy-reject re-enqueue node=${name} at front queue_len=${queue.length}`,
+      );
+    } else {
+      console.debug(`[NodeQueue] busy-reject skip dup node=${name} (already queued)`);
+    }
+    // The request was rejected — it never ran. Clear the in-flight marker so
+    // isRunBusy() can gate the next request correctly.
+    runRequestedRef.current = false;
+  }, [busyRejectEntry]);
+
+  // Queue flush effect.
+  //
+  // Triggers on TWO conditions (deps: hasActiveRun + runEndAt):
+  //
+  // 1. hasActiveRun transitions true→false: normal idle-after-run path.
+  //
+  // 2. runEndAt increments (on every run_end socket event): covers the React 18
+  //    auto-batching race where current_node_running and on_progress(isDone=true)
+  //    arrive close enough to be batched into a single render — net result is
+  //    currentNodesRunning stays [], hasActiveRun stays false, and the effect
+  //    dep never changes. Depending on runEndAt ensures flush fires even then.
+  //
+  // Only one item is dequeued per firing — the next run will trigger its own
+  // idle→busy→idle (or run_end) cycle for subsequent queue entries.
   useEffect(() => {
     if (hasActiveRun) {
+      console.debug(
+        `[NodeQueue] flush skipped — still busy queue_len=${pendingRunQueueRef.current.length}`,
+      );
       return;
     }
 
+    // System is idle. Clear the in-flight flag and dequeue the next pending run.
     runRequestedRef.current = false;
 
-    if (pendingRunAllRef.current) {
-      startRunAllNodes();
-      return;
-    }
+    const queue = pendingRunQueueRef.current;
+    if (queue.length === 0) return;
 
-    const pendingNode = pendingRunNodeRef.current;
-    if (pendingNode) {
-      startRunNode(pendingNode);
+    const next = queue.shift();
+    if (!next) return;
+
+    console.debug(
+      `[NodeQueue] flush type=${next.type}${next.type === "node" ? ` name=${next.name}` : ""} remaining=${queue.length} trigger=runEndAt:${runEndAt}/hasActiveRun:${hasActiveRun}`,
+    );
+
+    if (next.type === "all") {
+      startRunAllNodesRef.current();
+    } else {
+      startRunNodeRef.current(next.name);
     }
-  }, [
-    hasActiveRun,
-    currentNodesRunning,
-    startRunAllNodes,
-    startRunNode,
-  ]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasActiveRun, runEndAt]); // runEndAt: secondary flush trigger for React 18 batching race
 
   const runNode = useCallback((name: string) => {
     if (isRunBusy()) {

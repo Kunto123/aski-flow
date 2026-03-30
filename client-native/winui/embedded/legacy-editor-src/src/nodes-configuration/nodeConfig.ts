@@ -15,6 +15,7 @@ import { ocrReaderNodeConfig } from "./ocrReaderNode";
 import { lampControlNodeConfig } from "./lampControlNode";
 import { stickerValidatorNodeConfig } from "./stickerValidatorNode";
 import { inspectionDbWriterNodeConfig } from "./inspectionDbWriterNode";
+import { partReadyValidatorNodeConfig } from "./partReadyValidatorNode";
 
 export const nodeConfigs: { [key: string]: NodeConfig | undefined } = {
   // Week 5 roadmap nodes
@@ -33,6 +34,7 @@ export const nodeConfigs: { [key: string]: NodeConfig | undefined } = {
   // QC domain nodes
   "sticker-validator": stickerValidatorNodeConfig,
   "inspection-db-writer": inspectionDbWriterNodeConfig,
+  "part-ready-validator": partReadyValidatorNodeConfig,
   // add other configs here...
 };
 

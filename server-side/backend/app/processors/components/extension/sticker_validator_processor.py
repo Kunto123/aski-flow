@@ -1,8 +1,8 @@
 """
 Sticker Validator Processor  (processor_type = "sticker-validator")
 
-Accepts output from main-vision-model and an inspection recipe, then determines
-ACCEPT / REJECT for each configured sticker target.
+Accepts output from main-vision-model and validates each sticker target,
+producing ACCEPT / REJECT with detailed per-target result.
 
 Input contract (from main-vision-model outputData):
     {
@@ -17,22 +17,62 @@ Input contract (from main-vision-model outputData):
       ]
     }
 
+Optional gate input (from Part Ready Validator):
+    part_ready_result — JSON string with at minimum:
+      { "part_ready": bool, "part_ready_confidence": float }
+
+    Gate logic:
+      - If part_ready_result is connected AND part_ready == False:
+          → immediate REJECT, reject_reason_code = PART_NOT_READY
+          → data1 = null  (sticker validation was not run)
+          → data2 = part_ready_confidence
+      - If part_ready_result is connected AND part_ready == True:
+          → run normal sticker validation; data2 = part_ready_confidence (overrides class conf)
+          → LOW_CLASS_CONF is NOT triggered if model simply doesn't provide class_confidence
+            (class_confidence absent is only an error in legacy mode where data2 = class_conf)
+      - If part_ready_result is NOT connected:
+          → legacy mode: run sticker validation as before; data2 = class_confidence (unchanged)
+
+Output contract:
+    decision, decision_code, reject_reason_code,
+    part_name, data1, data2, line, mp_check,
+    template_version_id, operator_user_id, targets
+
+    data1 = sticker confidence (avg of accepted targets; null if part not ready)
+    data2 = part_ready_confidence when gate active; class_confidence in legacy mode
+
 Runtime metadata (auto-resolved):
   - mp_check:        taken from the logged-in user's username (g.username in Flask context).
                      Falls back to config field "mp_check" for backward compatibility.
   - operator_user_id: taken from the logged-in user's ID (g.user_id).
                      Falls back to None if runtime context is unavailable.
 
+Center reference (expected_cx / expected_cy):
+  Priority 1 — actual model frame dimensions extracted from live_preds["shape"]
+               (numpy [H, W] of the frame that passed through the model; always
+               in sync with detection coordinate space).
+  Priority 2 — recipe expected_cx / expected_cy (ROI config; may mismatch in
+               stream mode if preview pixels differ from real frame pixels).
+  Using the model shape eliminates the OUT_OF_POSITION mismatch that occurs when
+  the ROI node reports preview-sized dims but the model runs on the full-resolution
+  crop.
+
+Angle / degree validation:
+  Removed.  Angle fields (max_angle_deg, expected_angle_deg, angle_deg,
+  delta_angle_deg) are no longer part of the active validation path.
+  Template configs that still carry these fields are silently ignored for
+  forward-compat; sticker tilt is implicitly captured by OUT_OF_POSITION.
+
 Fallback rules (documented):
-  - angle_deg / delta_angle_deg: stored as None when rotation_deg absent;
-    if angle check is required (max_angle_deg set) and value is None → ANGLE_UNAVAILABLE.
   - data2 (class_confidence): stored as None when model only yields one confidence score.
-    If min_class_confidence is None (field blank), the check is skipped entirely.
-    If min_class_confidence is set and data2 is None → reject with LOW_CLASS_CONF.
+    Legacy mode: if min_class_confidence is set and data2 is None → LOW_CLASS_CONF.
+    Gate mode:   if min_class_confidence is set but data2 is None → check skipped (not a reject).
+                 If data2 IS provided and below threshold → LOW_CLASS_CONF still fires.
 
 Reject reason codes:
     NOT_FOUND, WRONG_TYPE, LOW_ROI_CONF, LOW_CLASS_CONF,
-    OUT_OF_POSITION, OUT_OF_ANGLE, ANGLE_UNAVAILABLE
+    OUT_OF_POSITION,
+    PART_NOT_READY
 """
 
 from __future__ import annotations
@@ -105,10 +145,15 @@ class StickerValidatorProcessor(ContextAwareProcessor):
     ) -> Dict[str, Any]:
         """Build inspection recipe from config.
 
-        Priority:
-          1. Advanced JSON textarea — used when it contains a "targets" list.
-             (backward compatibility for old templates with inspection_recipe field)
-          2. Individual form fields — used otherwise (single-target quick config).
+        Precedence (new, explicit):
+          1. Quick config (primary) — used when any quick field is explicitly set.
+             "Quick fields" are: expected_class, part_name.
+             If either is non-empty the user intends quick config mode and the
+             legacy recipe is IGNORED, even if it is still present in the stored
+             node data (e.g. old template loaded into new UI).
+          2. Legacy inspection_recipe (fallback) — used ONLY when both quick
+             fields are blank AND inspection_recipe carries a targets list.
+             This keeps old templates that have no quick fields working.
 
         roi_w / roi_h come from the connected ROI node's output[1] when wired,
         otherwise from the manual roi_output_width / roi_output_height fields.
@@ -123,14 +168,22 @@ class StickerValidatorProcessor(ContextAwareProcessor):
                 raw_recipe = {}
         recipe_json: Dict[str, Any] = raw_recipe if isinstance(raw_recipe, dict) else {}
 
-        # Advanced JSON path (backward compat): if targets list present, use as-is.
-        if recipe_json.get("targets"):
+        # Determine whether the user has explicitly set quick config fields.
+        # Even one non-empty value means the node is operating in quick config
+        # mode — the legacy recipe must not silently override the visible UI.
+        has_quick_config = bool(
+            str(config.get("expected_class") or "").strip()
+            or str(config.get("part_name") or "").strip()
+        )
+
+        # Legacy fallback: only when quick config is absent.
+        if not has_quick_config and recipe_json.get("targets"):
             return recipe_json
 
+        # Quick config path (primary).
         exp_cx: Optional[float] = (roi_w / 2.0) if roi_w is not None else None
         exp_cy: Optional[float] = (roi_h / 2.0) if roi_h is not None else None
 
-        # Quick config path.
         # min_roi_confidence: read from config for backward compat with old templates
         # that still have the field. Not a UI field in the new simplified node.
         # Default 0.0 → check effectively disabled when field absent.
@@ -139,9 +192,7 @@ class StickerValidatorProcessor(ContextAwareProcessor):
             min_roi_conf = 0.0
 
         return {
-            "part_name": str(
-                config.get("part_name") or recipe_json.get("part_name") or ""
-            ).strip() or None,
+            "part_name": str(config.get("part_name") or "").strip() or None,
             "targets": [
                 {
                     # target_id is internal — not a UI field; default "target-1"
@@ -159,6 +210,32 @@ class StickerValidatorProcessor(ContextAwareProcessor):
                 }
             ],
         }
+
+    # ── Part Ready gate ─────────────────────────────────────────────────────
+    def _parse_part_ready_result(self) -> Optional[Dict[str, Any]]:
+        """
+        Read and parse the optional part_ready_result input.
+        Returns the parsed dict if the input is connected and parseable, else None.
+        None means the gate is not active (legacy mode).
+        """
+        raw = self.get_input_by_name("part_ready_result", accept_object=True)
+        if not raw:
+            return None
+        if isinstance(raw, str):
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                return None
+        elif isinstance(raw, dict):
+            parsed = raw
+        else:
+            return None
+        # Only treat as gate-active if we can read part_ready
+        if not isinstance(parsed, dict):
+            return None
+        if "part_ready" not in parsed:
+            return None
+        return parsed
 
     # ── Public entry point ──────────────────────────────────────────────────
     def process(self) -> Any:
@@ -187,6 +264,40 @@ class StickerValidatorProcessor(ContextAwareProcessor):
 
         self._recipe = self._build_recipe(roi_w, roi_h)
 
+        # ── Part Ready gate (optional) ────────────────────────────────────
+        part_ready_payload = self._parse_part_ready_result()
+        part_ready_confidence: Optional[float] = None
+        if part_ready_payload is not None:
+            # Gate is active — extract confidence regardless of pass/fail
+            part_ready_confidence = _as_float(
+                part_ready_payload.get("part_ready_confidence")
+                or part_ready_payload.get("data2")
+                or part_ready_payload.get("match_ratio")
+            )
+            part_ready: bool = bool(part_ready_payload.get("part_ready"))
+
+            if not part_ready:
+                # Part not present — short-circuit; skip sticker validation entirely
+                part_name = (
+                    self._recipe.get("part_name")
+                    if isinstance(self._recipe, dict)
+                    else None
+                )
+                return [json.dumps({
+                    "decision": "REJECT",
+                    "decision_code": "REJECT",
+                    "reject_reason_code": "PART_NOT_READY",
+                    "part_name": part_name,
+                    "data1": None,           # sticker validation was not run
+                    "data2": part_ready_confidence,  # part-ready confidence
+                    "line": self._line or None,
+                    "mp_check": mp_check,
+                    "template_version_id": self._template_version_id,
+                    "operator_user_id": operator_user_id,
+                    "targets": [],
+                })]
+            # part_ready == True → fall through to normal sticker validation
+
         vision_output = self._get_input("detections_payload")
         if not vision_output:
             return self._error_payload("No vision model output connected.")
@@ -199,6 +310,13 @@ class StickerValidatorProcessor(ContextAwareProcessor):
                 pass
 
         detections: List[Dict[str, Any]] = []
+        # Actual frame dimensions from the vision model (numpy shape: [H, W]).
+        # Used as the authoritative reference for expected_cx / expected_cy so
+        # that detection coordinates and the center reference are always in the
+        # same coordinate space regardless of what roi_dimensions reports.
+        model_w: Optional[float] = None
+        model_h: Optional[float] = None
+
         if isinstance(vision_output, dict):
             # In stream mode, main-vision-model returns an empty detections list at
             # startup because the model warms up in a background thread.  The live
@@ -221,10 +339,23 @@ class StickerValidatorProcessor(ContextAwareProcessor):
                             detections = self._boxes_to_detections(
                                 live_preds.get("boxes") or []
                             )
+                            # Extract actual model frame dimensions for center reference.
+                            # live_preds["shape"] = [H, W] (numpy convention) set by
+                            # the vision model's _transform() from frame.shape[:2].
+                            raw_shape = live_preds.get("shape")
+                            if isinstance(raw_shape, (list, tuple)) and len(raw_shape) >= 2:
+                                model_h = _as_float(raw_shape[0])
+                                model_w = _as_float(raw_shape[1])
                 except Exception:
                     pass
             if not detections:
                 detections = vision_output.get("detections") or []
+            # File / image mode: shape is embedded directly in the detection payload.
+            if model_w is None:
+                raw_shape = vision_output.get("shape")
+                if isinstance(raw_shape, (list, tuple)) and len(raw_shape) >= 2:
+                    model_h = _as_float(raw_shape[0])
+                    model_w = _as_float(raw_shape[1])
         elif isinstance(vision_output, list):
             detections = vision_output
 
@@ -241,15 +372,23 @@ class StickerValidatorProcessor(ContextAwareProcessor):
         overall_decision = "ACCEPT"
         first_reject_reason: Optional[str] = None
 
+        gate_active = part_ready_payload is not None
         for target_cfg in targets_config:
-            result = self._validate_target(target_cfg, detections)
+            result = self._validate_target(
+                target_cfg, detections,
+                gate_active=gate_active,
+                model_w=model_w,
+                model_h=model_h,
+            )
             target_results.append(result)
             if result["decision"] == "REJECT" and overall_decision == "ACCEPT":
                 overall_decision = "REJECT"
                 first_reject_reason = result.get("reject_reason_code")
 
-        # Pick aggregate data1/data2 from first accepted target or overall best
-        agg_data1, agg_data2 = self._aggregate_data(target_results)
+        # Pick aggregate data1 (sticker confidence) from accepted targets or overall best.
+        # data2: use part_ready_confidence when gate is active; fall back to class confidence.
+        agg_data1, agg_data2_legacy = self._aggregate_data(target_results)
+        agg_data2 = part_ready_confidence if part_ready_confidence is not None else agg_data2_legacy
 
         return [json.dumps({
             "decision": overall_decision,
@@ -270,6 +409,9 @@ class StickerValidatorProcessor(ContextAwareProcessor):
         self,
         cfg: Dict[str, Any],
         detections: List[Dict[str, Any]],
+        gate_active: bool = False,
+        model_w: Optional[float] = None,
+        model_h: Optional[float] = None,
     ) -> Dict[str, Any]:
         target_id = str(cfg.get("target_id") or "")
         part_name = str(cfg.get("part_name") or self._recipe.get("part_name") or "")
@@ -287,9 +429,8 @@ class StickerValidatorProcessor(ContextAwareProcessor):
         max_offset_y: Optional[float] = (
             float(cfg["max_offset_y"]) if cfg.get("max_offset_y") is not None else None
         )
-        max_angle_deg: Optional[float] = (
-            float(cfg["max_angle_deg"]) if cfg.get("max_angle_deg") is not None else None
-        )
+        # max_angle_deg intentionally not read — angle validation removed.
+        # Old templates that carry this field are silently ignored.
 
         # Find best matching detection
         candidate = self._find_best_candidate(expected_class, detections)
@@ -303,8 +444,6 @@ class StickerValidatorProcessor(ContextAwareProcessor):
             "data2": None,
             "position": None,
             "offset": None,
-            "angle_deg": None,
-            "delta_angle_deg": None,
         }
 
         # ── NOT FOUND ────────────────────────────────────────────────────
@@ -318,17 +457,20 @@ class StickerValidatorProcessor(ContextAwareProcessor):
         pos = candidate.get("position") or {}
         cx = (float(pos.get("x1", 0)) + float(pos.get("x2", 0))) / 2
         cy = (float(pos.get("y1", 0)) + float(pos.get("y2", 0))) / 2
-        rotation_deg: Optional[float] = candidate.get("rotation_deg")  # None from current YOLO
 
-        # Expected center from recipe (optional; 0,0 if not configured)
-        exp_cx = float(cfg.get("expected_cx") or cfg.get("roi_center_x") or 0)
-        exp_cy = float(cfg.get("expected_cy") or cfg.get("roi_center_y") or 0)
-        exp_angle = float(cfg.get("expected_angle_deg") or 0)
+        # Compute expected center.
+        # Priority 1: actual model frame dimensions (always consistent with detection
+        #             coordinate space; eliminates ROI preview-pixel mismatch).
+        # Priority 2: recipe expected_cx/cy from roi_dimensions config (backward compat).
+        if model_w is not None and model_h is not None and model_w > 0 and model_h > 0:
+            exp_cx = model_w / 2.0
+            exp_cy = model_h / 2.0
+        else:
+            exp_cx = float(cfg.get("expected_cx") or cfg.get("roi_center_x") or 0)
+            exp_cy = float(cfg.get("expected_cy") or cfg.get("roi_center_y") or 0)
+
         offset_x = cx - exp_cx if (exp_cx or exp_cy) else None
         offset_y = cy - exp_cy if (exp_cx or exp_cy) else None
-        delta_angle = (
-            rotation_deg - exp_angle if rotation_deg is not None else None
-        )
 
         base.update({
             "detected_class": detected_class,
@@ -339,8 +481,6 @@ class StickerValidatorProcessor(ContextAwareProcessor):
                 {"x": round(offset_x, 2), "y": round(offset_y, 2)}
                 if offset_x is not None else None
             ),
-            "angle_deg": round(rotation_deg, 4) if rotation_deg is not None else None,
-            "delta_angle_deg": round(delta_angle, 4) if delta_angle is not None else None,
         })
 
         # ── WRONG_TYPE ───────────────────────────────────────────────────
@@ -356,10 +496,13 @@ class StickerValidatorProcessor(ContextAwareProcessor):
         # ── LOW_CLASS_CONF ───────────────────────────────────────────────
         if min_class_conf is not None:
             if data2 is None:
-                # Model does not provide class_confidence; must reject per contract
-                return {**base, "decision": "REJECT", "decision_code": "REJECT",
-                        "reject_reason_code": "LOW_CLASS_CONF"}
-            if data2 < min_class_conf:
+                if not gate_active:
+                    # Legacy mode: class_confidence absent but check is configured → reject.
+                    return {**base, "decision": "REJECT", "decision_code": "REJECT",
+                            "reject_reason_code": "LOW_CLASS_CONF"}
+                # Gate mode: model simply doesn't provide class_confidence → skip check.
+                # part_ready has already been verified upstream; rejecting here would be wrong.
+            elif data2 < min_class_conf:
                 return {**base, "decision": "REJECT", "decision_code": "REJECT",
                         "reject_reason_code": "LOW_CLASS_CONF"}
 
@@ -372,15 +515,6 @@ class StickerValidatorProcessor(ContextAwareProcessor):
             if abs(offset_y) > max_offset_y:
                 return {**base, "decision": "REJECT", "decision_code": "REJECT",
                         "reject_reason_code": "OUT_OF_POSITION"}
-
-        # ── OUT_OF_ANGLE / ANGLE_UNAVAILABLE ────────────────────────────
-        if max_angle_deg is not None:
-            if delta_angle is None:
-                return {**base, "decision": "REJECT", "decision_code": "REJECT",
-                        "reject_reason_code": "ANGLE_UNAVAILABLE"}
-            if abs(delta_angle) > max_angle_deg:
-                return {**base, "decision": "REJECT", "decision_code": "REJECT",
-                        "reject_reason_code": "OUT_OF_ANGLE"}
 
         return {**base, "decision": "ACCEPT", "decision_code": "ACCEPT",
                 "reject_reason_code": None}

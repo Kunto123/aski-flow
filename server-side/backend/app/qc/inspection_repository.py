@@ -31,10 +31,14 @@ Function rename log (Tahap 2):
 from __future__ import annotations
 
 import json
+import logging
+import time
 from datetime import datetime
 from typing import Any
 
 from app.storage.auth_db import db_cursor, row_to_dict
+
+logger = logging.getLogger(__name__)
 
 
 def write_inspection_result(
@@ -61,7 +65,12 @@ def write_inspection_result(
     push_status defaults to 'pending' — downstream push worker reads via list_push_pending().
     """
     targets_json = json.dumps(targets, ensure_ascii=True)
+    logger.info(
+        "[InspectionRepo] INSERT starting | part=%s decision=%s line=%s",
+        part_name, decision, line_id,
+    )
     with db_cursor() as cur:
+        t_exec = time.perf_counter()
         cur.execute(
             """
             INSERT INTO aski_inspection_results (
@@ -85,7 +94,15 @@ def write_inspection_result(
             template_version_id,
             operator_user_id,
         )
-        return int(cur.fetchone()[0])
+        row = cur.fetchone()
+        t_exec_done = time.perf_counter()
+        new_id = int(row[0])
+        logger.info(
+            "[InspectionRepo] INSERT+fetch done in %.0fms | new_id=%s",
+            (t_exec_done - t_exec) * 1000,
+            new_id,
+        )
+        return new_id
 
 
 def list_inspection_results(

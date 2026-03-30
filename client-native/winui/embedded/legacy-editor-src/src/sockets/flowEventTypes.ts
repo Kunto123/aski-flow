@@ -8,6 +8,7 @@ export interface FlowOnErrorEventData {
   instanceName: string;
   nodeName: string;
   error: string;
+  code?: string;
 }
 
 export interface FlowOnCurrentNodeRunningEventData {

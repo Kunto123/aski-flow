@@ -20,6 +20,7 @@ export type FieldType =
   | "textToDisplay"
   | "list"
   | "json"
+  | "colorProfileSelect"
   | "nonRendered"
   | "dictionnary"
   | "fileUpload"

@@ -132,6 +132,14 @@ const Flow = forwardRef((props: FlowProps, ref) => {
     content: "",
   });
   const [currentNodesRunning, setCurrentNodesRunning] = useState<string[]>([]);
+  // Incremented on every run_end event — secondary flush trigger for NodeProvider's
+  // queue. Without this, React 18 auto-batching can collapse current_node_running +
+  // on_progress(isDone=true) into one render where hasActiveRun stays false, so the
+  // queue flush never fires.
+  const [runEndAt, setRunEndAt] = useState(0);
+  // Set when backend rejects run_node with run_in_progress. NodeProvider will
+  // re-enqueue the rejected node at the front of the pending queue.
+  const [busyRejectEntry, setBusyRejectEntry] = useState<{ name: string; at: number } | null>(null);
   const [errorCount, setErrorCount] = useState<number>(0);
   const streamProgressLastCommitAtRef = useRef<Map<string, number>>(new Map());
   const streamProgressPendingTimersRef = useRef<Map<string, number>>(new Map());
@@ -332,6 +340,24 @@ const Flow = forwardRef((props: FlowProps, ref) => {
   }, [applyProgressToNodes, clearPendingProgressTimer]);
 
   const onError = useCallback((data: FlowOnErrorEventData) => {
+    // run_in_progress is a scheduler-level reject, not an execution failure.
+    // The node was never executed — don't mark it as errored. Instead, re-enqueue
+    // it via NodeProvider's busyRejectEntry prop so it runs once the current slot
+    // is released. Also increment runEndAt to trigger the queue flush immediately
+    // (React 18 batches both state updates → busyRejectEntry effect runs before
+    // flush effect within the same render, so the re-enqueued node is dequeued).
+    if (data.code === "run_in_progress") {
+      const rejectedNodeName = data.nodeName ?? null;
+      console.debug(
+        `[Flow] run_in_progress reject for node=${rejectedNodeName ?? data.instanceName ?? "(unknown)"} — re-enqueue`,
+      );
+      if (rejectedNodeName) {
+        setBusyRejectEntry({ name: rejectedNodeName, at: Date.now() });
+        setRunEndAt((prev) => prev + 1);
+      }
+      return;
+    }
+
     const failingNodeName = data.instanceName || data.nodeName;
     if (failingNodeName) {
       streamProgressPendingDataRef.current.delete(failingNodeName);
@@ -391,6 +417,25 @@ const Flow = forwardRef((props: FlowProps, ref) => {
       // Safety: if a run completes without per-node completion flags,
       // ensure the UI can re-run nodes without requiring a refresh.
       setCurrentNodesRunning([]);
+      // Increment runEndAt to trigger NodeProvider's queue flush.
+      // This is the primary fix for the React 18 auto-batching race:
+      // when current_node_running + on_progress(isDone=true) are batched
+      // into one render, hasActiveRun stays false and the flush effect
+      // dep never changes. runEndAt fires the flush unconditionally.
+      setRunEndAt((prev) => prev + 1);
+      // Clear any node stuck in isDone=false (progress arrived but final
+      // isDone=true never came) so isPlaying resets and spinner doesn't freeze.
+      setNodes((prevNodes) =>
+        prevNodes.map((node) => {
+          if (node.data.isDone === false) {
+            return {
+              ...node,
+              data: { ...node.data, isDone: true, lastRun: new Date() },
+            };
+          }
+          return node;
+        })
+      );
     },
     onCurrentNodeRunning,
     () => {
@@ -712,6 +757,8 @@ const Flow = forwardRef((props: FlowProps, ref) => {
       errorCount={errorCount}
       onUpdateNodeData={handleUpdateNodeData}
       onUpdateNodes={handleUpdateNodes}
+      runEndAt={runEndAt}
+      busyRejectEntry={busyRejectEntry}
     >
       <div className="h-full w-full" ref={dropRef}>
         <div className="reactflow-wrap reactflow-wrapper h-full w-full" ref={reactFlowWrapper}>

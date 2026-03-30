@@ -1,4 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  computeColorProfile,
+  listColorProfiles,
+  saveColorProfile,
+  deleteColorProfile,
+  type ColorProfile,
+  type ColorProfileRecord,
+} from "../../../api/calibration";
 import { useAuth } from "../../../providers/AuthProvider";
 import {
   FiDatabase,
@@ -66,7 +74,8 @@ export type WorkstationSection =
   | "dataset"
   | "augment"
   | "train"
-  | "models";
+  | "models"
+  | "calibrate";
 
 type WorkstationItem = {
   id: WorkstationSection;
@@ -80,6 +89,11 @@ export const WORKSTATION_ITEMS: WorkstationItem[] = [
   { id: "augment", label: "Augment" },
   { id: "train", label: "Train" },
   { id: "models", label: "Models" },
+];
+
+// QC Calibration items shown in a separate sidebar group
+const QC_CALIBRATION_ITEMS: WorkstationItem[] = [
+  { id: "calibrate", label: "Color Calibrate" },
 ];
 
 const DATASET_UPLOAD_KIND_CONFIG: Record<
@@ -136,6 +150,19 @@ export function WorkstationSidebar({
       <div className="aski-ws-sidebar-title">Data</div>
       <div className="aski-ws-sidebar-list">
         {WORKSTATION_ITEMS.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={`aski-ws-nav-btn ${activeSection === item.id ? "active" : ""}`}
+            onClick={() => onSelect(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+      <div className="aski-ws-sidebar-title" style={{ marginTop: "12px" }}>QC Calibration</div>
+      <div className="aski-ws-sidebar-list">
+        {QC_CALIBRATION_ITEMS.map((item) => (
           <button
             key={item.id}
             type="button"
@@ -2813,6 +2840,425 @@ function AugmentPanel({
   );
 }
 
+// ── CalibratePanel ────────────────────────────────────────────────────────────
+// Workstation tool for computing a reference color profile from a snippet.
+// Workflow:
+//   1. Upload a reference image (part-present sample)
+//   2. Draw a rectangle over the area of interest (the ROI snippet)
+//   3. Click "Compute Profile" → backend computes LAB stats
+//   4. Give the profile a name and click "Save Profile"
+//   5. Select the saved profile in Part Ready Validator node › Color Profile
+
+interface SnippetRect {
+  x: number;   // normalised [0,1]
+  y: number;
+  w: number;
+  h: number;
+}
+
+function CalibratePanel() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+
+  const [imgSrc, setImgSrc] = useState<string | null>(null);
+  const [snippetRect, setSnippetRect] = useState<SnippetRect | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartRef = useRef<{ x: number; y: number } | null>(null);
+  const [colorspace, setColorspace] = useState<"LAB" | "RGB">("LAB");
+  const [profile, setProfile] = useState<ColorProfile | null>(null);
+  const [isComputing, setIsComputing] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  // ── Saved profiles registry ──────────────────────────────────────────────
+  const [savedProfiles, setSavedProfiles] = useState<ColorProfileRecord[]>([]);
+  const [profileName, setProfileName] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
+
+  const refreshProfiles = useCallback(() => {
+    listColorProfiles()
+      .then(setSavedProfiles)
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => { refreshProfiles(); }, [refreshProfiles]);
+
+  const handleSaveProfile = useCallback(async () => {
+    if (!profile || !profileName.trim()) return;
+    setIsSaving(true);
+    setSaveMsg(null);
+    try {
+      await saveColorProfile({ name: profileName.trim(), profile });
+      setSaveMsg("Profile tersimpan!");
+      setProfileName("");
+      refreshProfiles();
+      setTimeout(() => setSaveMsg(null), 3000);
+    } catch (err: any) {
+      setSaveMsg(
+        err?.response?.data?.error ?? err?.message ?? "Gagal menyimpan profile.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  }, [profile, profileName, refreshProfiles]);
+
+  const handleDeleteProfile = useCallback(async (id: number) => {
+    try {
+      await deleteColorProfile(id);
+      setSavedProfiles((prev) => prev.filter((p) => p.id !== id));
+    } catch {
+      // silent — list will still show stale entry but user can reload
+    }
+  }, []);
+
+  // ── Image load ──────────────────────────────────────────────────────────
+  const handleFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        setImgSrc(ev.target?.result as string);
+        setSnippetRect(null);
+        setProfile(null);
+        setErrorMsg(null);
+      };
+      reader.readAsDataURL(file);
+    },
+    [],
+  );
+
+  // ── Draw canvas ─────────────────────────────────────────────────────────
+  const redrawCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    const img = imgRef.current;
+    if (!canvas || !img) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+    if (snippetRect) {
+      const { x, y, w, h } = snippetRect;
+      const px = x * canvas.width;
+      const py = y * canvas.height;
+      const pw = w * canvas.width;
+      const ph = h * canvas.height;
+      ctx.strokeStyle = "#00e0ff";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 3]);
+      ctx.strokeRect(px, py, pw, ph);
+      ctx.setLineDash([]);
+      ctx.fillStyle = "rgba(0,224,255,0.08)";
+      ctx.fillRect(px, py, pw, ph);
+    }
+  }, [snippetRect]);
+
+  // Redraw whenever image or rect changes
+  useEffect(() => {
+    if (!imgSrc) return;
+    const img = new Image();
+    img.onload = () => {
+      imgRef.current = img;
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const maxW = 520;
+        const scale = Math.min(1, maxW / img.naturalWidth);
+        canvas.width  = Math.round(img.naturalWidth  * scale);
+        canvas.height = Math.round(img.naturalHeight * scale);
+      }
+      redrawCanvas();
+    };
+    img.src = imgSrc;
+  }, [imgSrc, redrawCanvas]);
+
+  useEffect(() => { redrawCanvas(); }, [snippetRect, redrawCanvas]);
+
+  // ── Mouse events for rect selection ────────────────────────────────────
+  const getCanvasPos = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current!;
+    const rect   = canvas.getBoundingClientRect();
+    return {
+      x: (e.clientX - rect.left) / rect.width,
+      y: (e.clientY - rect.top)  / rect.height,
+    };
+  };
+
+  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!imgSrc) return;
+    setIsDragging(true);
+    dragStartRef.current = getCanvasPos(e);
+    setSnippetRect(null);
+    setProfile(null);
+    setErrorMsg(null);
+  }, [imgSrc]);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isDragging || !dragStartRef.current) return;
+    const cur = getCanvasPos(e);
+    const s   = dragStartRef.current;
+    setSnippetRect({
+      x: Math.min(s.x, cur.x),
+      y: Math.min(s.y, cur.y),
+      w: Math.abs(cur.x - s.x),
+      h: Math.abs(cur.y - s.y),
+    });
+  }, [isDragging]);
+
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false);
+    dragStartRef.current = null;
+  }, []);
+
+  // ── Compute profile ─────────────────────────────────────────────────────
+  const handleCompute = useCallback(async () => {
+    if (!imgSrc) { setErrorMsg("Upload gambar terlebih dahulu."); return; }
+    if (!snippetRect || snippetRect.w < 0.01 || snippetRect.h < 0.01) {
+      setErrorMsg("Gambar rectangle snippet di atas area part yang ingin dikalibrasi.");
+      return;
+    }
+    setIsComputing(true);
+    setErrorMsg(null);
+    setProfile(null);
+    try {
+      const base64 = imgSrc.split(",")[1];
+      const result = await computeColorProfile({ image_data: base64, colorspace, roi: snippetRect });
+      setProfile(result);
+    } catch (err: any) {
+      setErrorMsg(err?.response?.data?.error ?? err?.message ?? "Gagal menghitung color profile.");
+    } finally {
+      setIsComputing(false);
+    }
+  }, [imgSrc, snippetRect, colorspace]);
+
+  // ── Copy JSON (secondary / debug path) ───────────────────────────────────
+  const handleCopy = useCallback(() => {
+    if (!profile) return;
+    navigator.clipboard.writeText(JSON.stringify(profile, null, 2))
+      .then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); })
+      .catch(() => {});
+  }, [profile]);
+
+  // ── Render ───────────────────────────────────────────────────────────────
+  return (
+    <section className="aski-ws-section">
+      <h2 className="aski-ws-section-title">Color Calibration</h2>
+      <p className="aski-ws-section-desc" style={{ marginBottom: "12px", color: "#aaa", fontSize: "0.85rem" }}>
+        Upload foto part yang <strong>sudah ada</strong> di posisinya. Gambar rectangle di atas area
+        warna referensi, hitung profile, beri nama, dan simpan. Profile yang tersimpan bisa dipilih
+        langsung di node <em>Part Ready Validator</em>.
+      </p>
+
+      {/* ── Saved Profiles List ─────────────────────────────────────────── */}
+      <div style={{ marginBottom: "16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+          <label style={{ fontSize: "0.85rem", fontWeight: 600 }}>Saved Profiles</label>
+          <button
+            type="button"
+            className="aski-btn ghost"
+            onClick={refreshProfiles}
+            style={{ fontSize: "0.75rem", padding: "1px 8px" }}
+          >
+            Refresh
+          </button>
+        </div>
+        {savedProfiles.length === 0 ? (
+          <p style={{ fontSize: "0.8rem", color: "#666" }}>Belum ada profile tersimpan.</p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+            {savedProfiles.map((p) => (
+              <div
+                key={p.id}
+                style={{
+                  display: "flex", alignItems: "center", gap: "8px",
+                  background: "#1e1e1e", borderRadius: "4px",
+                  padding: "5px 10px", fontSize: "0.82rem",
+                }}
+              >
+                <span
+                  style={{
+                    display: "inline-block", width: "14px", height: "14px",
+                    borderRadius: "3px", flexShrink: 0,
+                    background: p.profile.reference_color.hex,
+                    border: "1px solid #444",
+                  }}
+                />
+                <span style={{ flex: 1, color: "#ddd" }}>{p.name}</span>
+                <span style={{ color: "#666", fontSize: "0.75rem" }}>
+                  {p.profile.colorspace} · thr {p.profile.tolerance.distance_threshold}
+                </span>
+                <button
+                  type="button"
+                  className="aski-btn ghost"
+                  onClick={() => void handleDeleteProfile(p.id)}
+                  style={{ fontSize: "0.72rem", padding: "1px 7px", color: "#f87171" }}
+                >
+                  Delete
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <hr style={{ borderColor: "#333", marginBottom: "16px" }} />
+
+      {/* ── Step 1: Upload ─────────────────────────────────────────────── */}
+      <div style={{ marginBottom: "12px" }}>
+        <label style={{ fontSize: "0.85rem", fontWeight: 600, display: "block", marginBottom: "4px" }}>
+          Step 1 — Upload Reference Image
+        </label>
+        <input
+          type="file"
+          accept=".jpg,.jpeg,.png,.bmp,.webp"
+          onChange={handleFileChange}
+          style={{ fontSize: "0.85rem" }}
+        />
+      </div>
+
+      {/* ── Step 2: Draw snippet ──────────────────────────────────────── */}
+      {imgSrc && (
+        <div style={{ marginBottom: "12px" }}>
+          <label style={{ fontSize: "0.85rem", fontWeight: 600, display: "block", marginBottom: "4px" }}>
+            Step 2 — Drag untuk pilih area snippet
+          </label>
+          <canvas
+            ref={canvasRef}
+            style={{ border: "1px solid #444", cursor: "crosshair", display: "block", maxWidth: "100%", userSelect: "none" }}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+          />
+          {snippetRect && (
+            <div style={{ fontSize: "0.75rem", color: "#aaa", marginTop: "4px" }}>
+              Snippet: x={Math.round(snippetRect.x * 100)}%&nbsp;
+              y={Math.round(snippetRect.y * 100)}%&nbsp;
+              {Math.round(snippetRect.w * 100)}%&times;{Math.round(snippetRect.h * 100)}%
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Step 3: Settings + Compute ───────────────────────────────── */}
+      {imgSrc && (
+        <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "12px" }}>
+          <label style={{ fontSize: "0.85rem" }}>
+            Colorspace:&nbsp;
+            <select
+              value={colorspace}
+              onChange={(e) => setColorspace(e.target.value as "LAB" | "RGB")}
+              style={{ fontSize: "0.85rem" }}
+            >
+              <option value="LAB">LAB (recommended)</option>
+              <option value="RGB">RGB</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            className="aski-btn primary"
+            onClick={() => void handleCompute()}
+            disabled={isComputing || !snippetRect}
+            style={{ fontSize: "0.85rem" }}
+          >
+            {isComputing ? "Computing…" : "Compute Profile"}
+          </button>
+        </div>
+      )}
+
+      {errorMsg && (
+        <div style={{ color: "#f87171", fontSize: "0.85rem", marginBottom: "8px" }}>{errorMsg}</div>
+      )}
+
+      {/* ── Step 4: Save profile ─────────────────────────────────────── */}
+      {profile && (
+        <div style={{ marginBottom: "12px" }}>
+          {/* Profile preview */}
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+            <span
+              style={{
+                display: "inline-block", width: "20px", height: "20px",
+                borderRadius: "4px", background: profile.reference_color.hex,
+                border: "1px solid #555",
+              }}
+              title={profile.reference_color.hex}
+            />
+            <span style={{ fontSize: "0.82rem", color: "#aaa" }}>
+              {profile.reference_color.hex} · {profile.colorspace} · threshold: {profile.tolerance.distance_threshold} · min_ratio: {profile.min_match_ratio}
+            </span>
+          </div>
+
+          {/* Save form */}
+          <label style={{ fontSize: "0.85rem", fontWeight: 600, display: "block", marginBottom: "6px" }}>
+            Step 4 — Beri nama dan simpan profile
+          </label>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "6px" }}>
+            <input
+              type="text"
+              value={profileName}
+              onChange={(e) => setProfileName(e.target.value)}
+              placeholder="Nama profile (e.g. Part A - Sticker Merah)"
+              style={{
+                flex: 1, fontSize: "0.85rem", padding: "5px 8px",
+                background: "#1a1a1a", border: "1px solid #444",
+                borderRadius: "4px", color: "#ddd",
+              }}
+              onKeyDown={(e) => { if (e.key === "Enter") void handleSaveProfile(); }}
+            />
+            <button
+              type="button"
+              className="aski-btn primary"
+              onClick={() => void handleSaveProfile()}
+              disabled={isSaving || !profileName.trim()}
+              style={{ fontSize: "0.85rem", whiteSpace: "nowrap" }}
+            >
+              {isSaving ? "Saving…" : "Save Profile"}
+            </button>
+          </div>
+          {saveMsg && (
+            <p style={{
+              fontSize: "0.8rem",
+              color: saveMsg.startsWith("Profile tersimpan") ? "#4ade80" : "#f87171",
+              marginBottom: "6px",
+            }}>
+              {saveMsg}
+            </p>
+          )}
+
+          {/* Secondary: Copy JSON (debug/advanced) */}
+          <details style={{ marginTop: "8px" }}>
+            <summary style={{ fontSize: "0.78rem", color: "#666", cursor: "pointer" }}>
+              Advanced: lihat / salin raw JSON profile
+            </summary>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", margin: "6px 0 4px" }}>
+              <button
+                type="button"
+                className="aski-btn ghost"
+                onClick={handleCopy}
+                style={{ fontSize: "0.78rem", padding: "2px 10px" }}
+              >
+                {copied ? "Copied!" : "Copy JSON"}
+              </button>
+            </div>
+            <textarea
+              readOnly
+              value={JSON.stringify(profile, null, 2)}
+              style={{
+                width: "100%", minHeight: "200px",
+                fontFamily: "monospace", fontSize: "0.72rem",
+                background: "#1a1a1a", color: "#ccc",
+                border: "1px solid #333", borderRadius: "4px",
+                padding: "8px", resize: "vertical",
+              }}
+            />
+          </details>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function WorkstationMain({ activeSection }: WorkstationMainProps) {
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
   const [isDatasetLoading, setIsDatasetLoading] = useState(false);
@@ -2885,6 +3331,8 @@ export function WorkstationMain({ activeSection }: WorkstationMainProps) {
     );
   }
   if (activeSection === "models") return <ModelsPanel />;
+
+  if (activeSection === "calibrate") return <CalibratePanel />;
 
   if (activeSection === "upload-data") {
     return (

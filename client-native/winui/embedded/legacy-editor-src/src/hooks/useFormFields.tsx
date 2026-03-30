@@ -18,6 +18,7 @@ import { evaluateCondition } from "../utils/evaluateConditions";
 import FileUploadField from "../components/nodes/node-input/FileUploadField";
 import { getServerModelFiles, ServerModelFile } from "../api/models";
 import { getServerOcrLanguages, OcrLanguagesResponse } from "../api/ocr";
+import { listColorProfiles, type ColorProfileRecord } from "../api/calibration";
 import { useTemplateMode } from "../providers/TemplateModeProvider";
 
 const OCR_PRESET_FIELD_DEFAULTS: Record<string, Record<string, any>> = {
@@ -174,6 +175,59 @@ function ModelPathAutocomplete({
           ? "Loading model list from server..."
           : `Server models: ${serverModelFiles.length} found`}
       </p>
+    </div>
+  );
+}
+
+/**
+ * Dropdown that lists all color profiles saved in the workstation registry.
+ * Stores the selected profile id (number) as the field value.
+ */
+function ColorProfileSelectField({
+  field,
+  data,
+  handleNodeFieldChange,
+}: {
+  field: Field;
+  data: any;
+  handleNodeFieldChange: (fieldName: string, value: any) => void;
+}) {
+  const [profiles, setProfiles] = useState<ColorProfileRecord[]>([]);
+
+  useEffect(() => {
+    listColorProfiles()
+      .then(setProfiles)
+      .catch(() => setProfiles([]));
+  }, []);
+
+  const options = profiles.map((p) => ({ name: p.name, value: String(p.id) }));
+  const currentValue = String(data[field.name] ?? "");
+  const selectedProfile = profiles.find((p) => String(p.id) === currentValue);
+
+  return (
+    <div
+      className="nowheel nodrag nopan w-full"
+      onMouseDown={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      <SelectAutocomplete
+        onChange={(value: string) =>
+          handleNodeFieldChange(field.name, value ? Number(value) : null)
+        }
+        selectedValue={currentValue}
+        values={options}
+      />
+      {profiles.length === 0 ? (
+        <p className="mt-1 px-1 text-xs text-slate-400">
+          Belum ada profile. Buat di Workstation › Color Calibrate.
+        </p>
+      ) : selectedProfile ? (
+        <p className="mt-1 px-1 text-xs text-slate-400">
+          {selectedProfile.profile.colorspace} ·{" "}
+          threshold {selectedProfile.profile.tolerance.distance_threshold} ·{" "}
+          min_ratio {selectedProfile.profile.min_match_ratio}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -721,6 +775,15 @@ export function useFormFields(
               isRenderForNode
             />
           </div>
+        );
+
+      case "colorProfileSelect":
+        return (
+          <ColorProfileSelectField
+            field={field}
+            data={data}
+            handleNodeFieldChange={handleNodeFieldChange}
+          />
         );
 
       default:

@@ -24,7 +24,7 @@ class BasicProcessorLauncher(AbstractTopologicalProcessorLauncher):
                 output = processor.process_and_update()
                 latest_output = processor.get_output() if processor.get_output() is not None else output
                 output_cache.set_output(session_id, processor.name, processor.get_output())
-                self.notify_progress(processor, output)
+                self.notify_progress(processor, output, isDone=True)
             except Exception as e:
                 self.notify_error(processor, e)
                 raise e
@@ -48,7 +48,7 @@ class BasicProcessorLauncher(AbstractTopologicalProcessorLauncher):
                         processor.get_output() if processor.get_output() is not None else output
                     )
                     output_cache.set_output(session_id, processor.name, processor.get_output())
-                    self.notify_progress(processor, output)
+                    self.notify_progress(processor, output, isDone=True)
                 except Exception as e:
                     self.notify_error(processor, e)
                     raise e

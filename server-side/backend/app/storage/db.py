@@ -75,6 +75,16 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS color_profiles (
+              id           INTEGER PRIMARY KEY AUTOINCREMENT,
+              name         TEXT NOT NULL,
+              profile_json TEXT NOT NULL,
+              created_at   REAL NOT NULL
+            )
+            """
+        )
         _ensure_training_jobs_schema(conn)
         conn.commit()
 

@@ -20,6 +20,12 @@ Validator payload → aski_inspection_results column mapping:
   runtime context (g.user_id)     → operator_user_id  (secondary fallback)
   config["operator_id"]           → operator_user_id  (tertiary fallback — manual override)
 
+Error codes returned in output on failure:
+  DB_CONNECT_FAILED  — pyodbc.connect() timed out or rejected (network / auth / driver)
+  DB_EXECUTE_FAILED  — INSERT execution failed (query timeout, lock, SQL error)
+  DB_COMMIT_FAILED   — conn.commit() failed after successful execute
+  DB_WRITE_FAILED    — unclassified exception during write
+
 Design note: this is intentionally a separate node so users can build flows
 without persistence (validator only) or with persistence (validator → db-writer).
 """
@@ -27,11 +33,15 @@ without persistence (validator only) or with persistence (validator → db-write
 from __future__ import annotations
 
 import json
+import logging
+import time
 from typing import Any, Dict, Optional
 
 from ..processor import ContextAwareProcessor
 from ..core.processor_type_name_utils import ProcessorType
 from ...context.processor_context import ProcessorContext
+
+logger = logging.getLogger(__name__)
 
 
 class InspectionDbWriterProcessor(ContextAwareProcessor):
@@ -64,8 +74,10 @@ class InspectionDbWriterProcessor(ContextAwareProcessor):
             return None
 
     def process(self) -> Any:
+        t_start = time.perf_counter()
+
+        # ── Parse validator payload ──────────────────────────────────────────
         validator_raw = self.get_input_by_name("validator_result", accept_object=True)
-        # StickerValidator returns output[0] as a JSON string; parse it here.
         if isinstance(validator_raw, str):
             try:
                 validator_output = json.loads(validator_raw)
@@ -103,8 +115,32 @@ class InspectionDbWriterProcessor(ContextAwareProcessor):
             except (TypeError, ValueError):
                 operator_user_id = None
 
+        t_parsed = time.perf_counter()
+        logger.info(
+            "[DBWriter] payload ready in %.0fms | decision=%s part=%s line=%s targets=%d",
+            (t_parsed - t_start) * 1000,
+            decision, part_name, line_id, len(targets),
+        )
+
+        # ── DB write with per-stage timing and error codes ───────────────────
         try:
             from app.qc.inspection_repository import write_inspection_result
+            from app.storage.auth_db import DbConnectError, DbCommitError
+        except ImportError as exc:
+            logger.error("[DBWriter] import error: %s", exc)
+            return [json.dumps({
+                "written":    False,
+                "error":      str(exc),
+                "error_code": "IMPORT_ERROR",
+                "stage":      "import",
+            })]
+
+        logger.info(
+            "[DBWriter] starting DB write | part=%s decision=%s line=%s",
+            part_name, decision, line_id,
+        )
+        t_db_start = time.perf_counter()
+        try:
             result_id = write_inspection_result(
                 template_version_id=template_version_id,
                 line_id=line_id,
@@ -118,8 +154,52 @@ class InspectionDbWriterProcessor(ContextAwareProcessor):
                 data1=data1,
                 data2=data2,
             )
+        except DbConnectError as exc:
+            elapsed_ms = (time.perf_counter() - t_db_start) * 1000
+            logger.error(
+                "[DBWriter] DB_CONNECT_FAILED after %.0fms | %s",
+                elapsed_ms, exc,
+            )
+            return [json.dumps({
+                "written":    False,
+                "error":      str(exc),
+                "error_code": "DB_CONNECT_FAILED",
+                "stage":      "connect",
+                "elapsed_ms": round(elapsed_ms),
+            })]
+        except DbCommitError as exc:
+            elapsed_ms = (time.perf_counter() - t_db_start) * 1000
+            logger.error(
+                "[DBWriter] DB_COMMIT_FAILED after %.0fms | %s",
+                elapsed_ms, exc,
+            )
+            return [json.dumps({
+                "written":    False,
+                "error":      str(exc),
+                "error_code": "DB_COMMIT_FAILED",
+                "stage":      "commit",
+                "elapsed_ms": round(elapsed_ms),
+            })]
         except Exception as exc:
-            return [json.dumps({"written": False, "error": str(exc)})]
+            elapsed_ms = (time.perf_counter() - t_db_start) * 1000
+            logger.error(
+                "[DBWriter] DB_EXECUTE_FAILED after %.0fms | %s: %s",
+                elapsed_ms, type(exc).__name__, exc,
+            )
+            return [json.dumps({
+                "written":    False,
+                "error":      str(exc),
+                "error_code": "DB_EXECUTE_FAILED",
+                "stage":      "execute",
+                "elapsed_ms": round(elapsed_ms),
+            })]
+
+        elapsed_db    = (time.perf_counter() - t_db_start) * 1000
+        elapsed_total = (time.perf_counter() - t_start) * 1000
+        logger.info(
+            "[DBWriter] write OK | db=%.0fms total=%.0fms | result_id=%s decision=%s part=%s",
+            elapsed_db, elapsed_total, result_id, decision, part_name,
+        )
 
         return [json.dumps({
             "written":            True,

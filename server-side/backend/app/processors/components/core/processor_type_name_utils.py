@@ -32,3 +32,4 @@ class ProcessorType(Enum):
     PYTHON_CODE = "python-code"
     STICKER_VALIDATOR = "sticker-validator"
     INSPECTION_DB_WRITER = "inspection-db-writer"
+    PART_READY_VALIDATOR = "part-ready-validator"
