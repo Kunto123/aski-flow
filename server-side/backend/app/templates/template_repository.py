@@ -3,9 +3,12 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import logging
 from typing import Any
 
 from app.storage.auth_db import db_cursor, row_to_dict
+
+logger = logging.getLogger(__name__)
 
 RUNTIME_NODE_KEYS = {
     "outputData",
@@ -33,6 +36,10 @@ ROI_GEOMETRY_FIELDS = {
     "h",
     "width",
     "height",
+}
+
+TEMPLATE_POLICY_IGNORED_NODE_KEYS = {
+    "config",
 }
 
 _TEMPLATE_SCHEMA_MIGRATIONS: dict[str, list[tuple[str, str]]] = {
@@ -573,11 +580,46 @@ def delete_template(*, template_id: int) -> bool:
 def _canonicalize_node(node_definition: dict[str, Any]) -> dict[str, Any]:
     normalized = copy.deepcopy(node_definition)
     for key in list(normalized.keys()):
-        if key in RUNTIME_NODE_KEYS:
+        if key in RUNTIME_NODE_KEYS or key in TEMPLATE_POLICY_IGNORED_NODE_KEYS:
             normalized.pop(key, None)
     for key in CANVAS_COORDINATE_KEYS:
         normalized.pop(key, None)
     return normalized
+
+
+def _collect_difference_paths(
+    expected: Any,
+    actual: Any,
+    prefix: str = "",
+) -> list[str]:
+    if type(expected) is not type(actual):
+        return [prefix or "<root>"]
+
+    if isinstance(expected, dict):
+        differences: list[str] = []
+        all_keys = sorted(set(expected.keys()) | set(actual.keys()))
+        for key in all_keys:
+            next_prefix = f"{prefix}.{key}" if prefix else key
+            if key not in expected or key not in actual:
+                differences.append(next_prefix)
+                continue
+            differences.extend(_collect_difference_paths(expected[key], actual[key], next_prefix))
+        return differences
+
+    if isinstance(expected, list):
+        if len(expected) != len(actual):
+            return [prefix or "<root>"]
+
+        differences: list[str] = []
+        for index, (expected_item, actual_item) in enumerate(zip(expected, actual)):
+            next_prefix = f"{prefix}[{index}]" if prefix else f"[{index}]"
+            differences.extend(_collect_difference_paths(expected_item, actual_item, next_prefix))
+        return differences
+
+    if expected != actual:
+        return [prefix or "<root>"]
+
+    return []
 
 
 def _resolve_editable_fields(
@@ -636,6 +678,13 @@ def validate_operator_flow(
                 comparable_submitted_node.pop(normalized_field_name, None)
 
         if comparable_submitted_node != template_node:
+            diff_paths = _collect_difference_paths(template_node, comparable_submitted_node)
+            logger.warning(
+                "Template policy violation node=%s editable_fields=%s diff_paths=%s",
+                node_name,
+                sorted(resolved_editable_fields),
+                diff_paths[:12],
+            )
             raise ValueError(
                 f"Template policy violation pada node '{node_name}'. "
                 "Operator hanya boleh mengubah field yang diizinkan."
