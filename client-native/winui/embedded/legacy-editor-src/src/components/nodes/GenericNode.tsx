@@ -123,7 +123,11 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
         getTargetHandleKey(edge),
       );
 
-      const fieldsWithValidCondition = fields.filter((field) => {
+      const handleFieldsWithValidCondition = fields.filter((field) => {
+        if (!field.hasHandle) {
+          return false;
+        }
+
         if (field?.condition) {
           const condition = field.condition;
           return evaluateCondition(condition, data);
@@ -132,7 +136,7 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
       });
 
       edgesKeys?.forEach((key) => {
-        fieldsToNullify[fieldsWithValidCondition[key]?.name] = undefined;
+        fieldsToNullify[handleFieldsWithValidCondition[key]?.name] = undefined;
       });
 
       const fieldsUpdated = fields.map((field) => {
@@ -153,7 +157,7 @@ const GenericNode: React.FC<GenericNodeProps> = React.memo(
           config: {
             ...currentNodeData.config,
             fields: fieldsUpdated,
-            inputNames: fieldsWithValidCondition.map((field) => field.name),
+            inputNames: handleFieldsWithValidCondition.map((field) => field.name),
           },
         });
       }

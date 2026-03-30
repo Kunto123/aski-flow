@@ -5,7 +5,11 @@ export const stickerValidatorNodeConfig: NodeConfig = {
   processorType: "sticker-validator",
   icon: "FaCheckCircle",
   showHandlesNames: true,
-  inputNames: ["detections_payload", "part_ready_result"],
+  inputNames: [
+    "detections_payload",
+    "roi_dimensions",
+    "part_ready_result",
+  ],
   fields: [
     {
       name: "detections_payload",

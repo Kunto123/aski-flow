@@ -58,7 +58,7 @@ export function getNbInputs(data: NodeData, fields?: Field[]) {
     return data.config.inputNames.length;
   }
   if (!!fields && fields.some((field) => field.hasHandle)) {
-    return fields.length;
+    return fields.filter((field) => field.hasHandle).length;
   }
   return 1;
 }

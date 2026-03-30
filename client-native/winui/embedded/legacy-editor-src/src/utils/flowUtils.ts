@@ -192,15 +192,21 @@ export function convertFlowToJson(
 }
 
 export function getInputNamesWithValidCondition(node: BasicNode) {
-  const inputNamesWithValidCondition = !!node?.data?.config?.inputNames
-    ? node.data.config.inputNames.filter((inputName: string, index: number) => {
-        const condition = node.data.config.fields[index]?.condition;
-        if (!!condition) {
-          return evaluateCondition(condition, node.data);
-        }
+  const inputNamesWithValidCondition = !!node?.data?.config?.fields
+    ? node.data.config.fields
+        .filter((field: Field) => {
+          if (!field.hasHandle) {
+            return false;
+          }
 
-        return true;
-      })
+          const condition = field.condition;
+          if (!!condition) {
+            return evaluateCondition(condition, node.data);
+          }
+
+          return true;
+        })
+        .map((field: Field) => field.name)
     : undefined;
 
   return inputNamesWithValidCondition;
@@ -223,16 +229,7 @@ export function convertEdgeToNodeInput(
 
   const targetHandleKey = getTargetHandleKey(edge);
 
-  const inputNamesWithValidCondition = !!node.data.config?.inputNames
-    ? node.data.config.inputNames.filter((inputName: string, index: number) => {
-        const condition = node.data.config.fields[index]?.condition;
-        if (!!condition) {
-          return evaluateCondition(condition, node.data);
-        }
-
-        return true;
-      })
-    : undefined;
+  const inputNamesWithValidCondition = getInputNamesWithValidCondition(node);
 
   return {
     inputName: !!inputNamesWithValidCondition
@@ -324,8 +321,12 @@ export function convertJsonToFlow(json: any): {
 
         const fields: Field[] = node.config?.fields;
 
-        const fieldsWithValidCondition = !!fields
+        const handleFieldsWithValidCondition = !!fields
           ? fields.filter((field: Field) => {
+              if (!field.hasHandle) {
+                return false;
+              }
+
               const condition = field.condition;
               if (!!condition) {
                 return evaluateCondition(condition, node);
@@ -335,8 +336,8 @@ export function convertJsonToFlow(json: any): {
             })
           : undefined;
 
-        if (!!fieldsWithValidCondition) {
-          targetHandleIndex = fieldsWithValidCondition.findIndex(
+        if (!!handleFieldsWithValidCondition) {
+          targetHandleIndex = handleFieldsWithValidCondition.findIndex(
             (field) => field.name === input.inputName,
           );
           if (targetHandleIndex === -1) {
