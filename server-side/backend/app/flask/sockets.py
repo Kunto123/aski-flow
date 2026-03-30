@@ -521,6 +521,19 @@ def handle_disconnect():
     _release_runtime_run_slot(runtime_session_id)
     _clear_last_valid_flow_data(runtime_session_id)
 
+    # Clear session-scoped output cache so stale outputs from the previous
+    # session are never reused after disconnect/reconnect (RV-001).
+    try:
+        from app.processors.runtime import get_output_cache
+        get_output_cache().clear_session(runtime_session_id)
+        logging.info(
+            "Output cache cleared on disconnect sid=%s runtime_session_id=%s",
+            request.sid,
+            runtime_session_id,
+        )
+    except Exception as e:
+        logging.warning("Failed to clear output cache on disconnect: %s", e)
+
     # Stop orphaned transform streams left behind by this session.
     # Without this, transform threads keep running after a refresh, holding
     # references to the source camera stream and preventing recovery.
