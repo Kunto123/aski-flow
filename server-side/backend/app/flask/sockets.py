@@ -516,7 +516,7 @@ def handle_run_node(data):
 
 
 @socketio.on("disconnect")
-def handle_disconnect():
+def handle_disconnect(reason=None):
     runtime_session_id = _resolve_runtime_session_id()
     _release_runtime_run_slot(runtime_session_id)
     _clear_last_valid_flow_data(runtime_session_id)
