@@ -365,6 +365,42 @@ def get_template_version_detail(template_id: int, version_id: int | None = None)
         return _map_template_row(row_to_dict(cur, row))
 
 
+def _embed_color_profiles_in_flow(flow_nodes: list) -> None:
+    """For Part Ready Validator nodes that reference a color_profile_id but have no
+    inline color_profile, look up the profile from the local SQLite registry and embed
+    it directly in the node dict.  This makes the template self-contained so it works
+    even if the operator cannot access the admin-restricted registry listing later."""
+    PART_READY_TYPE = "part-ready-validator"
+    try:
+        from app.storage.db import connect as db_connect
+    except Exception:
+        return
+    for node in flow_nodes:
+        if not isinstance(node, dict):
+            continue
+        processor_type = str(node.get("processorType") or "").strip().lower()
+        if processor_type != PART_READY_TYPE:
+            continue
+        if node.get("color_profile"):
+            continue
+        profile_id = node.get("color_profile_id")
+        if not profile_id:
+            continue
+        try:
+            with db_connect() as conn:
+                row = conn.execute(
+                    "SELECT profile_json FROM color_profiles WHERE id = ?",
+                    (int(profile_id),),
+                ).fetchone()
+                if row:
+                    node["color_profile"] = json.loads(row["profile_json"])
+        except Exception as exc:
+            logger.warning(
+                "Failed to embed color_profile snapshot for node with color_profile_id=%s: %s",
+                profile_id, exc,
+            )
+
+
 def _validate_inspection_recipe(recipe: Any) -> dict | None:
     """Basic structural validation for inspection recipe. Returns normalized recipe or None."""
     if recipe is None:
@@ -390,6 +426,7 @@ def create_template(
     if not normalized_name:
         raise ValueError("Nama template wajib diisi.")
 
+    _embed_color_profiles_in_flow(flow_definition if isinstance(flow_definition, list) else [])
     normalized_flow = normalize_flow_definition(flow_definition)
     normalized_policy = normalize_template_policy(policy_definition, normalized_flow)
     validated_recipe = _validate_inspection_recipe(inspection_recipe)
@@ -501,6 +538,7 @@ def update_template(
         base_flow = flow_definition if flow_definition is not None else current["flow"]
         base_policy = policy_definition if policy_definition is not None else current["policy"]
         base_recipe = inspection_recipe if inspection_recipe is not None else current.get("inspection_recipe")
+        _embed_color_profiles_in_flow(base_flow if isinstance(base_flow, list) else [])
         normalized_flow = normalize_flow_definition(base_flow)
         normalized_policy = normalize_template_policy(base_policy, normalized_flow)
         validated_recipe = _validate_inspection_recipe(base_recipe)

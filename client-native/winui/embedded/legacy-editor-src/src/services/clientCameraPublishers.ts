@@ -622,12 +622,23 @@ export async function prewarmClientCameraPublishers({
   }
 }
 
+// Synchronous canonical session resolver: mirrors resolveRuntimeSessionId but
+// without the async socket-wait path.  Used for cleanup calls that must fire
+// synchronously (logout, node remove, etc.).
+function resolveCanonicalSessionIdSync(socket?: FlowSocket | null): string | null {
+  if (typeof window !== "undefined") {
+    const clientId = String((window as any).askiDesktop?.clientId || "").trim();
+    if (clientId) return clientId;
+  }
+  return socket?.getId() || null;
+}
+
 export function stopClientCameraPublisherByIndex(
   cameraIndex: number | string,
   socket?: FlowSocket | null,
 ) {
   const normalizedIndex = toCameraIndex(cameraIndex);
-  const sessionId = socket?.getId();
+  const sessionId = resolveCanonicalSessionIdSync(socket);
   let stoppedCount = 0;
 
   for (const [key, publisher] of Array.from(publishers.entries())) {
@@ -651,7 +662,7 @@ export function stopClientCameraPublisherByIndex(
 }
 
 export function stopAllClientCameraPublishers(socket?: FlowSocket | null) {
-  const sessionId = socket?.getId();
+  const sessionId = resolveCanonicalSessionIdSync(socket);
   let stoppedCount = 0;
 
   for (const [key, publisher] of Array.from(publishers.entries())) {

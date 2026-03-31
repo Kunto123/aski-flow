@@ -500,24 +500,32 @@ class StreamManager:
             client_session_id=client_session_id,
         )
 
-        # Socket reconnection can rotate session ids between publisher prewarm and
-        # backend node execution. If no exact-session stream exists, try to reuse an
-        # active client camera stream for the same device across sessions.
-        cross_session_candidates: List[StreamState] = []
-        if not candidates:
-            cross_session_candidates = [
-                st
-                for st in self._find_camera_streams_by_index(
-                    int(camera_index),
-                    camera_transport="client",
-                    client_session_id=None,
-                )
-                if st.client_session_id != client_session_id
-            ]
+        # Diagnostic: warn when another session actively uses the same camera device.
+        # Streams are intentionally isolated per runtime session; this warning helps
+        # detect unexpected multi-client overlap on the same physical camera index.
+        other_session_active = [
+            st
+            for st in self._find_camera_streams_by_index(
+                int(camera_index),
+                camera_transport="client",
+                client_session_id=None,
+            )
+            if st.client_session_id != client_session_id
+            and st.active
+            and not st.stop_event.is_set()
+        ]
+        if other_session_active:
+            logging.warning(
+                "create_client_camera_stream: camera_index=%s is active for %d other "
+                "session(s)=%s (current session=%s). Each session gets an independent "
+                "stream; no cross-session rebinding will occur.",
+                camera_index,
+                len(other_session_active),
+                [st.client_session_id for st in other_session_active],
+                client_session_id,
+            )
 
         reusable: Optional[StreamState] = None
-        reuse_from_cross_session = False
-        reused_without_config_match = False
 
         # Ingest calls arrive frequently with runtime-adjusted fps/resolution.
         # For those calls (owner_name is None), keep stream-id stable even if
@@ -527,7 +535,6 @@ class StreamManager:
                 if not st.active or st.stop_event.is_set():
                     continue
                 reusable = st
-                reused_without_config_match = True
                 break
 
         if reusable is None:
@@ -538,27 +545,9 @@ class StreamManager:
                     reusable = st
                     break
 
-        if reusable is None:
-            for st in cross_session_candidates:
-                if not st.active or st.stop_event.is_set():
-                    continue
-                if owner_name is None:
-                    reusable = st
-                    reuse_from_cross_session = True
-                    reused_without_config_match = True
-                    break
-                if self._camera_config_matches(st, width, height, fps, "client"):
-                    reusable = st
-                    reuse_from_cross_session = True
-                    break
-
         if reusable is not None:
-            duplicates = [
-                st
-                for st in candidates + cross_session_candidates
-                if st.stream_id != reusable.stream_id
-            ]
-            for st in duplicates:
+            # Dedupe: stop any extra same-session streams for this device.
+            for st in candidates:
                 if st.stream_id == reusable.stream_id:
                     continue
                 try:
@@ -567,7 +556,6 @@ class StreamManager:
                     pass
 
             with reusable.lock:
-                previous_session_id = reusable.client_session_id
                 if owner_name:
                     reusable.owner_name = owner_name
                     reusable.owner_names = set([owner_name])
@@ -577,10 +565,6 @@ class StreamManager:
                     # otherwise healthy client camera stream.
                     reusable.owner_name = None
                     reusable.owner_names = set()
-                # Rebind ownership to the active client session on every reuse.
-                # This keeps lifecycle operations (stop by client session, refresh)
-                # aligned with whichever client is currently producing frames.
-                reusable.client_session_id = client_session_id
                 reusable.last_access_at = time.time()
 
             self._debug_event(
@@ -592,14 +576,13 @@ class StreamManager:
                 width=width,
                 height=height,
                 fps=fps,
-                reused_cross_session=reuse_from_cross_session,
-                stream_client_session_id=reusable.client_session_id,
-                previous_stream_client_session_id=previous_session_id,
-                reused_without_config_match=reused_without_config_match,
             )
             return reusable.stream_id
 
-        for st in candidates + cross_session_candidates:
+        # No reusable same-session stream found. Stop same-session candidates only —
+        # deliberately do NOT stop streams from other sessions so one client cannot
+        # interrupt another client's camera pipeline.
+        for st in candidates:
             try:
                 self.stop_stream(st.stream_id, reason="replace_client_camera")
             except Exception:

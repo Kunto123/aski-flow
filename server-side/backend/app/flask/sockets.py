@@ -37,6 +37,10 @@ _ACTIVE_RUNTIME_RUNS = set()
 _ACTIVE_RUNTIME_RUNS_LOCK = threading.Lock()
 _LAST_VALID_FLOW_BY_SESSION = {}
 _LAST_VALID_FLOW_BY_SESSION_LOCK = threading.Lock()
+# Tracks which socket SIDs are currently connected for each runtime_session_id.
+# Used to warn when multiple sockets share the same canonical id (e.g. duplicate clientId).
+_RUNTIME_ROOM_CONNECTIONS: dict = {}
+_RUNTIME_ROOM_CONNECTIONS_LOCK = threading.Lock()
 
 
 def _read_non_negative_float_env(name: str, default_value: float) -> float:
@@ -375,6 +379,18 @@ def handle_connect(auth=None):
 
     runtime_session_id = _resolve_runtime_session_id(auth)
     join_room(_runtime_room(runtime_session_id))
+
+    with _RUNTIME_ROOM_CONNECTIONS_LOCK:
+        existing_sids = _RUNTIME_ROOM_CONNECTIONS.get(runtime_session_id, set())
+        if existing_sids:
+            logging.warning(
+                "Duplicate runtime session detected: runtime_session_id=%s already has "
+                "active connection(s)=%s. New sid=%s joining the same room. "
+                "Check for duplicate clientId across devices.",
+                runtime_session_id, existing_sids, request.sid,
+            )
+        _RUNTIME_ROOM_CONNECTIONS.setdefault(runtime_session_id, set()).add(request.sid)
+
     logging.info(
         "Client connected sid=%s runtime_session_id=%s room=%s",
         request.sid, runtime_session_id, _runtime_room(runtime_session_id),
@@ -572,6 +588,13 @@ def handle_disconnect(reason=None):
         manager.stop_transform_streams(client_session_id=runtime_session_id)
     except Exception as e:
         logging.warning("Failed to cleanup streams on disconnect: %s", e)
+
+    with _RUNTIME_ROOM_CONNECTIONS_LOCK:
+        sids = _RUNTIME_ROOM_CONNECTIONS.get(runtime_session_id)
+        if sids:
+            sids.discard(request.sid)
+            if not sids:
+                del _RUNTIME_ROOM_CONNECTIONS[runtime_session_id]
 
     logging.info("Client disconnected sid=%s", request.sid)
 

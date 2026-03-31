@@ -47,7 +47,14 @@ class SocketIOEventEmitter(Observer):
             # is a request.sid (web mode) or a stable client_id (native mode).
             # handle_connect joins each socket to "runtime:<runtime_session_id>"
             # on connect, so this room is always valid for the connected socket.
-            room = f"runtime:{data.session_id}" if data.session_id else None
+            if not data.session_id:
+                logging.warning(
+                    "SocketIOEventEmitter: session_id missing for event %s instance=%s; "
+                    "skipping emit to avoid unintended broadcast",
+                    event, data.instance_name,
+                )
+                return
+            room = f"runtime:{data.session_id}"
             socketio.emit(event, json_event, to=room)
             logging.debug(
                 f"Successfully emitted event {event} with data {json_event} to room {room}"

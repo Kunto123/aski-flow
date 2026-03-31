@@ -46,7 +46,7 @@ from typing import Any
 
 from flask import Blueprint, jsonify, request
 
-from app.flask.middleware.auth_middleware import require_admin
+from app.flask.middleware.auth_middleware import require_admin, require_auth
 from app.storage.db import connect as db_connect
 
 calibration_blueprint = Blueprint(
@@ -229,7 +229,7 @@ def compute_color_profile():
 # ── Color Profile Registry (SQLite) ───────────────────────────────────────────
 
 @calibration_blueprint.route("/profiles", methods=["GET"])
-@require_admin
+@require_auth
 def list_profiles():
     """Return all saved color profiles, newest first."""
     with db_connect() as conn:
