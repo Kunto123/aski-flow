@@ -12,7 +12,7 @@ import time
 import jwt
 
 from flask import g, request, session
-from flask_socketio import emit
+from flask_socketio import emit, join_room
 from ..root_injector import (
     get_root_injector,
     refresh_root_injector,
@@ -362,6 +362,11 @@ def populate_request_global_object(data):
                 setattr(g, f"session_{key}", value)
 
 
+def _runtime_room(runtime_session_id: str) -> str:
+    """Return the deterministic Socket.IO room name for a runtime session."""
+    return f"runtime:{runtime_session_id}"
+
+
 @socketio.on("connect")
 def handle_connect(auth=None):
     if not _is_socket_authorized(auth):
@@ -369,7 +374,11 @@ def handle_connect(auth=None):
         return False
 
     runtime_session_id = _resolve_runtime_session_id(auth)
-    logging.info("Client connected sid=%s runtime_session_id=%s", request.sid, runtime_session_id)
+    join_room(_runtime_room(runtime_session_id))
+    logging.info(
+        "Client connected sid=%s runtime_session_id=%s room=%s",
+        request.sid, runtime_session_id, _runtime_room(runtime_session_id),
+    )
 
 
 @socketio.on("process_file")

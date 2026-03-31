@@ -43,9 +43,14 @@ class SocketIOEventEmitter(Observer):
             json_event["nodeName"] = data.instance_name
 
         try:
-            socketio.emit(event, json_event, to=data.session_id)
+            # Emit to the runtime room so delivery works whether the session_id
+            # is a request.sid (web mode) or a stable client_id (native mode).
+            # handle_connect joins each socket to "runtime:<runtime_session_id>"
+            # on connect, so this room is always valid for the connected socket.
+            room = f"runtime:{data.session_id}" if data.session_id else None
+            socketio.emit(event, json_event, to=room)
             logging.debug(
-                f"Successfully emitted event {event} with data {json_event} to {data.session_id}"
+                f"Successfully emitted event {event} with data {json_event} to room {room}"
             )
         except Exception as e:
             logging.error(f"Error emitting event {event}: {e}")
