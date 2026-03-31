@@ -22,6 +22,7 @@ from .abstract_topological_processor_launcher import (
 )
 
 from app.processors.runtime import get_output_cache
+from app.streaming import set_current_run_session, clear_current_run_session
 
 
 class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
@@ -260,6 +261,16 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
             return None
 
     def run_node(self, node: Node):
+        # Tag this greenlet with the owning session before running the
+        # processor so any transform streams it creates are attributed to
+        # this session (RV-002).  clear_current_run_session() is called in
+        # the finally block so the tag doesn't leak to reused greenlets.
+        _run_session_id = None
+        try:
+            _run_session_id = self.context.get_session_id() if self.context else None
+        except Exception:
+            pass
+        set_current_run_session(_run_session_id)
         try:
             processor = node.get_processor()
             self.notify_current_node_running(processor)
@@ -301,6 +312,10 @@ class AsyncProcessorLauncher(AbstractTopologicalProcessorLauncher, Observer):
             # handler before it emits `run_end`, which causes the frontend to keep
             # spinning ("loading" forever).
             return None
+        finally:
+            # Always clear the session tag so it does not bleed into the next
+            # task that reuses this greenlet (RV-002).
+            clear_current_run_session()
 
     def notify(self, event: EventType, data: ProcessorEvent):
         if event == EventType.STREAMING:

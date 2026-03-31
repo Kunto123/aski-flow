@@ -116,6 +116,38 @@ function buildPublisherKey(sessionId: string, cameraIndex: number): string {
   return `${sessionId}:${cameraIndex}`;
 }
 
+// RV-004: resolve the canonical runtime session identifier for camera frame
+// uploads so that X-Aski-Client-Session-Id always matches the client_id that
+// the backend uses in _resolve_runtime_session_id for the same connection.
+//
+// Rule:
+//   Native desktop mode  → window.askiDesktop.clientId (stable, survives reconnect)
+//   Web browser mode     → socket SID resolved by waitForSocketSessionId
+async function resolveRuntimeSessionId(
+  socket: FlowSocket | null,
+  connect?: () => void,
+): Promise<string | null> {
+  if (typeof window !== "undefined") {
+    const clientId = String(window.askiDesktop?.clientId || "").trim();
+    if (clientId) {
+      // Ensure the socket is up even though we don't need its SID as the key.
+      if (socket) {
+        try {
+          connect?.();
+          socket.connect();
+        } catch (e) {
+          // ignore — socket may already be connected
+        }
+      } else {
+        connect?.();
+      }
+      return clientId;
+    }
+  }
+  // Web fallback: use the socket SID.
+  return waitForSocketSessionId(socket, connect);
+}
+
 async function waitForSocketSessionId(
   socket: FlowSocket | null,
   connect?: () => void,
@@ -555,9 +587,9 @@ export async function prewarmClientCameraPublishers({
   const cameraConfigs = extractCameraConfigs(nodes);
   if (!cameraConfigs.length) return;
 
-  const sessionId = await waitForSocketSessionId(socket, connect);
+  const sessionId = await resolveRuntimeSessionId(socket, connect);
   if (!sessionId) {
-    console.warn("Skipping client camera prewarm because socket session id is unavailable");
+    console.warn("Skipping client camera prewarm because runtime session id is unavailable");
     return;
   }
 

@@ -86,6 +86,17 @@ export const SocketProvider = ({ children }: SocketProviderProps) => {
     return String(localStorage.getItem("aski_auth_token") || "").trim();
   }, []);
 
+  // RV-004: forward the stable native clientId when running inside the desktop
+  // bridge so that the backend can use one canonical runtime session identity
+  // across socket events, camera uploads, and disconnect cleanup.
+  // Returns empty string in web-browser mode (no bridge present).
+  const getDesktopClientId = useCallback((): string => {
+    if (typeof window === "undefined") {
+      return "";
+    }
+    return String(window.askiDesktop?.clientId || "").trim();
+  }, []);
+
   const createNewSocket = useCallback((configuration?: WSConfiguration) => {
     if (configuration) {
       configRef.current = configuration;
@@ -98,16 +109,21 @@ export const SocketProvider = ({ children }: SocketProviderProps) => {
 
     const authToken = getDesktopAuthToken();
     const userToken = getUserAuthToken();
+    const clientId = getDesktopClientId();
     const connectionOptions =
-      authToken.length > 0 || userToken.length > 0
+      authToken.length > 0 || userToken.length > 0 || clientId.length > 0
         ? {
             auth: {
               ...(authToken.length > 0 ? { auth_token: authToken } : {}),
               ...(userToken.length > 0 ? { user_token: userToken } : {}),
+              ...(clientId.length > 0 ? { client_id: clientId } : {}),
             },
             query: {
               ...(authToken.length > 0 ? { auth_token: authToken } : {}),
               ...(userToken.length > 0 ? { user_token: userToken } : {}),
+              // client_id in query survives into request.args for all socket
+              // event handlers including disconnect (RV-004).
+              ...(clientId.length > 0 ? { client_id: clientId } : {}),
             },
           }
         : undefined;
@@ -175,6 +191,7 @@ export const SocketProvider = ({ children }: SocketProviderProps) => {
 
     const authToken = getDesktopAuthToken();
     const userToken = getUserAuthToken();
+    const clientId = getDesktopClientId();
     const payload: Record<string, any> = {
       ...event.data,
       parameters: getConfigParametersFlat(),
@@ -185,10 +202,16 @@ export const SocketProvider = ({ children }: SocketProviderProps) => {
     if (userToken.length > 0) {
       payload.user_token = userToken;
     }
+    // RV-004: include client_id in every event payload so the backend can
+    // resolve the canonical runtime session identity from event_data even
+    // when the handshake query string is not inspected.
+    if (clientId.length > 0) {
+      payload.client_id = clientId;
+    }
 
     activeSocket.emit(event.name, payload);
     return true;
-  }, [getActiveSocket, getDesktopAuthToken, getUserAuthToken]);
+  }, [getActiveSocket, getDesktopAuthToken, getUserAuthToken, getDesktopClientId]);
 
   const connect = useCallback(() => {
     const activeSocket = getActiveSocket();

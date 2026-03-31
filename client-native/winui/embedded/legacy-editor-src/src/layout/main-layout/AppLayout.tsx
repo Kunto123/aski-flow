@@ -181,7 +181,7 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
   // leave the Flow key unchanged (blank canvas on template reload).
   const [refreshKey, setRefreshKey] = useState(0);
   const [showOnlyOutput, setShowOnlyOutput] = useState(false);
-  const { emitEvent, connect, getSocket, updateSocket } = useContext(SocketContext);
+  const { socket: activeSocketState, emitEvent, connect, disconnect: disconnectSocket, getSocket, updateSocket } = useContext(SocketContext);
   const [isRunning, setIsRunning] = useState(false);
   const [mode, setMode] = useState<ApplicationMode>("flow");
   const [activeTopTab, setActiveTopTab] = useState<TopWorkspaceTab>("canvas");
@@ -189,6 +189,30 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
     useState<WorkstationSection>("annotate");
   const [isTabletOrMobile, setIsTabletOrMobile] = useState(false);
   const { user, isAdmin, isOperator, hasPermission, logout } = useAuth();
+
+  // RV-003: explicit logout teardown — stop local camera publishers and
+  // disconnect the socket before clearing auth state so the server's
+  // disconnect handler (which clears the output cache and scoped transform
+  // streams) runs while the session is still identified.
+  //
+  // Uses activeSocketState (the context's socket state value) instead of
+  // getSocket() because getSocket() delegates to getActiveSocket() which can
+  // create a brand-new socket when none exists.  activeSocketState is null
+  // when no socket is active, so teardown is a clean no-op in that case.
+  const handleLogout = useCallback(() => {
+    try {
+      stopAllClientCameraPublishers(activeSocketState);
+    } catch (e) {
+      // ignore — camera may already be stopped
+    }
+    try {
+      disconnectSocket();
+    } catch (e) {
+      // ignore — socket may already be closed
+    }
+    logout();
+  }, [logout, disconnectSocket, activeSocketState]);
+
   const [showPermManager, setShowPermManager] = useState(false);
   const canEditCanvas = isAdmin || hasPermission("canvas.edit_flow");
   const canUseTemplates = isAdmin || isOperator;
@@ -679,7 +703,7 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
               Permissions
             </button>
           )}
-          <button className="aski-user-bar-btn danger" onClick={logout}>
+          <button className="aski-user-bar-btn danger" onClick={handleLogout}>
             Logout
           </button>
         </div>

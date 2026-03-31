@@ -275,7 +275,26 @@ def _extract_client_id(event_data=None):
 
 
 def _resolve_runtime_session_id(event_data=None):
-    # Prefer stable client_id when provided (native app lifecycle), fallback to socket sid.
+    # Canonical runtime session identity rule (RV-004):
+    #
+    # Native desktop mode:
+    #   The WinUI bridge injects window.askiDesktop.clientId into the page.
+    #   SocketProvider forwards it as client_id in both the handshake query
+    #   string and every event payload.  clientCameraPublishers also uses it
+    #   as X-Aski-Client-Session-Id on frame uploads.
+    #   _extract_client_id finds it in event_data OR in request.args (set
+    #   from the handshake query string and therefore available in all
+    #   handlers, including disconnect).
+    #   Result: one stable ID survives socket reconnects for the same device.
+    #
+    # Web browser mode:
+    #   No client_id is sent.  Falls back to request.sid.
+    #   request.sid rotates on reconnect, which is acceptable for the web
+    #   path because Phase 1 already clears the cache on disconnect.
+    #
+    # Never mix the two: once a session is keyed on client_id, all paths
+    # (socket events, frame uploads, disconnect cleanup) must use the same
+    # client_id so cache and stream ownership stay coherent.
     client_id = _extract_client_id(event_data)
     return client_id or request.sid
 
@@ -534,16 +553,16 @@ def handle_disconnect(reason=None):
     except Exception as e:
         logging.warning("Failed to clear output cache on disconnect: %s", e)
 
-    # Stop orphaned transform streams left behind by this session.
-    # Without this, transform threads keep running after a refresh, holding
-    # references to the source camera stream and preventing recovery.
+    # Stop streams owned by this session.  Camera streams are scoped by
+    # client_session_id.  Transform streams are scoped by the same id so one
+    # client disconnect does not interrupt another client's pipelines (RV-002).
     try:
         from app.streaming import get_stream_manager
         manager = get_stream_manager()
         manager.stop_camera_streams(client_session_id=runtime_session_id)
-        manager.stop_all_transform_streams()
+        manager.stop_transform_streams(client_session_id=runtime_session_id)
     except Exception as e:
-        logging.warning("Failed to cleanup transform streams on disconnect: %s", e)
+        logging.warning("Failed to cleanup streams on disconnect: %s", e)
 
     logging.info("Client disconnected sid=%s", request.sid)
 

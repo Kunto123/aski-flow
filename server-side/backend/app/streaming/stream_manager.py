@@ -27,6 +27,56 @@ from app.utils.runtime_url import resolve_public_base_url
 
 TransformFn = Callable[[Any], Any]
 
+# ---------------------------------------------------------------------------
+# Greenlet-scoped run-session registry (RV-002)
+#
+# Maps greenlet-id → runtime_session_id so that transform streams created
+# during a processor run can be tagged with the owning session.  Launchers
+# call set_current_run_session() before running each processor and
+# clear_current_run_session() when done.  create_transform_stream() reads
+# this when no explicit client_session_id is provided.
+#
+# Keyed by greenlet id (not OS thread id) so concurrent socket event
+# handlers running in separate eventlet greenlets are isolated.
+# ---------------------------------------------------------------------------
+_RUN_SESSIONS: Dict[int, str] = {}
+_RUN_SESSIONS_LOCK = threading.Lock()
+
+
+def _greenlet_key() -> int:
+    """Return an id that is unique to the current eventlet greenlet (or OS
+    thread when eventlet is not present)."""
+    if eventlet is not None:
+        try:
+            return id(eventlet.getcurrent())
+        except Exception:
+            pass
+    return id(threading.current_thread())
+
+
+def set_current_run_session(session_id: Optional[str]) -> None:
+    """Tag the current greenlet with a runtime session id before a processor
+    run so that any transform streams it creates are attributed to that
+    session."""
+    if not session_id:
+        return
+    with _RUN_SESSIONS_LOCK:
+        _RUN_SESSIONS[_greenlet_key()] = session_id
+
+
+def get_current_run_session() -> Optional[str]:
+    """Return the runtime session id associated with the current greenlet, or
+    None if no session has been set."""
+    with _RUN_SESSIONS_LOCK:
+        return _RUN_SESSIONS.get(_greenlet_key())
+
+
+def clear_current_run_session() -> None:
+    """Remove the current greenlet's session tag after the processor run
+    completes."""
+    with _RUN_SESSIONS_LOCK:
+        _RUN_SESSIONS.pop(_greenlet_key(), None)
+
 
 @dataclass
 class StreamState:
@@ -648,6 +698,7 @@ class StreamManager:
         owner_name: Optional[str] = None,
         stream_tag: Optional[str] = None,
         runtime_params: Optional[Dict[str, Any]] = None,
+        client_session_id: Optional[str] = None,
     ) -> str:
         source = self.get_stream(source_stream_id)
         if source is None:
@@ -665,6 +716,12 @@ class StreamManager:
             )
             raise RuntimeError(f"Source stream inactive: {source_stream_id}")
 
+        # Resolve the owning session: prefer the explicit argument, then fall
+        # back to the greenlet-scoped registry set by the launcher (RV-002).
+        resolved_session_id = (
+            str(client_session_id).strip() if client_session_id else None
+        ) or get_current_run_session()
+
         stream_id = self._new_stream_id("xform")
         state = StreamState(
             stream_id=stream_id,
@@ -673,6 +730,7 @@ class StreamManager:
             source_stream_id=source_stream_id,
             owner_name=owner_name,
             owner_names=set([owner_name]) if owner_name else set(),
+            client_session_id=resolved_session_id,
             # Transform streams should also be reaped if nothing consumes them.
             idle_timeout_sec=float(os.getenv("ASKI_STREAM_IDLE_TIMEOUT_SEC", "20")),
             runtime_params=dict(runtime_params or {}),
@@ -698,6 +756,7 @@ class StreamManager:
             stream_id=stream_id,
             source_stream_id=source_stream_id,
             owner_name=owner_name,
+            client_session_id=resolved_session_id,
             fps=fps,
             stream_tag=stream_tag,
             runtime_param_keys=sorted(list((runtime_params or {}).keys())),
@@ -1389,20 +1448,48 @@ class StreamManager:
         Useful for cleaning up orphaned transform threads after a client
         disconnect/refresh.  Camera streams are intentionally left alive
         so the device doesn't needlessly restart.
+
+        Prefer stop_transform_streams(client_session_id=...) for scoped cleanup
+        so one client disconnect does not affect other clients (RV-002).
+        """
+        return self.stop_transform_streams(client_session_id=None)
+
+    def stop_transform_streams(self, client_session_id: Optional[str] = None) -> int:
+        """Stop transform streams owned by client_session_id (RV-002).
+
+        When client_session_id is None, stops ALL active transform streams
+        (same as the old stop_all_transform_streams behaviour — kept for
+        backward compatibility and single-client deployments).
+
+        When client_session_id is provided, only streams whose
+        StreamState.client_session_id matches are stopped.  Streams that
+        were created before session-tagging was introduced (client_session_id
+        is None on the stream) are also stopped when a non-None session id is
+        given, to avoid leaving untagged orphan threads behind.
         """
         with self._registry_lock:
             transform_ids = [
                 stream_id
                 for stream_id, state in self._streams.items()
-                if state.source_type == "transform" and state.active
+                if state.source_type == "transform"
+                and state.active
+                and (
+                    client_session_id is None
+                    or state.client_session_id == client_session_id
+                    # Also reap untagged (legacy/pre-Phase3) transform streams
+                    # when a session-scoped cleanup is requested, so they are
+                    # not left running indefinitely.
+                    or state.client_session_id is None
+                )
             ]
 
         stopped = 0
         for stream_id in transform_ids:
-            if self.stop_stream(stream_id, reason="disconnect_cleanup"):
+            if self.stop_stream(stream_id, reason=f"disconnect_cleanup:{client_session_id or 'all'}"):
                 stopped += 1
         self._debug_event(
-            "stop_all_transform_streams",
+            "stop_transform_streams",
+            client_session_id=client_session_id,
             target_ids=transform_ids,
             stopped=stopped,
         )
