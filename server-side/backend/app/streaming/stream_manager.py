@@ -170,6 +170,20 @@ class StreamManager:
         self._debug_events_max = int(os.getenv("ASKI_STREAM_DEBUG_MAX_EVENTS", "800"))
         self._debug_events: Deque[Dict[str, Any]] = deque(maxlen=self._debug_events_max)
 
+        # Throttle state for cross-session camera-overlap warnings.
+        # Key: (camera_index, current_session_id, tuple[sorted other session ids])
+        # Value: timestamp of the last emitted warning for that key.
+        # Entries are pruned opportunistically whenever a new warning fires.
+        self._overlap_warn_last: Dict[tuple, float] = {}
+        self._overlap_warn_lock = threading.Lock()
+        try:
+            self._overlap_warn_cooldown_sec = max(
+                1.0,
+                float(os.getenv("ASKI_OVERLAP_WARN_COOLDOWN_SEC", "60")),
+            )
+        except Exception:
+            self._overlap_warn_cooldown_sec = 60.0
+
         # Safety net: auto-reap idle camera streams so we don't leave webcams
         # running if the UI forgets to call stop (e.g., node removed via keyboard,
         # browser crash, hot reload, etc.).
@@ -503,6 +517,10 @@ class StreamManager:
         # Diagnostic: warn when another session actively uses the same camera device.
         # Streams are intentionally isolated per runtime session; this warning helps
         # detect unexpected multi-client overlap on the same physical camera index.
+        # The warning is throttled: repeated calls for the exact same overlap
+        # (same camera_index + same current session + same other-session set) are
+        # suppressed until the cooldown window expires.  If any participant changes
+        # the key changes and the warning fires again immediately.
         other_session_active = [
             st
             for st in self._find_camera_streams_by_index(
@@ -515,15 +533,33 @@ class StreamManager:
             and not st.stop_event.is_set()
         ]
         if other_session_active:
-            logging.warning(
-                "create_client_camera_stream: camera_index=%s is active for %d other "
-                "session(s)=%s (current session=%s). Each session gets an independent "
-                "stream; no cross-session rebinding will occur.",
-                camera_index,
-                len(other_session_active),
-                [st.client_session_id for st in other_session_active],
-                client_session_id,
-            )
+            other_ids = tuple(sorted(
+                st.client_session_id for st in other_session_active
+                if st.client_session_id
+            ))
+            warn_key = (int(camera_index), client_session_id, other_ids)
+            now = time.time()
+            should_warn = False
+            with self._overlap_warn_lock:
+                last_t = self._overlap_warn_last.get(warn_key)
+                if last_t is None or (now - last_t) >= self._overlap_warn_cooldown_sec:
+                    self._overlap_warn_last[warn_key] = now
+                    should_warn = True
+                    # Opportunistic prune: drop entries older than 2× cooldown.
+                    stale_cutoff = now - 2 * self._overlap_warn_cooldown_sec
+                    stale = [k for k, t in self._overlap_warn_last.items() if t < stale_cutoff]
+                    for k in stale:
+                        del self._overlap_warn_last[k]
+            if should_warn:
+                logging.warning(
+                    "create_client_camera_stream: camera_index=%s is active for %d other "
+                    "session(s)=%s (current session=%s). Each session gets an independent "
+                    "stream; no cross-session rebinding will occur.",
+                    camera_index,
+                    len(other_session_active),
+                    list(other_ids),
+                    client_session_id,
+                )
 
         reusable: Optional[StreamState] = None
 
