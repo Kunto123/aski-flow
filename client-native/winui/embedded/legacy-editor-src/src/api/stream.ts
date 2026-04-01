@@ -11,11 +11,15 @@ export async function stopStream(streamId: string): Promise<boolean> {
   }
 }
 
-export async function stopStreamsByOwner(nodeName: string): Promise<boolean> {
+export async function stopStreamsByOwner(
+  nodeName: string,
+  clientSessionId?: string,
+): Promise<boolean> {
   if (!nodeName) return false;
   try {
     const encoded = encodeURIComponent(nodeName);
-    const response = await client.post(`/stream/owner/${encoded}/stop`);
+    const body = clientSessionId ? { client_session_id: clientSessionId } : {};
+    const response = await client.post(`/stream/owner/${encoded}/stop`, body);
     return !!response?.data?.stopped;
   } catch (error) {
     console.error("Failed to stop streams for owner:", nodeName, error);

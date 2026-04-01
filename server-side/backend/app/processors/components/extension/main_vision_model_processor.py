@@ -401,7 +401,8 @@ class MainVisionModelProcessor(BasicProcessor):
 
     def _process_stream(self, source_stream_id: str):
         manager = get_stream_manager()
-        manager.stop_streams_by_owner(self.name)
+        from app.streaming import get_current_run_session
+        manager.stop_streams_by_owner(self.name, client_session_id=get_current_run_session())
 
         # Give orphaned transform threads a moment to fully exit after
         # stop_streams_by_owner().  The join timeout (1.2s) may not be

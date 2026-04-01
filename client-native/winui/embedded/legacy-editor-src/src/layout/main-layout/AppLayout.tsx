@@ -38,6 +38,7 @@ import DnDSidebar from "../../components/bars/dnd-sidebar/DnDSidebar";
 import Tab from "./header/Tab";
 import {
   prewarmClientCameraPublishers,
+  resolveCanonicalSessionIdSync,
   stopAllClientCameraPublishers,
   stopClientCameraPublisherByIndex,
 } from "../../services/clientCameraPublishers";
@@ -612,7 +613,7 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
     void (async () => {
       try {
         const activeSocket = getSocket();
-        const clientSessionId = activeSocket?.getId();
+        const clientSessionId = resolveCanonicalSessionIdSync(activeSocket);
         const nodes = snapshotTabs.flatMap((tab) => tab.nodes ?? []);
 
         stopAllClientCameraPublishers(activeSocket);
@@ -630,7 +631,7 @@ const FlowTabs = ({ tabs }: FlowTabsProps) => {
             }
 
             if (nodeName) {
-              await stopStreamsByOwner(nodeName);
+              await stopStreamsByOwner(nodeName, clientSessionId || undefined);
             }
 
             await Promise.all(streamIds.map((streamId) => stopStream(streamId)));

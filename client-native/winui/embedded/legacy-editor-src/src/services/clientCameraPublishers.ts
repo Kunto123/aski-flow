@@ -625,7 +625,7 @@ export async function prewarmClientCameraPublishers({
 // Synchronous canonical session resolver: mirrors resolveRuntimeSessionId but
 // without the async socket-wait path.  Used for cleanup calls that must fire
 // synchronously (logout, node remove, etc.).
-function resolveCanonicalSessionIdSync(socket?: FlowSocket | null): string | null {
+export function resolveCanonicalSessionIdSync(socket?: FlowSocket | null): string | null {
   if (typeof window !== "undefined") {
     const clientId = String((window as any).askiDesktop?.clientId || "").trim();
     if (clientId) return clientId;

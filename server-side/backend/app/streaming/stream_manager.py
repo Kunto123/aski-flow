@@ -1393,9 +1393,25 @@ class StreamManager:
 
             time.sleep(1.0)
 
-    def stop_streams_by_owner(self, owner_name: str) -> int:
+    def stop_streams_by_owner(
+        self,
+        owner_name: str,
+        client_session_id: Optional[str] = None,
+    ) -> int:
+        """Stop streams owned by *owner_name*.
+
+        When *client_session_id* is provided, only streams whose
+        ``StreamState.client_session_id`` matches that value are candidates.
+        This prevents one session from stopping transform streams owned by
+        another session that happens to share the same node name.
+
+        When *client_session_id* is omitted the original global behaviour is
+        preserved (backward-compatible with single-client paths).
+        """
         if not owner_name:
             return 0
+
+        _session_id = str(client_session_id).strip() if client_session_id else None
 
         with self._registry_lock:
             target_ids = [
@@ -1405,6 +1421,10 @@ class StreamManager:
                 and (
                     state.owner_name == owner_name
                     or (hasattr(state, "owner_names") and owner_name in state.owner_names)
+                )
+                and (
+                    _session_id is None
+                    or state.client_session_id == _session_id
                 )
             ]
 
@@ -1432,6 +1452,7 @@ class StreamManager:
         self._debug_event(
             "stop_streams_by_owner",
             owner_name=owner_name,
+            client_session_id=_session_id,
             target_ids=target_ids,
             stopped=stopped,
         )

@@ -176,8 +176,11 @@ def stop_stream_by_owner(node_name: str):
     if unauthorized is not None:
         return unauthorized
 
+    client_session_id = _get_client_session_id_from_request()
     manager = get_stream_manager()
-    stopped_count = manager.stop_streams_by_owner(node_name)
+    stopped_count = manager.stop_streams_by_owner(
+        node_name, client_session_id=client_session_id
+    )
     return {"stopped": stopped_count > 0, "stopped_count": stopped_count}
 
 
