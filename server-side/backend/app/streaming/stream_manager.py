@@ -1495,42 +1495,69 @@ class StreamManager:
         return self.stop_transform_streams(client_session_id=None)
 
     def stop_transform_streams(self, client_session_id: Optional[str] = None) -> int:
-        """Stop transform streams owned by client_session_id (RV-002).
+        """Stop transform streams owned by *client_session_id* (RV-002).
 
-        When client_session_id is None, stops ALL active transform streams
-        (same as the old stop_all_transform_streams behaviour — kept for
-        backward compatibility and single-client deployments).
+        Scoping rules
+        -------------
+        * ``client_session_id is None`` → global cleanup: stop ALL active
+          transform streams.  Used by ``stop_all_transform_streams()`` and
+          single-client / admin teardown paths.
 
-        When client_session_id is provided, only streams whose
-        StreamState.client_session_id matches are stopped.  Streams that
-        were created before session-tagging was introduced (client_session_id
-        is None on the stream) are also stopped when a non-None session id is
-        given, to avoid leaving untagged orphan threads behind.
+        * ``client_session_id`` provided → scoped cleanup: stop ONLY transform
+          streams whose ``StreamState.client_session_id`` exactly matches the
+          supplied value.
+
+          Untagged streams (``state.client_session_id is None``) are
+          intentionally **skipped** in scoped mode.
+
+          Historical note: an earlier version of this method also stopped
+          untagged streams during scoped cleanup as a "safety net" for
+          legacy/pre-Phase3 transform threads.  In a multi-client deployment
+          that fallback is unsafe: an untagged stream may have been created by
+          a *different* session (e.g. one that ran before session-tagging was
+          fully wired up), and stopping it on *this* client's disconnect causes
+          the other client's main-vision output to stall until it manually
+          reruns.  Exact-match-only is the correct invariant once session
+          tagging is reliably in place.
         """
+        _session_id = str(client_session_id).strip() if client_session_id else None
+
         with self._registry_lock:
-            transform_ids = [
-                stream_id
-                for stream_id, state in self._streams.items()
-                if state.source_type == "transform"
-                and state.active
-                and (
-                    client_session_id is None
-                    or state.client_session_id == client_session_id
-                    # Also reap untagged (legacy/pre-Phase3) transform streams
-                    # when a session-scoped cleanup is requested, so they are
-                    # not left running indefinitely.
-                    or state.client_session_id is None
-                )
-            ]
+            untagged_skipped: list = []
+            transform_ids: list = []
+            for stream_id, state in self._streams.items():
+                if state.source_type != "transform" or not state.active:
+                    continue
+                if _session_id is None:
+                    # Global cleanup — take everything.
+                    transform_ids.append(stream_id)
+                elif state.client_session_id == _session_id:
+                    # Exact session match.
+                    transform_ids.append(stream_id)
+                elif state.client_session_id is None:
+                    # Untagged stream observed during scoped cleanup — skip it.
+                    # Stopping it here could stall another client's output.
+                    untagged_skipped.append(stream_id)
+
+        if untagged_skipped:
+            logging.debug(
+                "stop_transform_streams: scoped cleanup for session=%s skipped %d "
+                "untagged transform stream(s)=%s (client_session_id is None); "
+                "these will be reaped by global cleanup or the stream reaper.",
+                _session_id,
+                len(untagged_skipped),
+                untagged_skipped,
+            )
 
         stopped = 0
         for stream_id in transform_ids:
-            if self.stop_stream(stream_id, reason=f"disconnect_cleanup:{client_session_id or 'all'}"):
+            if self.stop_stream(stream_id, reason=f"disconnect_cleanup:{_session_id or 'all'}"):
                 stopped += 1
         self._debug_event(
             "stop_transform_streams",
-            client_session_id=client_session_id,
+            client_session_id=_session_id,
             target_ids=transform_ids,
+            untagged_skipped=untagged_skipped,
             stopped=stopped,
         )
         return stopped
