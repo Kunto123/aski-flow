@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode } from "react";
+import React, { createContext, useCallback, useContext, useState, ReactNode } from "react";
 
 export type VisibilityElement =
   | "sidebar"
@@ -79,9 +79,10 @@ export const VisibilityProvider: React.FC<VisibilityProviderProps> = ({
 
   const [configActiveTab, setConfigActiveTab] = useState<ConfigTab>("user");
 
-  const setVisibility = (key: VisibilityElement, isVisible: boolean) => {
+  const setVisibility = useCallback((key: VisibilityElement, isVisible: boolean) => {
     setVisibilityState((prevState) => {
-      if (visibilityState[key].persistent) {
+      // Legibaca dari prevState, bukan outer visibilityState, agar tidak stale
+      if (prevState[key]?.persistent) {
         localStorage.setItem(
           VISBILITY_PROVIDER_PREFIX + key,
           JSON.stringify(isVisible),
@@ -96,11 +97,11 @@ export const VisibilityProvider: React.FC<VisibilityProviderProps> = ({
         },
       };
     });
-  };
+  }, []);
 
-  const toggleVisibility = (key: VisibilityElement) => {
+  const toggleVisibility = useCallback((key: VisibilityElement) => {
     setVisibilityState((prevState) => {
-      if (prevState[key].persistent) {
+      if (prevState[key]?.persistent) {
         localStorage.setItem(
           VISBILITY_PROVIDER_PREFIX + key,
           JSON.stringify(!prevState[key].isVisible),
@@ -115,7 +116,7 @@ export const VisibilityProvider: React.FC<VisibilityProviderProps> = ({
         },
       };
     });
-  };
+  }, []);
 
   const getElement = (key: VisibilityElement) => {
     return visibilityState[key];

@@ -34,8 +34,7 @@ function FlowWrapper({
   const configPopup = getElement("configPopup");
 
   const handleMenuChange = useCallback((menu: ApplicationMenu) => {
-    menuState[menu] = !menuState[menu];
-    setMenuState({ ...menuState });
+    setMenuState((prev) => ({ ...prev, [menu]: !prev[menu] }));
   }, []);
 
   return (

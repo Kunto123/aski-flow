@@ -1147,6 +1147,7 @@ function TrainPanel({
   const [isLoadingJobs, setIsLoadingJobs] = useState(false);
   const [activeJobActionId, setActiveJobActionId] = useState("");
   const [feedbackMessage, setFeedbackMessage] = useState("");
+  const isRefreshingJobsRef = useRef(false);
   const [errorTrainingMessage, setErrorTrainingMessage] = useState("");
 
   const selectedDataset = useMemo(
@@ -1215,6 +1216,8 @@ function TrainPanel({
   }, []);
 
   const refreshJobs = useCallback(async () => {
+    if (isRefreshingJobsRef.current) return;
+    isRefreshingJobsRef.current = true;
     setIsLoadingJobs(true);
     try {
       const response = await listTrainingJobs(80);
@@ -1223,6 +1226,7 @@ function TrainPanel({
       setErrorTrainingMessage(error?.message || "Gagal memuat training jobs.");
     } finally {
       setIsLoadingJobs(false);
+      isRefreshingJobsRef.current = false;
     }
   }, []);
 
@@ -1257,7 +1261,10 @@ function TrainPanel({
     return () => {
       active = false;
     };
-  }, [selectedJobId, jobs]);
+  // Sengaja tidak menyertakan `jobs` sebagai dependency: log hanya perlu di-fetch
+  // ulang saat selectedJobId berubah, bukan setiap polling cycle jobs (tiap 3 detik).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedJobId]);
 
   const availableVariants = useMemo(
     () => architectures.filter((item) => item.family === "yolov5"),
@@ -2475,6 +2482,7 @@ function AugmentPanel({
   const [isLoadingJobs, setIsLoadingJobs] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState("");
   const [errorAugMessage, setErrorAugMessage] = useState("");
+  const isRefreshingJobsRef = useRef(false);
 
   const selectedDataset = useMemo(
     () => datasets.find((d) => d.id === selectedDatasetId),
@@ -2522,6 +2530,8 @@ function AugmentPanel({
   }, []);
 
   const refreshJobs = useCallback(async () => {
+    if (isRefreshingJobsRef.current) return;
+    isRefreshingJobsRef.current = true;
     setIsLoadingJobs(true);
     try {
       const items = await listAugmentationJobs();
@@ -2530,6 +2540,7 @@ function AugmentPanel({
       // silent
     } finally {
       setIsLoadingJobs(false);
+      isRefreshingJobsRef.current = false;
     }
   }, []);
 

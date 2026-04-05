@@ -10,6 +10,14 @@ Environment variables (tambahkan ke .env):
     MSSQL_CONNECT_TIMEOUT  = 10                              (TCP connect timeout, seconds)
     MSSQL_QUERY_TIMEOUT    = 30                              (statement timeout, seconds; 0 = no limit)
 
+Catatan MSSQL_QUERY_TIMEOUT untuk flow execution:
+    Modul ini juga digunakan oleh processor inspection_db_writer yang berjalan di dalam
+    Socket.IO handler (sockets.py). Jika SQL Server lambat atau terjadi lock contention,
+    handler akan hang selama MSSQL_QUERY_TIMEOUT detik dan run slot tetap terkunci,
+    sehingga user tidak bisa menjalankan flow baru.
+    Rekomendasi: set MSSQL_QUERY_TIMEOUT=10 untuk production agar timeoutnya cepat
+    dan run slot segera dibebaskan jika terjadi masalah DB.
+
 Pastikan pyodbc sudah terinstal:
     pip install pyodbc
 """

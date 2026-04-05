@@ -17,6 +17,26 @@ from app.utils.local_model_files import to_runtime_path
 
 training_blueprint = Blueprint("training_blueprint", __name__)
 
+
+def _recover_interrupted_jobs() -> None:
+    """Saat server restart, tandai semua job yang masih 'running'/'queued'/'canceling'
+    sebagai 'failed'. Thread job sudah tidak ada, sehingga status tersebut tidak akan
+    pernah berubah sendiri dan akan tampil sebagai zombie di frontend selamanya."""
+    try:
+        with connect() as conn:
+            conn.execute(
+                "UPDATE training_jobs SET status='failed', finished_at=?, "
+                "error_message='Server restarted — job interrupted' "
+                "WHERE status IN ('running', 'queued', 'canceling')",
+                (time.time(),),
+            )
+            conn.commit()
+    except Exception:
+        pass  # DB belum ada atau migration belum dijalankan — abaikan saat startup
+
+
+_recover_interrupted_jobs()
+
 _IMAGE_EXTENSIONS = {
     ".jpg",
     ".jpeg",

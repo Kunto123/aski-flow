@@ -140,11 +140,15 @@ export const SocketProvider = ({ children }: SocketProviderProps) => {
         appConfig = {};
       }
 
-      if (authToken.length > 0) {
-        (appConfig as any).auth_token = authToken;
+      // Baca token fresh setiap kali dipanggil (termasuk saat reconnect) agar
+      // tidak mengirim token basi dari closure saat socket pertama kali dibuat.
+      const freshAuthToken = getDesktopAuthToken();
+      const freshUserToken = getUserAuthToken();
+      if (freshAuthToken.length > 0) {
+        (appConfig as any).auth_token = freshAuthToken;
       }
-      if (userToken.length > 0) {
-        (appConfig as any).user_token = userToken;
+      if (freshUserToken.length > 0) {
+        (appConfig as any).user_token = freshUserToken;
       }
       newSocket.emit("update_app_config", appConfig);
     };

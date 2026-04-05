@@ -38,6 +38,9 @@ export function resolveBackendBaseUrl(): string {
 
 const apiClient = axios.create({
   baseURL: resolveBackendBaseUrl(),
+  // Timeout global mencegah authLoading stuck selamanya jika backend tidak terjangkau.
+  // 10 detik cukup untuk kondisi LAN/localhost; request bisa override per-call jika perlu.
+  timeout: 10000,
   headers: {
     "Content-type": "application/json",
   },
@@ -53,13 +56,19 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
-// Jika server mengembalikan 401, hapus token dan reload agar LoginPage muncul
+// Jika server mengembalikan 401, hapus token dan reload agar LoginPage muncul.
+// Pengecualian: jangan reload saat request ke /auth/login supaya LoginPage bisa
+// menampilkan pesan error yang tepat kepada user.
 apiClient.interceptors.response.use(
   (res) => res,
   (err) => {
     if (err?.response?.status === 401) {
-      localStorage.removeItem("aski_auth_token");
-      window.location.reload();
+      const requestUrl: string = err?.config?.url ?? "";
+      const isLoginRequest = requestUrl.includes("/auth/login");
+      if (!isLoginRequest) {
+        localStorage.removeItem("aski_auth_token");
+        window.location.reload();
+      }
     }
     return Promise.reject(err);
   },

@@ -67,12 +67,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       setAuthLoading(false);
       return;
     }
-    // Validasi token dengan /auth/me
+    // Validasi token dengan /auth/me.
+    // Jika /auth/me gagal (token expired/invalid), hapus token dan tampilkan LoginPage.
+    // Jika /auth/permissions gagal (network error sementara), pertahankan sesi yang valid
+    // dan lanjutkan dengan permissions kosong — jangan hapus token yang masih sahih.
     getMeApi()
       .then(async (me) => {
         setUser(me);
-        const perms = await getPermissionsApi();
-        setPermissions(perms);
+        try {
+          const perms = await getPermissionsApi();
+          setPermissions(perms);
+        } catch {
+          setPermissions([]);
+        }
       })
       .catch(() => {
         // Token tidak valid / kedaluwarsa
