@@ -36,6 +36,7 @@ client-native/winui/embedded/legacy-editor-src/dist/
 client-native/winui/embedded/legacy-editor-src/coverage/
 client-native/winui/embedded/legacy-editor-src/.pnp/
 client-native/winui/embedded/legacy-editor-src/.pnp.js
+qc-suite-python
 *.msix
 *.msixbundle
 *.appx
